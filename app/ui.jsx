@@ -46,6 +46,7 @@ import {
   AudioLines,
 } from 'lucide-react';
 import './style.css';
+import stillnoteIcon from '../assets/icon-small.png';
 const api = window.stillnote;
 function App() {
   const [data, setData] = useState(null),
@@ -517,7 +518,7 @@ function App() {
           </div>
           <button className="account-pill" onClick={settings}>
             <span className="brand-mark">
-              <NotebookPen size={17} />
+              <img className="brand-icon" src={stillnoteIcon} alt="" />
             </span>
             <strong>Stillnote</strong>
             <span className="account-local">Local</span>

@@ -90,6 +90,7 @@ See [validation results and remaining checks](docs/VALIDATION.md) for the eviden
 
 - [How it was built, architecture, and core components](docs/ARCHITECTURE.md)
 - [UI/UX decisions and reference mapping](docs/DESIGN.md)
+- [Icon design, source assets, and generation prompt](docs/ICON.md)
 - [Validation and limitations](docs/VALIDATION.md)
 - [Optional local MCP integration](docs/MCP.md)
 

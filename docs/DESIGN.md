@@ -48,3 +48,7 @@ The first three-pane collection/editor layout and large illustrated welcome scre
 7. Search with zero results, folder assignment, Trash, restore, export, and backup.
 
 The application has no production demo mode. Test screenshots may populate calendar/UI fixtures in an isolated test process; that is presentation verification, not evidence of a successful EventKit account connection.
+
+## Application icon
+
+A folded ivory paper ribbon forms an S on a forest-green macOS tile. The same mark appears in the Dock and workspace switcher. This replaces the initial generic notebook drawing. The canonical generated master, production exports, and complete built-in image-generation prompt are documented in [ICON.md](ICON.md).

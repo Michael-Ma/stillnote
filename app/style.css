@@ -2541,3 +2541,18 @@ dialog::backdrop {
 .thinking .text-button {
   margin-left: auto;
 }
+
+/* Use the same mark in the macOS Dock and the workspace switcher. */
+.account-pill .brand-mark {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border-radius: 0;
+}
+.brand-icon {
+  display: block;
+  width: 32px;
+  height: 32px;
+  max-width: none;
+  object-fit: contain;
+}
