@@ -1,0 +1,70 @@
+{
+  "name": "stillnote",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local macOS meeting notebook powered by your ChatGPT plan",
+  "author": "Michael Ma",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "dev": "npm run start",
+    "test": "node --test tests/*.test.mjs",
+    "test:ui": "node scripts/smoke.mjs",
+    "package": "npm run build && electron-builder --mac dir && node scripts/sign-local.mjs",
+    "format": "prettier --write app scripts tests index.html package.json",
+    "format:check": "prettier --check app scripts tests index.html package.json",
+    "icon": "node scripts/make-icon.mjs",
+    "test:package": "node scripts/package-smoke.mjs",
+    "screenshots": "node scripts/screenshots.mjs"
+  },
+  "build": {
+    "appId": "local.stillnote.app",
+    "productName": "Stillnote",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "native/bin/StillnoteCapture",
+        "to": "StillnoteCapture"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Stillnote uses your microphone to transcribe meetings on your Mac.",
+        "NSSpeechRecognitionUsageDescription": "Stillnote transcribes meeting audio on your Mac.",
+        "NSCalendarsFullAccessUsageDescription": "Stillnote reads upcoming meetings from calendars on your Mac.",
+        "NSAudioCaptureUsageDescription": "Stillnote transcribes audio from your meeting apps.",
+        "NSCalendarsUsageDescription": "Stillnote reads upcoming meetings from calendars on your Mac."
+      },
+      "icon": "assets/icon.icns"
+    }
+  },
+  "dependencies": {
+    "jose": "^6.2.13",
+    "lucide-react": "^1.60.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0"
+  },
+  "devDependencies": {
+    "electron": "^44.9.2",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "playwright": "^1.64.1",
+    "prettier": "^3.9.10",
+    "vite": "^8.3.4"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

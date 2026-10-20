@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>local.stillnote.capture</string>
+<key>CFBundleName</key><string>Stillnote</string>
+<key>NSMicrophoneUsageDescription</key><string>Transcribe your voice during meetings on this Mac.</string>
+<key>NSSpeechRecognitionUsageDescription</key><string>Transcribe meetings using on-device speech recognition.</string>
+<key>NSCalendarsFullAccessUsageDescription</key><string>Read upcoming meetings from your Mac calendars.</string>
+<key>NSCalendarsUsageDescription</key><string>Read upcoming meetings from your Mac calendars.</string>
+<key>NSAudioCaptureUsageDescription</key><string>Transcribe audio from your meeting apps.</string>
+</dict></plist>
