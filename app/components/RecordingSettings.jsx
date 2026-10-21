@@ -72,7 +72,12 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
               value={settings.inputDevice ?? ''}
               onChange={(e) => guard(() => setting('inputDevice', e.target.value || null))}
             >
-              <option value="">System default</option>
+              <option value="">
+                System default
+                {inputs.find((d) => d.isDefault)
+                  ? ` (${inputs.find((d) => d.isDefault).name})`
+                  : ''}
+              </option>
               {settings.inputDevice && !inputs.some((d) => d.uid === settings.inputDevice) && (
                 <option value={settings.inputDevice}>Selected microphone (unavailable)</option>
               )}

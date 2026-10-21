@@ -9,7 +9,7 @@ Stillnote keeps the core loop small: **open a note → capture a conversation �
 ## Core capabilities
 
 - **Meeting capture:** microphone plus optional system audio, without a meeting bot.
-- **On-device transcription:** Apple's Speech framework, with separate microphone and meeting-audio labels. No transcription API key. Original microphone and system-audio tracks are retained locally for playback and transcription retry.
+- **On-device transcription:** on macOS 26 and later, Apple's SpeechTranscriber streams the whole meeting with punctuation and per-phrase timestamps, using the meeting title, participants and notes as vocabulary hints. Earlier macOS versions fall back to `SFSpeechRecognizer`. Microphone and meeting audio get separate labels. No transcription API key. Original microphone and system-audio tracks are retained locally for playback and transcription retry.
 - **Replay and diagnose:** separate source players with seeking, live input meters, recognition language, sparse-transcript warnings, and retry from the saved audio. Earlier app versions did not retain audio, so historical audio cannot be recovered.
 - **A simple notebook:** autosaved rough notes, editable transcripts, folders, stars, search, and recoverable Trash.
 - **Enhanced notes:** combine your notes and transcript using a selected template. Previous summaries remain available. Optionally enhance automatically when recording ends.
@@ -71,7 +71,7 @@ Stillnote runs your own, unmodified `claude` program in print mode with tools, M
 4. Write a few notes while the transcript accumulates.
 5. Choose **Finish meeting**. Open **Recordings** to listen to the saved sources or retry transcription. If ChatGPT or Claude is connected and automatic enhancement is enabled, Stillnote enhances notes unless transcript coverage looks sparse. You can also choose **Enhance notes** later. Rough notes are optional.
 
-If on-device recognition is unavailable, enable Dictation and install the meeting language in macOS Settings, then restart Stillnote. Audio capture can continue even when recognition is unavailable. It will not silently switch to a cloud transcription service. English, Chinese, and other language choices depend on the recognizer installed on your Mac.
+Choose the microphone and meeting language in **Settings › Recording**. On macOS 26 and later, languages such as Chinese (Mandarin, Taiwan, Hong Kong), Cantonese, Japanese and Korean download inside Stillnote; on earlier versions, install the language for Dictation in macOS Settings. If a source stays silent during a recording, the dock says so and links to the microphone setting. Plugging or unplugging a headset mid-meeting restarts the input automatically. Audio capture continues even when recognition is unavailable, and Stillnote never switches to a cloud transcription service.
 
 **Shortcuts:** `⌘N` new note, `⌘K` search from Home, `⌘J` toggle chat.
 
