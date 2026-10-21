@@ -68,6 +68,9 @@ export class Harness {
   }
   async create(title, notes = '') {
     const existing = (await this.state()).meetings.map((meeting) => meeting.id);
+    // Like Granola, the note view has no New note button; start from Home.
+    if (await this.page.getByRole('button', { name: 'Back to Home', exact: true }).count())
+      await this.page.getByRole('button', { name: 'Back to Home', exact: true }).click();
     await this.page.getByRole('button', { name: 'New note', exact: true }).click();
     await this.waitForState(
       (state, ids) => state.meetings.some((meeting) => !ids.includes(meeting.id)),
@@ -89,6 +92,12 @@ export class Harness {
     );
     await this.open(title);
     return state.meetings.find((m) => m.title === title);
+  }
+  // Transcript and Recordings live in the sheet above the dock, opened from the listening pill.
+  async sheet(tab) {
+    const show = this.page.getByRole('button', { name: 'Show transcript', exact: true });
+    if (await show.count()) await show.click();
+    await this.page.getByRole('tab', { name: new RegExp(`^${tab}`) }).click();
   }
   async open(title) {
     if (await this.page.getByRole('button', { name: 'Back to Home', exact: true }).count()) {

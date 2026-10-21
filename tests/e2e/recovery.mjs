@@ -47,10 +47,10 @@ export async function recovery(h) {
   assert.equal(repaired.readUInt32LE(4), repaired.length - 8);
   assert.equal(repaired.readUInt32LE(40), repaired.length - 44);
   await h.open(meeting.title);
-  await page.getByRole('tab', { name: 'Recordings', exact: true }).click();
+  await h.sheet('Recordings');
   await page.getByText('This capture ended unexpectedly.', { exact: false }).waitFor();
   const audio = page.locator('audio[aria-label="Microphone recording"]');
-  await audio.waitFor();
+  await audio.waitFor({ state: 'attached' });
   await page.waitForFunction(() => document.querySelector('audio')?.readyState >= 1);
   await audio.evaluate(async (element) => {
     element.muted = true;

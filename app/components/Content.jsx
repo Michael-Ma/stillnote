@@ -1,32 +1,52 @@
-import React from 'react';
+import React, { useMemo, useRef } from 'react';
 import Markdown from 'react-markdown';
-export function IconButton({ label, children, ...props }) {
+export function IconButton({ label, children, className = '', ...props }) {
   return (
-    <button className="icon-button" aria-label={label} title={label} {...props}>
+    <button className={'icon-button ' + className} aria-label={label} title={label} {...props}>
       {children}
     </button>
   );
 }
-export function Rich({ text, onSource }) {
+// Text of a hast node without nested lists, so a parent bullet is judged on its own words.
+const ownText = (node) =>
+  (node?.children ?? [])
+    .filter((child) => !['ul', 'ol'].includes(child.tagName))
+    .map((child) => (child.type === 'text' ? child.value : ownText(child)))
+    .join('');
+export function Rich({ text, onSource, isOwn }) {
+  const sourceRef = useRef(onSource);
+  sourceRef.current = onSource;
+  const components = useMemo(() => {
+    const mark = (Tag) =>
+      function Marked({ node, children, ...props }) {
+        return (
+          <Tag {...props} className={isOwn(ownText(node)) ? 'own' : undefined}>
+            {children}
+          </Tag>
+        );
+      };
+    return {
+      a: ({ href, children }) =>
+        href?.startsWith('stillnote://source/') ? (
+          <button
+            className="citation"
+            onClick={() => sourceRef.current?.(Number(href.split('/').pop()))}
+            aria-label={`View source ${children}`}
+          >
+            {children}
+          </button>
+        ) : (
+          <span>{children}</span>
+        ),
+      ...(isOwn ? { li: mark('li'), p: mark('p') } : {}),
+    };
+  }, [isOwn]);
   const content = onSource ? text.replace(/\[(\d+)\](?!\()/g, '[$1](stillnote://source/$1)') : text;
   return (
-    <div className="prose">
+    <div className={'prose' + (isOwn ? ' enhanced' : '')}>
       <Markdown
         urlTransform={(url) => (url.startsWith('stillnote://source/') ? url : '')}
-        components={{
-          a: ({ href, children }) =>
-            href?.startsWith('stillnote://source/') ? (
-              <button
-                className="citation"
-                onClick={() => onSource?.(Number(href.split('/').pop()))}
-                aria-label={`View source ${children}`}
-              >
-                {children}
-              </button>
-            ) : (
-              <span>{children}</span>
-            ),
-        }}
+        components={components}
       >
         {content}
       </Markdown>

@@ -32,6 +32,7 @@ try {
     .fill(
       'Discuss onboarding. Alex will send the revised flow on Friday.\nKeep microphone capture local.',
     );
+  await page.getByRole('button', { name: 'Show transcript' }).click();
   await page.getByRole('tab', { name: 'Transcript' }).click();
   await page.getByRole('button', { name: 'Paste a transcript', exact: true }).click();
   await page
@@ -81,6 +82,7 @@ try {
   await page.getByRole('button', { name: 'Restore note', exact: true }).click();
   await page.getByRole('button', { name: 'Back to Home' }).click();
   await page.getByRole('button', { name: 'My notes', exact: true }).click();
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
   await page.getByRole('textbox', { name: 'Search notes' }).fill('onboarding');
   await page.locator('.note-row').first().waitFor();
   assert.equal(await page.locator('.note-row').count(), 1);

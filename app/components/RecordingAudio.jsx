@@ -1,5 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AudioLines, Headphones, LoaderCircle, Mic, RotateCcw } from 'lucide-react';
+import {
+  AlertTriangle,
+  AudioLines,
+  LoaderCircle,
+  Mic,
+  Pause,
+  Play,
+  RotateCcw,
+  Volume2,
+  VolumeX,
+  X,
+} from 'lucide-react';
 import { date, duration, time } from '../format.mjs';
 
 const sourceName = (source) => (source === 'system' ? 'Meeting audio' : 'Microphone');
@@ -20,6 +31,7 @@ const isCapturing = (recording) =>
   ['starting', 'recording', 'capturing', 'stopping'].includes(recording.status);
 const playableTracks = (recording) =>
   (recording.tracks ?? []).filter((track) => track.fileName && track.bytes !== 0);
+const cleanError = (e) => e.message.replace(/^Error invoking remote method '[^']+': Error: /, '');
 
 export function transcriptCoverageWarning(meeting) {
   const recordings = meeting.recordings ?? [];
@@ -31,13 +43,15 @@ export function transcriptCoverageWarning(meeting) {
   const seconds = Number(meeting.duration) || 0;
   if (!flagged && !(seconds >= 30 && text.length < Math.max(20, seconds * 0.5))) return null;
   return recordings.some((recording) => playableTracks(recording).length)
-    ? 'There is very little transcript text for this recording. Listen to the audio to check what was captured before relying on enhanced notes.'
-    : 'There is very little transcript text for this recording. Review the transcript before relying on enhanced notes. Earlier sessions may not have saved audio.';
+    ? 'Very little text was recognized. Listen to the audio before relying on enhanced notes.'
+    : 'Very little text was recognized. Review the transcript before relying on enhanced notes.';
 }
 
+// One quiet line under the title instead of a banner above every view.
 export function CoverageWarning({ meeting, onListen, onRetry, retrying, disabled }) {
+  const [dismissed, setDismissed] = useState(null);
   const message = transcriptCoverageWarning(meeting);
-  if (!message) return null;
+  if (!message || dismissed === meeting.id + meeting.updatedAt) return null;
   const candidates = [...(meeting.recordings ?? [])]
     .reverse()
     .filter((recording) => !isCapturing(recording) && playableTracks(recording).length);
@@ -45,30 +59,28 @@ export function CoverageWarning({ meeting, onListen, onRetry, retrying, disabled
     candidates.find((recording) => recording.diagnostics?.lowCoverage) ?? candidates[0];
   return (
     <div className="coverage-warning" role="status">
-      <Headphones size={17} aria-hidden="true" />
-      <div>
-        <strong>Review transcript coverage</strong>
-        <p>{message}</p>
-        <div className="recording-actions">
-          <button className="text-button" onClick={onListen}>
-            {retryable ? 'Listen & review' : 'Review recording details'}
-          </button>
-          {retryable && (
-            <button
-              className="text-button"
-              disabled={disabled || !!retrying}
-              onClick={() => onRetry(retryable.id)}
-            >
-              {retrying === retryable.id ? (
-                <LoaderCircle size={13} className="spin" />
-              ) : (
-                <RotateCcw size={13} />
-              )}
-              {retrying === retryable.id ? 'Transcribing…' : 'Retry transcription'}
-            </button>
-          )}
-        </div>
-      </div>
+      <AlertTriangle size={14} aria-hidden="true" />
+      <strong>Review transcript coverage</strong>
+      <span>{message}</span>
+      <button className="text-button" onClick={onListen}>
+        {retryable ? 'Listen' : 'Details'}
+      </button>
+      {retryable && (
+        <button
+          className="text-button"
+          disabled={disabled || !!retrying}
+          onClick={() => onRetry(retryable.id)}
+        >
+          {retrying === retryable.id ? 'Transcribing…' : 'Retry'}
+        </button>
+      )}
+      <button
+        className="icon-button small"
+        aria-label="Dismiss coverage warning"
+        onClick={() => setDismissed(meeting.id + meeting.updatedAt)}
+      >
+        <X size={13} />
+      </button>
     </div>
   );
 }
@@ -96,9 +108,9 @@ export function CaptureDiagnostics({ levels, sources, systemAudioRequested, star
             ? 'Connecting…'
             : recent
               ? rms >= 0.005
-                ? 'Signal detected'
+                ? 'Signal'
                 : 'Quiet'
-              : 'Waiting for audio';
+              : 'Waiting';
         return (
           <div
             className={'capture-source ' + (unavailable ? 'unavailable' : '')}
@@ -122,77 +134,179 @@ export function CaptureDiagnostics({ levels, sources, systemAudioRequested, star
           </div>
         );
       })}
-      <p>
-        Levels show incoming audio, not transcript completeness. Text updates in roughly 10-second
-        batches. Raw audio is saved on this Mac.
-      </p>
+      <p>Levels show incoming audio. Text arrives in roughly 10-second batches.</p>
     </div>
   );
 }
 
-function AudioTrack({ meetingId, recordingId, track, call }) {
-  const [url, setUrl] = useState('');
-  const [error, setError] = useState('');
-  const [attempt, setAttempt] = useState(0);
-  const audioRef = useRef();
+function useTrackUrl(call, meetingId, recordingId, source, attempt) {
+  const [state, setState] = useState({ url: '', error: '' });
   useEffect(() => {
     let valid = true;
-    setUrl('');
-    setError('');
+    setState({ url: '', error: '' });
     Promise.resolve()
-      .then(() => call('recording-url', meetingId, recordingId, track.source))
+      .then(() => call('recording-url', meetingId, recordingId, source))
       .then((result) => {
-        const localUrl = typeof result === 'string' ? result : result?.url;
-        if (!localUrl) throw new Error('No recording file is available.');
-        if (valid) setUrl(localUrl);
+        const url = typeof result === 'string' ? result : result?.url;
+        if (!url) throw new Error('No recording file is available.');
+        if (valid) setState({ url, error: '' });
       })
-      .catch((e) => {
-        if (valid)
-          setError(e.message.replace(/^Error invoking remote method '[^']+': Error: /, ''));
-      });
+      .catch((e) => valid && setState({ url: '', error: cleanError(e) }));
     return () => {
       valid = false;
-      audioRef.current?.pause();
     };
-  }, [meetingId, recordingId, track.source, attempt]);
+  }, [meetingId, recordingId, source, attempt]);
+  return state;
+}
+
+function Track({ meetingId, recordingId, track, call, register, muted, onToggleMute }) {
+  const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState('');
+  const { url, error } = useTrackUrl(call, meetingId, recordingId, track.source, attempt);
+  const audioRef = useRef();
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.muted = muted;
+  }, [muted, url]);
+  const shown = error || failed;
   return (
     <div className="audio-track">
-      <div className="audio-track-label">
-        {track.source === 'system' ? <AudioLines size={15} /> : <Mic size={15} />}
-        <strong>{sourceName(track.source)}</strong>
-        <span>{duration(Number(track.duration) || 0)}</span>
-        {!!track.sampleRate && (
-          <small>
-            {(track.sampleRate / 1000).toLocaleString()} kHz ·{' '}
-            {track.channels === 1 ? 'mono' : `${track.channels} channels`}
-          </small>
-        )}
-      </div>
-      {error ? (
-        <div className="audio-track-error" role="alert">
-          <span>{error}</span>
-          <button className="text-button" onClick={() => setAttempt((value) => value + 1)}>
-            Try loading again
-          </button>
-        </div>
-      ) : url ? (
+      <button
+        className={'track-toggle' + (muted ? ' muted' : '')}
+        onClick={onToggleMute}
+        aria-pressed={!muted}
+        aria-label={`${muted ? 'Unmute' : 'Mute'} ${sourceName(track.source)}`}
+        title={
+          track.sampleRate
+            ? `${(track.sampleRate / 1000).toLocaleString()} kHz · ${track.channels === 1 ? 'mono' : `${track.channels} channels`}`
+            : undefined
+        }
+      >
+        {track.source === 'system' ? <AudioLines size={14} /> : <Mic size={14} />}
+        {sourceName(track.source)}
+        {muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+      </button>
+      {url && (
         <audio
-          ref={audioRef}
-          controls
+          ref={(element) => {
+            audioRef.current = element;
+            register(track.source, element, track.startOffset ?? 0);
+          }}
           preload="metadata"
           src={url}
           aria-label={`${sourceName(track.source)} recording`}
           onError={() =>
-            setError(
-              'This audio could not be played. The recording file may be missing or unreadable.',
-            )
+            setFailed('This audio could not be played. The file may be missing or unreadable.')
           }
         />
-      ) : (
-        <p className="audio-loading">
-          <LoaderCircle className="spin" size={13} /> Loading local audio…
-        </p>
       )}
+      {shown ? (
+        <div className="audio-track-error" role="alert">
+          <span>{shown}</span>
+          <button
+            className="text-button"
+            onClick={() => {
+              setFailed('');
+              setAttempt((value) => value + 1);
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      ) : !url ? (
+        <LoaderCircle className="spin" size={13} aria-label="Loading local audio" />
+      ) : null}
+    </div>
+  );
+}
+
+// One transport for every source of a recording, so microphone and meeting audio stay aligned.
+function Player({ meeting, recording, tracks, call }) {
+  const elements = useRef({});
+  const [playing, setPlaying] = useState(false);
+  const [position, setPosition] = useState(0);
+  const [muted, setMuted] = useState({});
+  const total = Math.max(
+    Number(recording.duration) || 0,
+    ...tracks.map((t) => (Number(t.duration) || 0) + (t.startOffset ?? 0)),
+  );
+  const all = () => Object.values(elements.current).filter((x) => x.element);
+  const register = (source, element, offset) => {
+    if (element) elements.current[source] = { element, offset };
+    else delete elements.current[source];
+  };
+  const seek = (t) => {
+    for (const { element, offset } of all())
+      element.currentTime = Math.max(0, Math.min(element.duration || Infinity, t - offset));
+    setPosition(t);
+  };
+  useEffect(() => {
+    if (!playing) return;
+    let frame;
+    const tick = () => {
+      const lead = all().find(({ element }) => !element.paused);
+      if (lead) setPosition(lead.element.currentTime + lead.offset);
+      else setPlaying(false);
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [playing]);
+  useEffect(() => () => all().forEach(({ element }) => element.pause()), []);
+  const toggle = async () => {
+    if (playing) {
+      all().forEach(({ element }) => element.pause());
+      setPlaying(false);
+      return;
+    }
+    const start = position >= total - 0.2 ? 0 : position;
+    seek(start);
+    await Promise.allSettled(
+      all().map(({ element, offset }) => (start >= offset ? element.play() : null)),
+    );
+    setPlaying(true);
+  };
+  return (
+    <div className="player">
+      <div className="transport">
+        <button
+          className="play-button"
+          onClick={toggle}
+          aria-label={playing ? 'Pause recording' : 'Play recording'}
+        >
+          {playing ? (
+            <Pause size={14} fill="currentColor" />
+          ) : (
+            <Play size={14} fill="currentColor" />
+          )}
+        </button>
+        <span className="player-time">{duration(position)}</span>
+        <input
+          type="range"
+          className="scrubber"
+          aria-label="Playback position"
+          min={0}
+          max={Math.max(total, 0.1)}
+          step={0.1}
+          value={Math.min(position, total)}
+          onChange={(e) => seek(Number(e.target.value))}
+          style={{ '--progress': `${total ? (position / total) * 100 : 0}%` }}
+        />
+        <span className="player-time">{duration(total)}</span>
+      </div>
+      <div className="track-list">
+        {tracks.map((track) => (
+          <Track
+            key={track.source}
+            meetingId={meeting.id}
+            recordingId={recording.id}
+            track={track}
+            call={call}
+            register={register}
+            muted={!!muted[track.source]}
+            onToggleMute={() => setMuted((m) => ({ ...m, [track.source]: !m[track.source] }))}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -201,24 +315,11 @@ export function RecordingAudio({ meeting, call, onRetry, retrying, disabled, loc
   const recordings = meeting.recordings ?? [];
   return (
     <section className="recordings-panel" aria-label="Saved recordings">
-      <div className="recordings-intro">
-        <Headphones size={18} aria-hidden="true" />
-        <div>
-          <strong>Listen to the original audio</strong>
-          <p>
-            Raw microphone and meeting audio are retained on this Mac for playback and on-device
-            transcription. Audio is never sent to OpenAI.
-          </p>
-        </div>
-      </div>
       {!recordings.length ? (
-        <div className="recordings-empty">
-          <Headphones size={25} aria-hidden="true" />
+        <div className="sheet-empty">
+          <AudioLines size={22} aria-hidden="true" />
           <h2>No saved audio</h2>
-          <p>
-            New recordings will appear here after you finish capturing. Audio from earlier
-            recordings that did not save a file cannot be recovered.
-          </p>
+          <p>Recordings appear here after you finish capturing. Audio stays on this Mac.</p>
         </div>
       ) : (
         [...recordings].reverse().map((recording, index) => {
@@ -227,7 +328,7 @@ export function RecordingAudio({ meeting, call, onRetry, retrying, disabled, loc
           const problems = [
             ...(recording.diagnostics?.warnings ?? []),
             ...(recording.diagnostics?.reasons ?? []),
-          ];
+          ].filter((warning) => typeof warning === 'string');
           return (
             <article className="saved-recording" key={recording.id}>
               <header>
@@ -235,21 +336,20 @@ export function RecordingAudio({ meeting, call, onRetry, retrying, disabled, loc
                   <strong>Recording {recordings.length - index}</strong>
                   <span>
                     {date(recording.startedAt)} · {time(recording.startedAt)} ·{' '}
-                    {duration(Number(recording.duration) || 0)}
+                    {duration(Number(recording.duration) || 0)} ·{' '}
+                    {recording.locale ? languageName(recording.locale) : 'Language not recorded'}
                   </span>
-                  <span>
-                    Recognition language:{' '}
-                    {recording.locale ? languageName(recording.locale) : 'Not recorded'}
-                  </span>
-                  {recording.locale !== locale && (
-                    <span>Retry language: {languageName(locale)}</span>
-                  )}
                 </div>
                 {!capturing && tracks.length > 0 && (
                   <button
                     className="text-button"
                     disabled={disabled || !!retrying}
                     onClick={() => onRetry(recording.id)}
+                    title={
+                      recording.locale !== locale
+                        ? `Transcribes again in ${languageName(locale)}`
+                        : undefined
+                    }
                   >
                     {retrying === recording.id ? (
                       <LoaderCircle size={13} className="spin" />
@@ -265,15 +365,7 @@ export function RecordingAudio({ meeting, call, onRetry, retrying, disabled, loc
                   Audio is being saved. Finish recording to listen.
                 </p>
               ) : tracks.length ? (
-                tracks.map((track) => (
-                  <AudioTrack
-                    key={track.source}
-                    meetingId={meeting.id}
-                    recordingId={recording.id}
-                    track={track}
-                    call={call}
-                  />
-                ))
+                <Player meeting={meeting} recording={recording} tracks={tracks} call={call} />
               ) : (
                 <p className="recording-pending">
                   No playable audio file was saved for this session.
@@ -290,22 +382,18 @@ export function RecordingAudio({ meeting, call, onRetry, retrying, disabled, loc
                   recording.
                 </p>
               )}
-              {Array.isArray(problems) &&
-                problems
-                  .filter((warning) => typeof warning === 'string')
-                  .map((warning, warningIndex) => (
-                    <p className="recording-detail-warning" key={warningIndex}>
-                      {warning}
-                    </p>
-                  ))}
+              {problems.map((warning, warningIndex) => (
+                <p className="recording-detail-warning" key={warningIndex}>
+                  {warning}
+                </p>
+              ))}
             </article>
           );
         })
       )}
       {recordings.length > 0 && (
         <p className="recording-footnote">
-          Retry uses the saved audio and updates this recording’s transcript. Check the result
-          before enhancing your notes again.
+          Audio never leaves this Mac. Retry re-transcribes the saved audio on-device.
         </p>
       )}
     </section>

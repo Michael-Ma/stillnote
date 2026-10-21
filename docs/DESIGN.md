@@ -2,57 +2,64 @@
 
 ## Scope
 
-A single-user macOS meeting notebook. The main task is to open a meeting, remain present while recording, jot down a few important points, then review an enhanced note and ask follow-up questions. Initial data is genuinely empty. Screenshots in this repository use explicitly fictional test fixtures, never imported personal meetings.
+A single-user macOS meeting notebook. The main task is to open a meeting, stay present while recording, jot down a few important points, then review enhanced notes and ask follow-up questions. Initial data is genuinely empty. Screenshots in this repository use explicitly fictional test fixtures, never imported personal meetings.
 
-The user requested a close Granola-like experience with only the core capabilities. The design therefore follows Granola's workflow and hierarchy rather than building a new dashboard or reproducing its team/cloud features.
+The design deliberately follows Granola's workflow, hierarchy and interaction patterns, without its team or cloud features. Stillnote does not use Granola's name, logos, illustrations or code.
 
 ## Reference mapping
 
-References were inspected on October 20, 2026:
+References were re-checked on October 20, 2026 against the current Granola macOS app and its help center:
 
-| Granola reference | Adopted interaction or visual decision |
+| Granola pattern | Stillnote decision |
 | --- | --- |
-| [Granola 101](https://docs.granola.ai/help-center/getting-started/granola-101) | Narrow sidebar, Home/Chat, a personal space and folders, upcoming meetings above a chronological note feed. |
-| [Writing your own notes](https://docs.granola.ai/help-center/taking-notes/taking-notes-in-granola) | A mostly blank document, serif title, compact participant/folder metadata, minimal writing chrome. |
-| [AI-enhanced notes](https://docs.granola.ai/help-center/taking-notes/ai-enhanced-notes) | Human notes guide enhancement; raw notes remain accessible; templates and regeneration are nearby; generated notes remain editable. |
-| [Chatting with meetings](https://docs.granola.ai/help-center/getting-more-from-your-notes/chatting-with-your-meetings) | A bottom chat entry, context determined by the current meeting/folder, cross-meeting questions, follow-up prompts. |
+| Home: search icon beside the window controls, Home / Chat, Spaces, a plan pill at the bottom | Same sidebar order; the pill shows which AI plan is in use and opens Settings. |
+| “Coming up” card anchored on today, dashed separators between days, red dot on today | Same card, with “No more events today” and a “Start now” pill for a meeting that is about to begin. |
+| Date-grouped rows with letter avatars or a document icon, time on the right | Same rows; no lock icon, because every note is local. |
+| Note: serif title, small chips for date, attendees and folder | Same chips. Attendees and folder are editable in place. |
+| Top-right switch between “My notes” and “Enhanced”, templates beside it | Segmented control plus a template menu in the top bar. Star, export and Trash sit next to it. |
+| Enhanced notes: `#` heading markers, generated text in gray, the user's own points in black | Same treatment. A pure, deterministic matcher (`app/own-lines.mjs`) marks enhanced lines that restate the user's rough notes. |
+| Bottom bar: listening pill on the left, “Ask anything” with a recipe chip | Same dock. The pill reads “Record”, “Resume” or shows live level bars and elapsed time. Its chevron opens the transcript. |
+| Transcript one click away from the listening pill | A sheet above the dock with Transcript and Recordings tabs. “You” bubbles sit on the right, meeting audio on the left. |
+| “Analyzing transcript” progress with a Cancel pill | Same, while enhanced text streams in. |
+| Chat: “Ask anything” composer with a model picker | Scope and model chips in the composer. The model picker spans every connected provider. |
 
-Reference screenshots were used for inspection only and are not redistributed. Stillnote does not use Granola's name as its app identity, logos, illustrations, or proprietary code.
+## Layout
 
-## Chosen layout
-
-- **Home:** 212 px sidebar, a centered content column up to 714 px, Coming up card, date-grouped meeting rows, fixed bottom chat entry.
-- **Document:** hide the sidebar, keep a Home/back control, center a writing column up to 784 px, put capture and chat in a bottom dock.
-- **Chat:** a full content view from Home, or a side panel when discussing a document. Scope remains explicit.
-- **Settings:** native HTML dialog with account connection, language, capture preferences, and backup controls. No inactive cloud-integration navigation.
-
-The first three-pane collection/editor layout and large illustrated welcome screen were removed because they diverged from the requested reference. Empty states now preserve the same Home structure that users see once they have notes.
+- **Home:** 232 px sidebar, a centered column up to 760 px, Coming up card, date-grouped rows, and a floating “Ask anything” dock.
+- **Note:** the sidebar is hidden. A back pill and save state sit on the left of the top bar, view switch and note actions on the right. The writing column is up to 720 px.
+- **Chat:** full width from the sidebar, or a 392 px side panel next to a note. Below 1100 px the side panel overlays the note instead of squeezing it.
+- **Settings:** a dialog with AI, Recording and Notebook sections. AI shows one card per provider, with its status, usage and a single next step.
 
 ## Visual system
 
-- Warm near-white document canvas, pale neutral sidebar, charcoal text, muted gray/olive secondary text.
-- Small teal calendar markers and restrained pale-green contextual chips.
-- Native system sans for UI/body text; Georgia with serif fallback for document titles and section headings.
-- 6–8 px corners for small controls; 16 px for the calendar card; a pill-shaped bottom composer.
-- Icon-only controls have accessible names. Native dialogs provide focus containment, Escape dismissal, and return focus.
-- Desktop layouts are checked at 1440×940 and 1024×768. Reduced-motion preferences disable transitions/animation. This is not a mobile web product or an accessibility certification.
+All colors, type sizes and radii are CSS custom properties in `app/style.css`, with a full dark theme under `prefers-color-scheme: dark`.
+
+- Warm off-white canvas (`--bg #f8f7f3`), white surfaces, a slightly darker sidebar.
+- Near-black ink. Secondary text `--muted #64635d` (5.6:1 on the canvas, WCAG AA); `--faint` is reserved for placeholders and decoration. Generated text `--ai-text`.
+- Dark pill buttons for primary actions, as in Granola. An olive accent and a pale lime for citations and active states. A red dot only for live recording and today.
+- System sans for UI (13 px base, 15 px writing and list titles); `ui-serif` (New York) for titles, headings and day numbers. Nothing below 11 px.
+- Pill controls in the dock and top bar, 8 px controls, 12–20 px cards.
+- Icon-only controls have accessible names. Native dialogs provide focus containment, Escape dismissal and return focus. Reduced-motion preferences disable transitions and animation.
 
 ## Principal states
 
-1. Empty Home → Quick note → autosaved writing canvas.
-2. Start recording → permissions/loading → listening with duration/input sources → finish → optional enhancement.
-3. Missing permissions or on-device language → visible recovery guidance, no silent cloud fallback.
-4. Enhanced note → inspect transcript citation → edit/regenerate → restore an earlier summary.
-5. Home/meeting/folder chat → explicit source scope → streamed answer → completed persisted message.
-6. Disconnected ChatGPT, quota/network failure, or cancellation → visible error; source notes and previous summary remain intact.
-7. Search with zero results, folder assignment, Trash, restore, export, and backup.
+1. Empty Home → New note → autosaved writing canvas.
+2. Record → permissions/connecting → live level bars and elapsed time → stop → optional automatic enhancement.
+3. Missing permissions or on-device language → visible recovery guidance. There is no silent cloud fallback.
+4. Sparse transcript → one dismissible line under the title, with Listen and Retry.
+5. No AI connected → an inline card with the shortest path: Use Claude (when Claude Code is signed in), Sign in to Claude, or Sign in with ChatGPT.
+6. Enhanced note → citation opens the transcript sheet → edit, regenerate, or restore an earlier version.
+7. Chat → explicit scope and model → streamed answer → persisted message with source chips.
+8. Quota, network failure or cancellation → visible error. Notes and the previous summary stay intact.
 
-The application has no production demo mode. Test screenshots may populate calendar/UI fixtures in an isolated test process; that is presentation verification, not evidence of a successful EventKit account connection.
+## AI providers in the UI
 
-## Application icon
-
-Conversation Fold uses two overlapping ivory conversation cards on a forest-green macOS tile. The same mark appears in the Dock and workspace switcher. This replaces the initial generic notebook drawing. The canonical generated master, production exports, and complete built-in image-generation prompt are documented in [ICON.md](ICON.md).
+The provider in use is always named: in the sidebar pill, the chat footer and Settings. A Claude Code installation that is detected but never chosen can answer when the user clicks Enhance or sends a chat message, and that first use records the choice. Automatic enhancement after a recording runs only for a provider the user has chosen or signed in to.
 
 ## Recording review
 
-The Recordings tab exposes separate microphone and system-audio controls with seeking and no autoplay, duration, recognition language, and retry. Input meters indicate signal only. Sparse-transcript notices offer a concrete listen/retry path, and legacy notes explain when no audio was saved. The raw notes remain optional and separate from all generated content. Recordings are retained on the Mac and excluded from model context and JSON backups.
+The Recordings tab plays microphone and meeting audio with one transport, so the two stay aligned. Each source can be muted. Retry transcribes the saved audio again on the Mac. Recordings stay on this Mac and are excluded from model context and JSON backups.
+
+## Application icon
+
+A folded ivory paper ribbon forms an S on a forest-green macOS tile. See [ICON.md](ICON.md).

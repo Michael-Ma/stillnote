@@ -1,58 +1,21 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ArrowLeft, Check, Home, Leaf, Plus, Square, X } from 'lucide-react';
 import { IconButton, Rich } from './components/Content.jsx';
 import { HomeFeed } from './components/HomeFeed.jsx';
-import {
-  CaptureDiagnostics,
-  CoverageWarning,
-  RecordingAudio,
-} from './components/RecordingAudio.jsx';
+import { Sidebar } from './components/Sidebar.jsx';
+import { NoteToolbar, NoteView } from './components/NoteView.jsx';
+import { EnhancePill, RecordPill } from './components/Dock.jsx';
+import { TranscriptSheet } from './components/TranscriptSheet.jsx';
+import { ChatPanel } from './components/ChatPanel.jsx';
+import { SettingsDialog } from './components/SettingsDialog.jsx';
+import { aiView, claudeModels, modelKey } from './ai-view.mjs';
 import { date, time, duration } from './format.mjs';
-import {
-  Plus,
-  Search,
-  NotebookPen,
-  Folder,
-  Star,
-  CalendarDays,
-  Settings,
-  ArrowUpRight,
-  ArrowUp,
-  ChevronDown,
-  ChevronRight,
-  Download,
-  Upload,
-  Mic,
-  Square,
-  Sparkles,
-  MessageCircle,
-  MoreHorizontal,
-  Trash2,
-  RotateCcw,
-  X,
-  Check,
-  FileText,
-  Headphones,
-  Leaf,
-  Command,
-  ArrowLeft,
-  Clock,
-  Copy,
-  History,
-  SlidersHorizontal,
-  LoaderCircle,
-  StopCircle,
-  BookOpen,
-  Link,
-  PanelRightClose,
-  Home,
-  Lock,
-  Users,
-  AudioLines,
-} from 'lucide-react';
 import './style.css';
 import stillnoteIcon from '../assets/icon-small.png';
 const api = window.stillnote;
+const cleanError = (message) =>
+  message.replace(/^Error invoking remote method '[^']+': Error: /, '');
 function App() {
   const [data, setData] = useState(null),
     [selected, setSelected] = useState(null),
@@ -60,6 +23,8 @@ function App() {
     [query, setQuery] = useState(''),
     [searchIds, setSearchIds] = useState(null),
     [tab, setTab] = useState('notes'),
+    [sheet, setSheet] = useState(null),
+    [searchOpen, setSearchOpen] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [modal, setModal] = useState(null),
@@ -71,7 +36,7 @@ function App() {
     [stream, setStream] = useState(''),
     [partial, setPartial] = useState({}),
     [accountBusy, setAccountBusy] = useState(false),
-    [models, setModels] = useState([]),
+    [chatgptModels, setChatgptModels] = useState([]),
     [calendarBusy, setCalendarBusy] = useState(false),
     [editingSummary, setEditingSummary] = useState(false),
     [elapsed, setElapsed] = useState(0),
@@ -84,8 +49,7 @@ function App() {
     timers = useRef({}),
     dialogRef = useRef(),
     searchRef = useRef(),
-    busyRef = useRef(null),
-    bottomRef = useRef();
+    busyRef = useRef(null);
   const call = async (name, ...args) => api.call(name, ...args);
   const updateMeeting = (m) =>
     setData((d) => ({
@@ -99,7 +63,7 @@ function App() {
     try {
       return await fn();
     } catch (e) {
-      setError(e.message.replace(/^Error invoking remote method '[^']+': Error: /, ''));
+      setError(cleanError(e.message));
       return null;
     }
   };
@@ -122,6 +86,7 @@ function App() {
         setBusy('enhance');
         setSelected(e.id);
         setTab('summary');
+        setSheet(null);
         setStream('');
       }
       if (e.type === 'ai-done' && busyRef.current === 'auto-enhance') {
@@ -129,6 +94,7 @@ function App() {
         setBusy(null);
         setStream('');
       }
+      if (e.type === 'ai') setData((d) => (d ? { ...d, ai: e.ai } : d));
       if (e.type === 'meeting') updateMeeting(e.meeting);
       if (e.type === 'audio-level')
         setAudioLevels((levels) => ({ ...levels, [e.source]: { ...e, receivedAt: Date.now() } }));
@@ -195,16 +161,26 @@ function App() {
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
-        searchRef.current?.focus();
+        setSearchOpen(true);
+        setTimeout(() => searchRef.current?.focus());
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
         e.preventDefault();
         newNote();
       }
+      if (e.key === 'Escape' && !dialogRef.current?.open) setSheet(null);
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   }, []);
+  const ai = useMemo(() => aiView(data), [data?.ai, data?.account]);
+  useEffect(() => {
+    if (ai.chatgpt.ready)
+      call('account', 'models')
+        .then(setChatgptModels)
+        .catch(() => setChatgptModels([]));
+    else setChatgptModels([]);
+  }, [ai.chatgpt.ready, ai.chatgpt.active]);
   const rawMeeting = data?.meetings.find((m) => m.id === selected),
     meeting = rawMeeting ? { ...rawMeeting, ...drafts[selected] } : null;
   const scope =
@@ -224,9 +200,6 @@ function App() {
       valid = false;
     };
   }, [chatOpen, scope]);
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }, [messages, stream]);
   async function flush(id) {
     clearTimeout(timers.current[id]);
     const patch = draftRef.current[id];
@@ -275,14 +248,16 @@ function App() {
       setView('all');
       setQuery('');
       setTab('notes');
+      setSheet(null);
       setChatOpen(false);
     });
   }
-  async function openNote(m) {
+  async function openNote(m, panel = null) {
     await guard(async () => {
       await flushAll();
       setSelected(m.id);
       setTab(m.summary ? 'summary' : 'notes');
+      setSheet(panel);
       setEditingSummary(false);
     });
   }
@@ -292,39 +267,58 @@ function App() {
       setView(v);
       setSelected(null);
       setQuery('');
+      setSheet(null);
       setChatOpen(false);
     });
   }
   async function account(action, id) {
     setAccountBusy(true);
     await guard(async () => {
-      const account = await call('account', action, id);
-      setData((d) => ({ ...d, account }));
-      setModels([]);
-      if (account.warning) setError(account.warning);
-      if (account.sharing) {
-        const models = await call('account', 'models');
-        setModels(models);
-      }
+      const result = await call('account', action, id);
+      if (result?.warning) setError(result.warning);
+      if (action === 'connect' && result?.sharing)
+        await call('ai-provider', 'use', 'chatgpt').catch(() => {});
+      await load();
     });
     setAccountBusy(false);
   }
+  const applyAi = (result) => {
+    if (result && typeof result === 'object' && 'provider' in result)
+      setData((d) => ({ ...d, ai: result }));
+  };
+  const aiActions = {
+    use: (provider) => guard(async () => applyAi(await call('ai-provider', 'use', provider))),
+    refresh: () => guard(async () => applyAi(await call('ai-provider', 'refresh'))),
+    claudeSignIn: () => guard(async () => applyAi(await call('ai-provider', 'claude-sign-in'))),
+    claudeCancel: () => guard(async () => applyAi(await call('ai-provider', 'claude-cancel'))),
+    installHelp: () => guard(() => call('ai-provider', 'install-help')),
+    terminal: (step) =>
+      guard(async () => applyAi(await call('ai-provider', 'claude-terminal', step))),
+    chatgptSignIn: () => account('connect'),
+  };
   async function settings() {
     setModal({ kind: 'settings' });
-    if (data?.account.sharing) guard(async () => setModels(await call('account', 'models')));
+    guard(() => call('ai-provider', 'refresh').then(applyAi));
   }
   async function setting(key, value) {
     const s = await call('setting', key, value);
     setData((d) => ({ ...d, settings: s }));
   }
+  const hasContent = !!meeting && (!!meeting.notes.trim() || meeting.transcript.length > 0);
+  const activeRecord = !!data && data.recording?.id === selected;
+  const enhanceDisabled =
+    !!busy || !!retryingRecording || activeRecord || !!meeting?.deletedAt || !hasContent;
   async function enhance() {
     if (busyRef.current) return;
+    setTab('summary');
+    setSheet(null);
+    setEditingSummary(false);
+    if (!ai.ready) return;
     await guard(async () => {
       await flushAll();
       busyRef.current = 'enhance';
       setBusy('enhance');
       setStream('');
-      setTab('summary');
       try {
         const r = await call('ai', { kind: 'enhance', id: selected });
         updateMeeting(r.meeting);
@@ -369,7 +363,8 @@ function App() {
       await load();
       if (r.meeting) {
         setSelected(r.meeting.id);
-        setTab('transcript');
+        setTab('notes');
+        setSheet('transcript');
         setView('all');
       } else setNotice(`Imported ${r.restored} new meetings. Existing meetings were preserved.`);
     });
@@ -409,6 +404,13 @@ function App() {
     });
     setCalendarBusy(false);
   }
+  function openChat(nextScope) {
+    setChatScope(
+      nextScope ?? (meeting ? 'meeting' : view.startsWith('folder:') ? 'folder' : 'all'),
+    );
+    setSheet(null);
+    setChatOpen(true);
+  }
   const visible = useMemo(
     () =>
       data?.meetings
@@ -442,150 +444,163 @@ function App() {
             ? 'Starred'
             : view === 'trash'
               ? 'Trash'
-              : view === 'calendar'
-                ? 'Your week'
-                : view === 'recipes'
-                  ? 'Recipes'
-                  : (data?.folders.find((f) => f.id === view.slice(7))?.name ?? 'Notes');
+              : (data?.folders.find((f) => f.id === view.slice(7))?.name ?? 'Notes');
   if (!data)
     return (
       <div className="loading">
-        <Leaf size={32} />
+        <Leaf size={28} />
         <p>Opening your notebook…</p>
       </div>
     );
-  const activeRecord = data.recording?.id === selected;
+  const templates = data.templates;
+  const modelGroups = [
+    ai.claude.ready && { provider: 'claude', models: claudeModels },
+    ai.chatgpt.ready && chatgptModels.length && { provider: 'chatgpt', models: chatgptModels },
+  ].filter(Boolean);
+  const activeModels = ai.provider === 'claude' ? claudeModels : chatgptModels;
+  const savedModel = data.settings[modelKey(ai.provider)];
+  const currentModel = activeModels.some((m) => m.id === savedModel)
+    ? savedModel
+    : activeModels[0]?.id;
+  const globalChat = chatOpen && !meeting;
+  const level = Math.max(
+    ...['microphone', 'system'].map((s) =>
+      audioLevels[s] && Date.now() - audioLevels[s].receivedAt < 3000
+        ? Math.sqrt(Math.max(0, Number(audioLevels[s].rms) || 0))
+        : 0,
+    ),
+  );
+  const chat = (
+    <ChatPanel
+      global={globalChat}
+      messages={messages}
+      busy={busy}
+      stream={stream}
+      question={question}
+      setQuestion={setQuestion}
+      onAsk={() => ask()}
+      onCancel={() => guard(() => call('cancel-ai'))}
+      onClose={() => {
+        setChatOpen(false);
+        if (view === 'chat') setView('home');
+      }}
+      scope={chatScope}
+      scopes={[
+        ...(meeting ? [['meeting', 'This meeting']] : []),
+        ...(view.startsWith('folder:') ? [['folder', 'This folder']] : []),
+        ['all', 'All my notes'],
+      ]}
+      setScope={setChatScope}
+      ai={ai}
+      aiActions={aiActions}
+      modelOptions={modelGroups}
+      modelValue={`${ai.provider}:${currentModel}`}
+      onModel={(value) =>
+        guard(async () => {
+          const split = value.indexOf(':');
+          const provider = value.slice(0, split);
+          if (provider !== ai.provider) applyAi(await call('ai-provider', 'use', provider));
+          await setting(modelKey(provider), value.slice(split + 1));
+        })
+      }
+      onSource={(m, number) => {
+        const source = m.sources?.find((s) => s.number === number);
+        const target = data.meetings.find((n) => n.id === source?.id);
+        if (target) openNote(target, 'transcript').then(() => setView('all'));
+      }}
+      onOpenSource={(s) => {
+        const target = data.meetings.find((m) => m.id === s.id);
+        if (target) openNote(target).then(() => setView('all'));
+      }}
+      onApply={
+        chatScope === 'meeting' && meeting
+          ? (m) =>
+              guard(async () => {
+                await patch({ summary: m.content });
+                setTab('summary');
+                setNotice('Enhanced notes updated. The previous version is saved.');
+              })
+          : null
+      }
+    />
+  );
   return (
     <div
       className={
-        'app ' +
-        (chatOpen ? 'chat-open ' : '') +
-        (meeting ? 'meeting-open ' : '') +
-        (chatOpen && !meeting ? 'chat-global' : '')
+        'app' +
+        (chatOpen ? ' chat-open' : '') +
+        (meeting ? ' meeting-open' : '') +
+        (globalChat ? ' chat-global' : '')
       }
     >
-      <aside className="sidebar">
-        <div className="window-space" />
-        <label className="search">
-          <Search size={15} />
-          <input
-            ref={searchRef}
-            aria-label="Search notes"
-            placeholder="Search"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setSelected(null);
-              setChatOpen(false);
-              if (!['home', 'all', 'trash'].includes(view) && !view.startsWith('folder:'))
-                setView('all');
-            }}
-          />
-          <kbd>⌘ K</kbd>
-        </label>
-        <nav aria-label="Notebook">
-          <button
-            className={view === 'home' && !chatOpen ? 'active' : ''}
-            onClick={() => navigate('home')}
-          >
-            <Home size={16} />
-            Home
-          </button>
-          <button
-            className={view === 'chat' ? 'active' : ''}
-            onClick={() => {
-              guard(async () => {
-                await flushAll();
-                setSelected(null);
-                setView('chat');
-                setChatScope('all');
-                setChatOpen(true);
-              });
-            }}
-          >
-            <MessageCircle size={16} />
-            Chat
-          </button>
-          <button
-            className={view === 'starred' ? 'active' : ''}
-            onClick={() => navigate('starred')}
-          >
-            <Star size={16} />
-            Starred
-          </button>
-        </nav>
-        <div className="nav-label">
-          Spaces
-          <IconButton label="New folder" onClick={() => setModal({ kind: 'folder', name: '' })}>
-            <Plus size={14} />
-          </IconButton>
-        </div>
-        <nav aria-label="Folders">
-          <button
-            className={'my-notes ' + (view === 'all' ? 'active' : '')}
-            onClick={() => navigate('all')}
-          >
-            <span className="space-icon">
-              <Lock size={14} />
-            </span>
-            My notes
-          </button>
-          {data.folders.map((f) => (
-            <button
-              key={f.id}
-              className={'folder-item ' + (view === `folder:${f.id}` ? 'active' : '')}
-              onClick={() => navigate(`folder:${f.id}`)}
-            >
-              <Folder size={15} fill="currentColor" />
-              <span className="folder-name">{f.name}</span>
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="sidebar-tools">
-            <IconButton label="Import transcript or backup" onClick={importFile}>
-              <Upload size={16} />
-            </IconButton>
-            <IconButton label="Trash" onClick={() => navigate('trash')}>
-              <Trash2 size={16} />
-            </IconButton>
-            <IconButton label="Settings" onClick={settings}>
-              <Settings size={16} />
-            </IconButton>
-          </div>
-          <button className="account-pill" onClick={settings}>
-            <span className="brand-mark">
-              <img className="brand-icon" src={stillnoteIcon} alt="" />
-            </span>
-            <strong>Stillnote</strong>
-            <span className="account-local">Local</span>
-            <ChevronDown size={13} />
-          </button>
-        </div>
-      </aside>
+      <Sidebar
+        view={view}
+        chatOpen={chatOpen}
+        folders={data.folders}
+        query={query}
+        onQuery={(value) => {
+          setQuery(value);
+          setSelected(null);
+          setChatOpen(false);
+          if (!['home', 'all', 'trash'].includes(view) && !view.startsWith('folder:'))
+            setView('all');
+        }}
+        searchRef={searchRef}
+        searchOpen={searchOpen || !!query}
+        setSearchOpen={setSearchOpen}
+        navigate={navigate}
+        openChat={() =>
+          guard(async () => {
+            await flushAll();
+            setSelected(null);
+            setView('chat');
+            setChatScope('all');
+            setChatOpen(true);
+          })
+        }
+        newFolder={() => setModal({ kind: 'folder', name: '' })}
+        importFile={importFile}
+        openSettings={settings}
+        ai={ai}
+        icon={stillnoteIcon}
+      />
       <main className="workspace">
         <header className="topbar">
           <div className="topbar-left">
             {meeting ? (
-              <button
-                className="home-back"
-                onClick={() => navigate('home')}
-                aria-label="Back to Home"
-              >
-                <ArrowLeft size={15} />
-                <Home size={15} />
-              </button>
+              <>
+                <button
+                  className="home-back"
+                  onClick={() => navigate('home')}
+                  aria-label="Back to Home"
+                >
+                  <ArrowLeft size={14} />
+                  <Home size={14} />
+                </button>
+                <span className="save-state" aria-live="polite">
+                  {saving ? (
+                    'Saving…'
+                  ) : Object.keys(drafts[selected] ?? {}).length ? (
+                    'Unsaved'
+                  ) : (
+                    <>
+                      <Check size={12} />
+                      Saved
+                    </>
+                  )}
+                </span>
+              </>
             ) : (
               <span className="workspace-label">{view === 'home' ? '' : title}</span>
             )}
           </div>
           <div className="top-actions">
-            {data.recording && (
+            {data.recording && !activeRecord && (
               <div className="global-recording" role="status">
-                <span className="record-dot" />
+                <span className="rec-dot live" />
                 <span>
                   {data.recording.stopping
-                    ? 'Finishing recording…'
+                    ? 'Finishing…'
                     : data.starting
                       ? 'Connecting…'
                       : `Listening · ${duration(elapsed)}`}
@@ -595,434 +610,83 @@ function App() {
                   aria-label="Finish active recording"
                   disabled={data.recording.stopping}
                 >
-                  <Square size={11} fill="currentColor" />
+                  <Square size={10} fill="currentColor" />
                   Finish
                 </button>
               </div>
             )}
-            {meeting && (
-              <span className="top-save">{saving ? 'Saving…' : 'Saved on this Mac'}</span>
+            {meeting ? (
+              <NoteToolbar
+                meeting={meeting}
+                tab={tab}
+                setTab={(t) => {
+                  setTab(t);
+                  setEditingSummary(false);
+                }}
+                templates={templates}
+                patch={patch}
+                activeRecord={activeRecord}
+                onExport={() =>
+                  guard(async () => {
+                    await flushAll();
+                    const path = await call('export', selected);
+                    if (path) setNotice(`Exported to ${path}`);
+                  })
+                }
+              />
+            ) : (
+              <button className="quick-note" onClick={() => newNote()} aria-label="New note">
+                <Plus size={14} />
+                New note
+              </button>
             )}
-            <button className="quick-note" onClick={() => newNote()} aria-label="New note">
-              <Plus size={14} />
-              Quick note
-            </button>
           </div>
         </header>
         {error && (
           <div className="error-banner" role="alert">
             <span>{error}</span>
-            <IconButton label="Dismiss error" onClick={() => setError('')}>
-              <X size={16} />
+            <IconButton label="Dismiss error" className="small" onClick={() => setError('')}>
+              <X size={14} />
             </IconButton>
           </div>
         )}
         {notice && (
           <div className="notice" role="status">
-            <Check size={15} />
+            <Check size={14} />
             {notice}
           </div>
         )}
         <div className="workspace-body">
           <section className="main-content">
-            {view === 'calendar' ? (
-              <div className="page">
-                <p className="eyebrow">MAKE ROOM TO LISTEN</p>
-                <h1>Your week, in focus.</h1>
-                <p className="subhead">Bring upcoming meetings from the calendars on your Mac.</p>
-                <button className="primary" disabled={calendarBusy} onClick={calendar}>
-                  {calendarBusy ? (
-                    <LoaderCircle className="spin" size={17} />
-                  ) : (
-                    <CalendarDays size={17} />
-                  )}{' '}
-                  {calendarBusy
-                    ? 'Loading calendars…'
-                    : data.calendar.length
-                      ? 'Refresh calendar'
-                      : 'Connect Mac calendars'}
-                </button>
-                <p className="muted small">
-                  Includes Google and Outlook accounts added to Apple Calendar. Read access only.
-                  Reminders appear while Stillnote is open.
-                </p>
-                <div className="calendar-list">
-                  {data.calendar.map((e) => (
-                    <button
-                      className="event-row"
-                      key={e.id}
-                      onClick={() =>
-                        newNote({
-                          title: e.title,
-                          participants: e.participants,
-                          notes: e.notes ? `Meeting context\n${e.notes}` : '',
-                        })
-                      }
-                    >
-                      <div className="event-date">
-                        <strong>{date(e.start)}</strong>
-                        <small>{time(e.start)}</small>
-                      </div>
-                      <div>
-                        <h3>{e.title}</h3>
-                        <p>{e.participants || e.location || 'Calendar event'}</p>
-                      </div>
-                      <Plus size={18} />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : view === 'recipes' ? (
-              <div className="page">
-                <p className="eyebrow">A LITTLE HELP THINKING</p>
-                <h1>Go beyond the recap.</h1>
-                <p className="subhead">
-                  Turn your conversations into something useful. Every recipe uses the notes you
-                  choose.
-                </p>
-                <div className="recipe-grid">
-                  {data.recipes.map((r) => (
-                    <button
-                      key={r.id}
-                      onClick={() => {
-                        setChatScope('all');
-                        setChatOpen(true);
-                        setQuestion(r.prompt);
-                      }}
-                    >
-                      <Sparkles size={21} />
-                      <h3>{r.name}</h3>
-                      <p>{r.prompt}</p>
-                      <span>
-                        Use recipe <ArrowUpRight size={14} />
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                <button
-                  className="secondary"
-                  onClick={() => setModal({ kind: 'recipe', name: '', prompt: '' })}
-                >
-                  <Plus size={16} />
-                  Create a recipe
-                </button>
-              </div>
+            {globalChat ? (
+              chat
             ) : meeting ? (
-              <div className="editor">
-                <div className="editor-toolbar">
-                  <div>
-                    <span className="note-date">
-                      {date(meeting.createdAt)} · {time(meeting.createdAt)}
-                    </span>
-                    {saving ? (
-                      <span className="save-state">Saving…</span>
-                    ) : Object.keys(drafts[selected] ?? {}).length ? (
-                      <span className="save-state">Unsaved changes</span>
-                    ) : (
-                      <span className="save-state">
-                        <Check size={12} />
-                        Saved
-                      </span>
-                    )}
-                  </div>
-                  <div className="toolbar-actions">
-                    <IconButton
-                      label={meeting.starred ? 'Unstar note' : 'Star note'}
-                      onClick={() => patch({ starred: !meeting.starred })}
-                    >
-                      <Star size={16} fill={meeting.starred ? 'currentColor' : 'none'} />
-                    </IconButton>
-                    <IconButton
-                      label="Export Markdown"
-                      onClick={() =>
-                        guard(async () => {
-                          await flushAll();
-                          const path = await call('export', selected);
-                          if (path) setNotice(`Exported to ${path}`);
-                        })
-                      }
-                    >
-                      <Download size={17} />
-                    </IconButton>
-                    {meeting.deletedAt ? (
-                      <IconButton label="Restore note" onClick={() => patch({ deletedAt: null })}>
-                        <RotateCcw size={17} />
-                      </IconButton>
-                    ) : (
-                      <IconButton
-                        label="Move to Trash"
-                        disabled={activeRecord}
-                        onClick={() => patch({ deletedAt: true })}
-                      >
-                        <Trash2 size={16} />
-                      </IconButton>
-                    )}
-                  </div>
-                </div>
-                <input
-                  className="note-title"
-                  aria-label="Meeting title"
-                  value={meeting.title}
-                  onChange={(e) => draft({ title: e.target.value })}
-                  maxLength={300}
-                  placeholder="Untitled meeting"
-                />
-                <div className="meeting-meta">
-                  <label className="participants">
-                    <span>With</span>
-                    <input
-                      aria-label="Participants"
-                      placeholder="Add participants…"
-                      value={meeting.participants}
-                      onChange={(e) => draft({ participants: e.target.value })}
-                    />
-                  </label>
-                  <label className="folder-select">
-                    <Folder size={14} />
-                    <select
-                      aria-label="Move note to folder"
-                      value={meeting.folderId ?? ''}
-                      onChange={(e) => patch({ folderId: e.target.value || null })}
-                    >
-                      <option value="">No folder</option>
-                      {data.folders.map((f) => (
-                        <option value={f.id} key={f.id}>
-                          {f.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                {meeting.deletedAt && (
-                  <div className="inline-note">
-                    This note is in Trash.{' '}
-                    <button className="text-button" onClick={() => patch({ deletedAt: null })}>
-                      Restore it
-                    </button>
-                  </div>
-                )}
-                {activeRecord ? (
-                  <CaptureDiagnostics
-                    levels={audioLevels}
-                    sources={{ ...data.recording.sources, ...captureSources }}
-                    systemAudioRequested={data.settings.systemAudio ?? true}
-                    starting={data.starting}
-                  />
-                ) : (
-                  <CoverageWarning
-                    meeting={meeting}
-                    onListen={() => setTab('recordings')}
-                    onRetry={retryRecording}
-                    retrying={retryingRecording}
-                    disabled={!!data.recording || !!meeting.deletedAt || !!busy}
-                  />
-                )}
-                <div className="tabs">
-                  <div role="tablist">
-                    {[
-                      ['notes', 'My notes'],
-                      ['summary', 'Enhanced'],
-                      ['transcript', 'Transcript'],
-                      ['recordings', 'Recordings'],
-                    ].map(([key, label]) => (
-                      <button
-                        key={key}
-                        role="tab"
-                        aria-selected={tab === key}
-                        className={tab === key ? 'active' : ''}
-                        onClick={() => setTab(key)}
-                      >
-                        {label}
-                        {key === 'transcript' && meeting.transcript.length > 0 && (
-                          <span>{meeting.transcript.length}</span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                  {!['transcript', 'recordings'].includes(tab) && (
-                    <button
-                      className="enhance-button"
-                      disabled={
-                        !!busy || !!retryingRecording || activeRecord || !!meeting.deletedAt
-                      }
-                      onClick={enhance}
-                    >
-                      {busy === 'enhance' ? (
-                        <LoaderCircle size={14} className="spin" />
-                      ) : (
-                        <Sparkles size={14} />
-                      )}
-                      Enhance notes
-                    </button>
-                  )}
-                </div>
-                <div className="document-body">
-                  {tab === 'notes' ? (
-                    <>
-                      <textarea
-                        className="note-editor"
-                        aria-label="My notes"
-                        placeholder="Add your thoughts…"
-                        value={meeting.notes}
-                        onChange={(e) => draft({ notes: e.target.value })}
-                      />
-                    </>
-                  ) : tab === 'summary' ? (
-                    <>
-                      <div className="summary-tools">
-                        <label>
-                          <SlidersHorizontal size={14} />
-                          <select
-                            aria-label="Summary template"
-                            value={meeting.templateId}
-                            onChange={(e) => patch({ templateId: e.target.value })}
-                          >
-                            {data.templates.map((t) => (
-                              <option value={t.id} key={t.id}>
-                                {t.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <div>
-                          {meeting.versions.length > 0 && (
-                            <IconButton
-                              label="Previous summaries"
-                              onClick={() => setModal({ kind: 'history' })}
-                            >
-                              <History size={15} />
-                            </IconButton>
-                          )}
-                          {meeting.summary && (
-                            <button
-                              className="text-button"
-                              onClick={() => setEditingSummary(!editingSummary)}
-                            >
-                              {editingSummary ? 'Done editing' : 'Edit'}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {busy === 'enhance' ? (
-                        <>
-                          <div className="thinking">
-                            <Sparkles size={15} />
-                            Connecting the dots…
-                            <button
-                              className="text-button"
-                              onClick={() => guard(() => call('cancel-ai'))}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                          <Rich text={stream} />
-                        </>
-                      ) : editingSummary ? (
-                        <textarea
-                          className="note-editor"
-                          aria-label="Edit enhanced notes"
-                          value={meeting.summary}
-                          onChange={(e) => draft({ summary: e.target.value })}
-                        />
-                      ) : meeting.summary ? (
-                        <Rich text={meeting.summary} onSource={() => setTab('transcript')} />
-                      ) : (
-                        <div className="document-empty">
-                          <div className="empty-icon">
-                            <Sparkles size={28} />
-                          </div>
-                          <h2>A clearer picture.</h2>
-                          <p>
-                            Bring your notes and transcript together into an overview, decisions,
-                            and next steps.
-                          </p>
-                          <button
-                            className="primary"
-                            disabled={!!busy || !!retryingRecording || activeRecord}
-                            onClick={enhance}
-                          >
-                            <Sparkles size={16} />
-                            Enhance notes
-                          </button>
-                          <small>Uses your connected ChatGPT plan.</small>
-                        </div>
-                      )}
-                    </>
-                  ) : tab === 'recordings' ? (
-                    <RecordingAudio
-                      meeting={meeting}
-                      call={call}
-                      onRetry={retryRecording}
-                      retrying={retryingRecording}
-                      locale={data.settings.locale ?? 'en-US'}
-                      disabled={!!data.recording || !!meeting.deletedAt || !!busy}
-                    />
-                  ) : (
-                    <>
-                      <div className="transcript-top">
-                        <span>
-                          {meeting.transcript.length} segments · {Math.ceil(meeting.duration / 60)}{' '}
-                          min recorded
-                        </span>
-                        <button
-                          className="text-button"
-                          onClick={() =>
-                            setModal({ kind: 'transcript', text: '', speaker: 'Speaker' })
-                          }
-                        >
-                          <Plus size={14} />
-                          Add transcript
-                        </button>
-                      </div>
-                      {!meeting.transcript.length && !activeRecord && (
-                        <div className="document-empty">
-                          <div className="empty-icon">
-                            <Mic size={26} />
-                          </div>
-                          <h2>Every detail, in its place.</h2>
-                          <p>
-                            Start recording or paste an existing transcript. Speaker labels can be
-                            edited afterward.
-                          </p>
-                          <button
-                            className="secondary"
-                            onClick={() =>
-                              setModal({ kind: 'transcript', text: '', speaker: 'Speaker' })
-                            }
-                          >
-                            Paste a transcript
-                          </button>
-                        </div>
-                      )}
-                      {meeting.transcript.map((s) => (
-                        <div className="transcript-segment" key={s.id}>
-                          <div>
-                            <strong>{s.speaker}</strong>
-                            <time>{duration(s.timestamp)}</time>
-                            <button
-                              className="text-button segment-edit"
-                              onClick={() => setModal({ kind: 'segment', ...s })}
-                            >
-                              Edit
-                            </button>
-                          </div>
-                          <p>{s.text}</p>
-                        </div>
-                      ))}
-                      {activeRecord &&
-                        Object.values(partial).map((s) => (
-                          <div className="transcript-segment live" key={s.segmentId || s.speaker}>
-                            <div>
-                              <strong>{s.speaker}</strong>
-                              <span className="live-label">LIVE</span>
-                            </div>
-                            <p>{s.text}</p>
-                          </div>
-                        ))}
-                    </>
-                  )}
-                </div>
-              </div>
+              <NoteView
+                meeting={meeting}
+                folders={data.folders}
+                tab={tab}
+                draft={draft}
+                patch={patch}
+                busy={busy}
+                stream={stream}
+                editingSummary={editingSummary}
+                setEditingSummary={setEditingSummary}
+                onEnhance={enhance}
+                enhanceDisabled={enhanceDisabled}
+                onCancel={() => guard(() => call('cancel-ai'))}
+                showCancel={chatOpen}
+                onHistory={() => setModal({ kind: 'history' })}
+                onSource={() => setSheet('transcript')}
+                coverage={{
+                  onListen: () => setSheet('recordings'),
+                  onRetry: retryRecording,
+                  retrying: retryingRecording,
+                  disabled: !!data.recording || !!meeting.deletedAt || !!busy,
+                }}
+                activeRecord={activeRecord}
+                ai={ai}
+                aiActions={aiActions}
+              />
             ) : (
               <HomeFeed
                 data={data}
@@ -1040,234 +704,95 @@ function App() {
             )}
           </section>
           {!chatOpen && (
-            <div className="floating-dock-wrap">
-              {activeRecord && (
-                <div className="recording-status">
-                  <span className="record-dot" />
-                  {data.recording.stopping
-                    ? 'Saving audio and finishing transcript…'
-                    : data.starting
-                      ? 'Waiting for permissions…'
-                      : `${duration(elapsed)} · ${data.recording.systemAudio ? 'Mic + meeting audio' : 'Microphone'}`}
-                  <button onClick={() => guard(() => call('stop'))}>
-                    <Square size={11} fill="currentColor" />
-                    Finish meeting
-                  </button>
-                </div>
+            <div className="dock-wrap">
+              {meeting && sheet && (
+                <TranscriptSheet
+                  meeting={meeting}
+                  tab={sheet}
+                  setTab={setSheet}
+                  onClose={() => setSheet(null)}
+                  activeRecord={activeRecord}
+                  partial={partial}
+                  capture={{
+                    levels: audioLevels,
+                    sources: { ...data.recording?.sources, ...captureSources },
+                    systemAudioRequested: data.settings.systemAudio ?? true,
+                    starting: data.starting,
+                  }}
+                  recordings={{
+                    call,
+                    onRetry: retryRecording,
+                    retrying: retryingRecording,
+                    locale: data.settings.locale ?? 'en-US',
+                    disabled: !!data.recording || !!meeting.deletedAt || !!busy,
+                  }}
+                  onAddTranscript={() =>
+                    setModal({ kind: 'transcript', text: '', speaker: 'Speaker' })
+                  }
+                  onEditSegment={(s) => setModal({ kind: 'segment', ...s })}
+                />
               )}
-              <div className="floating-dock">
+              {meeting &&
+                !sheet &&
+                (busy === 'enhance' ||
+                  (!meeting.summary && hasContent && !activeRecord && !meeting.deletedAt)) && (
+                  <EnhancePill
+                    busy={busy === 'enhance'}
+                    disabled={enhanceDisabled}
+                    onEnhance={enhance}
+                    onCancel={() => guard(() => call('cancel-ai'))}
+                  />
+                )}
+              <div className="dock">
                 {meeting && !meeting.deletedAt && (
-                  <button
-                    className={'record-orb ' + (activeRecord ? 'recording' : '')}
-                    aria-label={activeRecord ? 'Stop recording' : 'Start recording'}
-                    title={activeRecord ? 'Stop recording' : 'Start recording on this Mac'}
-                    disabled={!activeRecord && (!!data.recording || !!retryingRecording)}
-                    onClick={() => (activeRecord ? guard(() => call('stop')) : record())}
-                  >
-                    {activeRecord ? (
-                      <Square size={17} fill="currentColor" />
-                    ) : (
-                      <AudioLines size={21} />
-                    )}
-                  </button>
+                  <RecordPill
+                    recording={{ ...data.recording, starting: data.starting }}
+                    active={activeRecord}
+                    hasAudio={meeting.recordings?.length > 0 || meeting.transcript.length > 0}
+                    elapsed={elapsed}
+                    level={level}
+                    sheetOpen={!!sheet}
+                    disabled={!!data.recording || !!retryingRecording}
+                    onStart={record}
+                    onStop={() => guard(() => call('stop'))}
+                    onToggleSheet={() => setSheet((s) => (s ? null : 'transcript'))}
+                  />
                 )}
                 <div className="dock-chat">
                   <button
                     className="dock-placeholder"
-                    onClick={() => {
-                      setChatScope(
-                        meeting ? 'meeting' : view.startsWith('folder:') ? 'folder' : 'all',
-                      );
-                      setChatOpen(true);
-                    }}
+                    aria-label={meeting ? 'Chat with this meeting' : 'Chat with your notes'}
+                    onClick={() => openChat()}
                   >
-                    {meeting ? 'Chat with this meeting' : 'Chat with your notes'}
-                    <kbd>⌘ J</kbd>
+                    Ask anything
+                    <kbd>⌘J</kbd>
                   </button>
                   <button
                     className="dock-recipe"
                     onClick={() => {
-                      setChatScope(
-                        meeting ? 'meeting' : view.startsWith('folder:') ? 'folder' : 'all',
-                      );
                       setQuestion(
                         meeting
                           ? 'Draft a concise follow-up email with the decisions and next steps.'
                           : 'List recent action items with their owners and due dates, citing the source meetings.',
                       );
-                      setChatOpen(true);
+                      openChat();
                     }}
                   >
-                    <Sparkles size={13} />
-                    {meeting ? 'Write follow-up email' : 'List recent to-dos'}
+                    <span className="slash" aria-hidden="true">
+                      /
+                    </span>
+                    {meeting ? 'Write follow-up email' : 'List recent todos'}
                   </button>
                 </div>
               </div>
             </div>
           )}
-          {chatOpen && (
-            <aside className="chat-panel">
-              <header>
-                <div>
-                  <Sparkles size={18} />
-                  <h2>Ask your notes</h2>
-                </div>
-                <IconButton
-                  label="Close chat"
-                  onClick={() => {
-                    setChatOpen(false);
-                    if (view === 'chat') setView('home');
-                  }}
-                >
-                  <PanelRightClose size={17} />
-                </IconButton>
-              </header>
-              <div className="scope-picker">
-                <span>LOOKING AT</span>
-                <select
-                  aria-label="Chat scope"
-                  disabled={!!busy}
-                  value={chatScope}
-                  onChange={(e) => setChatScope(e.target.value)}
-                >
-                  {meeting && <option value="meeting">This meeting</option>}
-                  {view.startsWith('folder:') && <option value="folder">This folder</option>}
-                  <option value="all">All my notes</option>
-                </select>
-              </div>
-              <div className="chat-messages">
-                {!messages.length && !busy && (
-                  <div className="chat-intro">
-                    <span className="chat-spark">
-                      <Sparkles size={28} />
-                    </span>
-                    <h3>What’s on your mind?</h3>
-                    <p>Ask anything about your meetings.</p>
-                    {[
-                      'What did we decide?',
-                      'What should I follow up on?',
-                      'Draft a follow-up email.',
-                    ].map((q) => (
-                      <button key={q} onClick={() => setQuestion(q)}>
-                        {q}
-                        <ArrowUpRight size={13} />
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {messages.map((m) => (
-                  <div className={'chat-message ' + m.role} key={m.id}>
-                    <div className="message-role">{m.role === 'user' ? 'YOU' : 'STILLNOTE'}</div>
-                    <Rich
-                      text={m.content}
-                      onSource={(number) => {
-                        const source = m.sources?.find((s) => s.number === number);
-                        const target = data.meetings.find((n) => n.id === source?.id);
-                        if (target)
-                          guard(async () => {
-                            await flushAll();
-                            setSelected(target.id);
-                            setView('all');
-                            setTab('transcript');
-                          });
-                      }}
-                    />
-                    {m.role === 'assistant' && chatScope === 'meeting' && meeting && (
-                      <button
-                        className="text-button apply-answer"
-                        onClick={() =>
-                          guard(async () => {
-                            await patch({ summary: m.content });
-                            setTab('summary');
-                            setNotice('Enhanced notes updated. The previous version is saved.');
-                          })
-                        }
-                      >
-                        Use as enhanced notes
-                      </button>
-                    )}
-                    {m.sources?.length > 0 && (
-                      <div className="sources">
-                        {m.sources.map((s) => (
-                          <button
-                            key={s.id}
-                            onClick={() => {
-                              const m = data.meetings.find((m) => m.id === s.id);
-                              if (m) {
-                                openNote(m);
-                                setView('all');
-                              }
-                            }}
-                          >
-                            [{s.number}] {s.title}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-                {busy === 'chat' && (
-                  <div className="chat-message assistant">
-                    <div className="thinking">
-                      <Sparkles size={14} />
-                      {stream ? 'Stillnote' : 'Reading your notes…'}
-                    </div>
-                    <Rich text={stream} />
-                  </div>
-                )}
-                <div ref={bottomRef} />
-              </div>
-              <form
-                className="chat-composer"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  ask();
-                }}
-              >
-                <textarea
-                  aria-label="Ask a question"
-                  placeholder="Ask anything about your notes…"
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      ask();
-                    }
-                  }}
-                />
-                <div>
-                  <span>
-                    {data.account.sharing
-                      ? 'Using your ChatGPT plan'
-                      : 'Connect ChatGPT in Settings'}
-                  </span>
-                  {busy ? (
-                    <IconButton
-                      label="Stop response"
-                      onClick={() => guard(() => call('cancel-ai'))}
-                    >
-                      <Square size={14} />
-                    </IconButton>
-                  ) : (
-                    <button
-                      className="send-button"
-                      type="submit"
-                      disabled={!question.trim()}
-                      aria-label="Send question"
-                    >
-                      <ArrowUp size={18} />
-                    </button>
-                  )}
-                </div>
-              </form>
-              <p className="chat-disclaimer">Check important details against the transcript.</p>
-            </aside>
-          )}
+          {chatOpen && !globalChat && chat}
         </div>
       </main>
       <dialog
         ref={dialogRef}
+        className={modal?.kind === 'settings' ? 'settings-dialog' : ''}
         onCancel={() => setModal(null)}
         onClick={(e) => {
           if (e.target === dialogRef.current) setModal(null);
@@ -1279,18 +804,17 @@ function App() {
             <h2 id="modal-title">
               {
                 {
-                  settings: 'Make yourself at home.',
-                  folder: 'A place for your notes',
+                  settings: 'Settings',
+                  folder: 'New folder',
                   transcript: 'Add a transcript',
                   segment: 'Edit transcript',
                   history: 'Previous summaries',
-                  recipe: 'Create a recipe',
                   template: 'Create a template',
                 }[modal?.kind]
               }
             </h2>
             <IconButton label="Close dialog" onClick={() => setModal(null)}>
-              <X size={19} />
+              <X size={17} />
             </IconButton>
           </div>
           {error && (
@@ -1299,194 +823,29 @@ function App() {
             </div>
           )}
           {modal?.kind === 'settings' ? (
-            <div className="settings-body">
-              <section>
-                <p className="eyebrow">CHATGPT CONNECTION</p>
-                <div className="connection-box">
-                  <div>
-                    <strong>{data.account.email ?? 'Bring your ChatGPT plan'}</strong>
-                    <p>
-                      {data.account.sharing
-                        ? 'Connected · ChatGPT plan usage enabled'
-                        : 'Sign in to generate notes and ask questions. No API key.'}
-                    </p>
-                  </div>
-                  {accountBusy ? (
-                    <button
-                      className="secondary"
-                      onClick={() => guard(() => call('account', 'cancel'))}
-                    >
-                      Cancel sign-in
-                    </button>
-                  ) : (
-                    <button className="primary" onClick={() => account('connect')}>
-                      {data.account.connected ? 'Reconnect' : 'Continue with ChatGPT'}
-                      <ArrowUpRight size={15} />
-                    </button>
-                  )}
-                </div>
-                <p className="muted small">
-                  Selected notes and transcripts are sent to OpenAI when you use AI. Raw audio is
-                  retained locally for playback and is never sent to OpenAI. Eligibility and your
-                  ChatGPT plan limits apply.
-                </p>
-                {data.account.profiles.length > 0 && (
-                  <div className="setting-row">
-                    <label htmlFor="profile">Account</label>
-                    <select
-                      id="profile"
-                      disabled={accountBusy}
-                      value={data.account.active ?? ''}
-                      onChange={(e) => account('select', e.target.value)}
-                    >
-                      {data.account.profiles.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label} · {p.email ?? 'Pending registration'}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                {data.account.connected && (
-                  <div className="connection-actions">
-                    <button className="text-button" onClick={() => guard(() => call('usage'))}>
-                      Manage usage <ArrowUpRight size={13} />
-                    </button>
-                    <button
-                      className="text-button"
-                      disabled={accountBusy}
-                      onClick={() => account('add')}
-                    >
-                      Add account
-                    </button>
-                    <button
-                      className="text-button"
-                      disabled={accountBusy}
-                      onClick={() => account('disconnect')}
-                    >
-                      Sign out
-                    </button>
-                  </div>
-                )}
-                {data.account.sharing && (
-                  <div className="setting-row">
-                    <label htmlFor="model">Model</label>
-                    <select
-                      id="model"
-                      value={data.settings.model ?? models[0]?.id ?? ''}
-                      onChange={(e) => guard(() => setting('model', e.target.value))}
-                    >
-                      {models.length ? (
-                        models.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                          </option>
-                        ))
-                      ) : (
-                        <option value="">Loading account models…</option>
-                      )}
-                    </select>
-                  </div>
-                )}
-              </section>
-              <section>
-                <p className="eyebrow">CAPTURE</p>
-                <div className="setting-row">
-                  <div>
-                    <label htmlFor="locale">Meeting language</label>
-                    <small>Requires the on-device language on your Mac.</small>
-                  </div>
-                  <select
-                    id="locale"
-                    value={data.settings.locale ?? 'en-US'}
-                    onChange={(e) => guard(() => setting('locale', e.target.value))}
-                  >
-                    {[
-                      ['en-US', 'English (US)'],
-                      ['en-GB', 'English (UK)'],
-                      ['zh-CN', '中文（普通话）'],
-                      ['zh-TW', '中文（台灣）'],
-                      ['es-ES', 'Español'],
-                      ['fr-FR', 'Français'],
-                      ['de-DE', 'Deutsch'],
-                      ['ja-JP', '日本語'],
-                      ['ko-KR', '한국어'],
-                      ['pt-BR', 'Português'],
-                    ].map(([v, n]) => (
-                      <option key={v} value={v}>
-                        {n}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="setting-row">
-                  <div>
-                    <label htmlFor="systemAudio">Capture meeting audio</label>
-                    <small>Record and transcribe other apps alongside your microphone.</small>
-                  </div>
-                  <input
-                    id="systemAudio"
-                    type="checkbox"
-                    checked={data.settings.systemAudio ?? true}
-                    onChange={(e) => guard(() => setting('systemAudio', e.target.checked))}
-                  />
-                </div>
-                <div className="setting-row">
-                  <div>
-                    <label htmlFor="autoEnhance">Enhance when the meeting ends</label>
-                    <small>Use your ChatGPT plan automatically after recording.</small>
-                  </div>
-                  <input
-                    id="autoEnhance"
-                    type="checkbox"
-                    checked={data.settings.autoEnhance ?? true}
-                    onChange={(e) => guard(() => setting('autoEnhance', e.target.checked))}
-                  />
-                </div>
-                <p className="muted small">
-                  Microphone and meeting audio receive separate labels. Individual remote speakers
-                  are not automatically identified. Saved audio is available in each note’s
-                  Recordings tab. Let participants know when you record and transcribe.
-                </p>
-              </section>
-              <section>
-                <p className="eyebrow">YOUR NOTEBOOK</p>
-                <div className="settings-buttons">
-                  <button
-                    className="secondary"
-                    onClick={() =>
-                      guard(async () => {
-                        await flushAll();
-                        const p = await call('backup');
-                        if (p) {
-                          setNotice('Backup saved.');
-                          setModal(null);
-                        }
-                      })
-                    }
-                  >
-                    <Download size={15} />
-                    Back up notebook
-                  </button>
-                  <button className="secondary" onClick={() => guard(() => call('reveal'))}>
-                    <Folder size={15} />
-                    Open data folder
-                  </button>
-                  <button
-                    className="secondary"
-                    onClick={() => setModal({ kind: 'template', name: '', prompt: '' })}
-                  >
-                    <Plus size={15} />
-                    Custom template
-                  </button>
-                </div>
-                <p className="muted small">
-                  SQLite storage. Backups include your meetings, transcripts and chat history. Raw
-                  audio files and account credentials are excluded. Import merges new meetings
-                  without replacing existing ones.
-                </p>
-              </section>
-            </div>
+            <SettingsDialog
+              data={data}
+              ai={ai}
+              accountBusy={accountBusy}
+              account={account}
+              aiActions={aiActions}
+              models={{ chatgpt: chatgptModels, claude: claudeModels }}
+              setting={setting}
+              guard={guard}
+              onUsage={() => guard(() => call('usage'))}
+              onBackup={() =>
+                guard(async () => {
+                  await flushAll();
+                  const p = await call('backup');
+                  if (p) {
+                    setNotice('Backup saved.');
+                    setModal(null);
+                  }
+                })
+              }
+              onReveal={() => guard(() => call('reveal'))}
+              onTemplate={() => setModal({ kind: 'template', name: '', prompt: '' })}
+            />
           ) : modal?.kind === 'folder' ? (
             <form
               onSubmit={(e) => {
@@ -1509,9 +868,11 @@ function App() {
                   placeholder="e.g. Customer conversations"
                 />
               </label>
-              <button className="primary" type="submit">
-                Create folder
-              </button>
+              <div className="modal-footer">
+                <button className="primary" type="submit">
+                  Create folder
+                </button>
+              </div>
             </form>
           ) : ['transcript', 'segment'].includes(modal?.kind) ? (
             <form
@@ -1531,7 +892,7 @@ function App() {
                         });
                   updateMeeting(m);
                   setModal(null);
-                  setTab('transcript');
+                  setSheet('transcript');
                 });
               }}
             >
@@ -1554,9 +915,6 @@ function App() {
                 />
               </label>
               <div className="modal-footer">
-                <button className="primary" type="submit">
-                  Save transcript
-                </button>
                 {modal.kind === 'segment' && (
                   <button
                     type="button"
@@ -1573,16 +931,18 @@ function App() {
                     Delete segment
                   </button>
                 )}
+                <button className="primary" type="submit">
+                  Save transcript
+                </button>
               </div>
             </form>
-          ) : ['recipe', 'template'].includes(modal?.kind) ? (
+          ) : modal?.kind === 'template' ? (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 guard(async () => {
-                  const key = modal.kind === 'recipe' ? 'recipes' : 'templates';
                   const item = { id: crypto.randomUUID(), name: modal.name, prompt: modal.prompt };
-                  await setting(key, [...(data.settings[key] ?? []), item]);
+                  await setting('templates', [...(data.settings.templates ?? []), item]);
                   await load();
                   setModal(null);
                 });
@@ -1607,12 +967,14 @@ function App() {
                   placeholder="What should Stillnote focus on?"
                 />
               </label>
-              <button className="primary" type="submit">
-                Save {modal.kind}
-              </button>
+              <div className="modal-footer">
+                <button className="primary" type="submit">
+                  Save template
+                </button>
+              </div>
             </form>
           ) : modal?.kind === 'history' ? (
-            <div>
+            <div className="history-list">
               {meeting?.versions.map((v, i) => (
                 <div className="history-item" key={i}>
                   <div>

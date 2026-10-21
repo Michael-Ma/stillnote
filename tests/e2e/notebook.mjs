@@ -8,7 +8,7 @@ export async function notebook(h) {
   const original = 'Alex will ship the revised onboarding flow on Friday. 我们保存原始记录。';
   const meeting = await h.create(title, original);
   await page.getByRole('textbox', { name: 'Participants', exact: true }).fill('Alex, Sam');
-  await page.getByRole('tab', { name: 'Transcript', exact: true }).click();
+  await h.sheet('Transcript');
   await page.getByRole('button', { name: 'Paste a transcript', exact: true }).click();
   await page
     .getByLabel('Transcript', { exact: true })
@@ -56,6 +56,7 @@ export async function notebook(h) {
   await page.getByRole('dialog').waitFor();
   const backupPath = join(h.output, 'notebook.json');
   await h.saveDialog(backupPath);
+  await page.getByRole('button', { name: 'Notebook', exact: true }).click();
   await page.getByRole('button', { name: 'Back up notebook', exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'Backup saved' }).waitFor();
   const backup = JSON.parse(readFileSync(backupPath, 'utf8'));
@@ -95,6 +96,7 @@ export async function notebook(h) {
   await page.getByRole('button', { name: 'Restore note', exact: true }).click();
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click();
   await page.getByRole('button', { name: 'My notes', exact: true }).click();
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
   await page.getByRole('textbox', { name: 'Search notes', exact: true }).fill('原始记录');
   await page.locator('.note-row').filter({ hasText: title }).waitFor();
   assert.equal(await page.locator('.note-row').count(), 1);

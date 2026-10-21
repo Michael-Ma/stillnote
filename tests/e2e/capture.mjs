@@ -34,10 +34,10 @@ async function stop(h, id, expected) {
 
 async function playback(h, expectedSessions = 1) {
   const page = h.page;
-  await page.getByRole('tab', { name: 'Recordings', exact: true }).click();
+  await h.sheet('Recordings');
   assert.equal(await page.locator('.saved-recording').count(), expectedSessions);
   const audio = page.locator('audio[aria-label="Microphone recording"]').first();
-  await audio.waitFor();
+  await audio.waitFor({ state: 'attached' });
   await page.waitForFunction(() => {
     const element = document.querySelector('audio[aria-label="Microphone recording"]');
     return element?.readyState >= 1 || element?.error;
@@ -55,7 +55,7 @@ async function playback(h, expectedSessions = 1) {
   );
   await audio.evaluate((element) => element.pause());
   const system = page.locator('audio[aria-label="Meeting audio recording"]').first();
-  await system.waitFor();
+  await system.waitFor({ state: 'attached' });
   await page.waitForFunction(
     () => document.querySelector('audio[aria-label="Meeting audio recording"]')?.readyState >= 1,
   );
@@ -136,6 +136,7 @@ export async function capture(h) {
   await h.saveDialog(backupPath);
   await h.page.getByRole('button', { name: 'Back to Home', exact: true }).click();
   await h.page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await h.page.getByRole('button', { name: 'Notebook', exact: true }).click();
   await h.page.getByRole('button', { name: 'Back up notebook', exact: true }).click();
   await h.page.getByRole('status').filter({ hasText: 'Backup saved' }).waitFor();
   const backup = JSON.parse(readFileSync(backupPath, 'utf8'));
@@ -165,7 +166,7 @@ export async function capture(h) {
 
   const partial = await h.create('E2E partial recognition');
   await start(h);
-  await h.page.getByRole('tab', { name: /^Transcript(?: \d+)?$/ }).click();
+  await h.sheet('Transcript');
   await h.page
     .getByText('A partially recognized sentence survives stop.', { exact: true })
     .waitFor();
@@ -187,7 +188,7 @@ export async function capture(h) {
     'Recognition silence must not discard raw audio',
   );
   await h.page.getByText('Review transcript coverage', { exact: true }).waitFor();
-  await h.page.getByRole('tab', { name: 'Recordings', exact: true }).click();
+  await h.sheet('Recordings');
   await h.page
     .locator('.saved-recording')
     .getByRole('button', { name: 'Retry transcription', exact: true })
@@ -248,8 +249,8 @@ export async function capture(h) {
     ['microphone'],
   );
   verifyWaveArtifacts(h, microphoneSaved);
-  await h.page.getByRole('tab', { name: 'Recordings', exact: true }).click();
-  await h.page.locator('audio[aria-label="Microphone recording"]').waitFor();
+  await h.sheet('Recordings');
+  await h.page.locator('audio[aria-label="Microphone recording"]').waitFor({ state: 'attached' });
   assert.equal(await h.page.locator('audio[aria-label="Meeting audio recording"]').count(), 0);
   h.assertNoRendererErrors();
 }
