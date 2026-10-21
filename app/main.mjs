@@ -18,6 +18,8 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { Store, templates, recipes, markdown, context } from './store.mjs';
 import { ChatGPT } from './auth.mjs';
+import { ClaudeCode } from './providers/claude-code.mjs';
+import { aiState, modelSetting, providerIds, terminalScript } from './providers/index.mjs';
 import {
   recordingDirectory,
   inspectRecordingTracks,
@@ -45,6 +47,7 @@ if (!app.requestSingleInstanceLock()) {
   let win,
     store,
     auth,
+    claude,
     native,
     activeAI,
     testAdapter,
@@ -60,6 +63,20 @@ if (!app.requestSingleInstanceLock()) {
   const emit = (event) => {
     if (win && !win.isDestroyed()) win.webContents.send('stillnote:event', event);
   };
+  const aiNow = () => aiState(store.settings().provider, auth.status(), claude.status());
+  // With nothing connected, ChatGPT's errors explain how to connect.
+  const activeId = () => aiNow().provider ?? 'chatgpt';
+  const providerFor = (id) => (id === 'claude' ? claude : auth);
+  const aiReady = () => {
+    const state = aiNow();
+    return !!state.provider && state[state.provider].ready;
+  };
+  // A detected Claude Code is only used in the background once the user has used or chosen it;
+  // ChatGPT always required an explicit sign-in.
+  const backgroundAllowed = () => {
+    const state = aiNow();
+    return !!state.chosen || state.provider === 'chatgpt';
+  };
   const snapshot = () => ({
     meetings: store.all(true),
     folders: store.folders(),
@@ -67,6 +84,7 @@ if (!app.requestSingleInstanceLock()) {
     templates: [...templates, ...(store.settings().templates ?? [])],
     recipes: [...recipes, ...(store.settings().recipes ?? [])],
     account: auth.status(),
+    ai: aiNow(),
     recording,
     starting,
     calendar: calendarEvents,
@@ -226,7 +244,8 @@ if (!app.requestSingleInstanceLock()) {
           completed &&
           e.status !== 'failed' &&
           store.settings().autoEnhance !== false &&
-          auth.status().sharing &&
+          aiReady() &&
+          backgroundAllowed() &&
           !activeAI
         ) {
           const sparse = completed.recordings.at(-1)?.diagnostics?.lowCoverage;
@@ -309,9 +328,20 @@ if (!app.requestSingleInstanceLock()) {
     activeAI = controller;
     try {
       const settings = store.settings();
-      const available = await auth.models();
-      const model = available.find((m) => m.id === settings.model)?.id ?? available[0]?.id;
-      if (!model) throw new Error('No ChatGPT models are available for this account.');
+      const providerId = activeId(),
+        provider = providerFor(providerId);
+      // Using a detected provider from the UI is the user's choice; remember it.
+      if (!settings.provider && providerId === 'claude' && claude.status().ready) {
+        store.setting('provider', 'claude');
+        emit({ type: 'ai', ai: aiNow() });
+      }
+      const available = await provider.models();
+      const model =
+        available.find((m) => m.id === settings[modelSetting[providerId]])?.id ?? available[0]?.id;
+      if (!model)
+        throw new Error(
+          `No ${providerId === 'claude' ? 'Claude' : 'ChatGPT'} models are available for this account.`,
+        );
       controller.signal.throwIfAborted();
       const meetings =
         kind === 'enhance'
@@ -363,7 +393,7 @@ if (!app.requestSingleInstanceLock()) {
           { role: 'user', content: question },
         ];
       }
-      const result = await auth.respond({
+      const result = await provider.respond({
         model,
         input,
         instructions,
@@ -455,6 +485,17 @@ if (!app.requestSingleInstanceLock()) {
       } catch (e) {
         startupError = e.message;
       }
+      const onClaudeChange = () => emit({ type: 'ai', ai: aiNow() });
+      // STILLNOTE_DISABLE_CLAUDE keeps scripted UI runs from detecting the developer's own CLI.
+      claude =
+        testAdapter?.createClaude?.(onClaudeChange) ??
+        new ClaudeCode({
+          workDir: join(app.getPath('userData'), 'claude-work'),
+          onChange: onClaudeChange,
+          ...(process.env.STILLNOTE_DISABLE_CLAUDE ? { candidates: [], shell: null } : {}),
+        });
+      if (store.settings().claudePath) claude.setPath(store.settings().claudePath);
+      else claude.load();
       win = new BrowserWindow({
         width: 1440,
         height: 940,
@@ -470,6 +511,13 @@ if (!app.requestSingleInstanceLock()) {
           nodeIntegration: false,
           sandbox: true,
         },
+      });
+      let claudeCheckedAt = 0;
+      win.on('focus', () => {
+        // Pick up a sign-in or install finished in Terminal or the browser.
+        if (Date.now() - claudeCheckedAt < 5000) return;
+        claudeCheckedAt = Date.now();
+        void claude.refresh();
       });
       win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       win.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -668,7 +716,61 @@ if (!app.requestSingleInstanceLock()) {
         if (action === 'models') return auth.models();
         throw new Error('Unknown account action.');
       });
-      register('usage', () => shell.openExternal('https://chatgpt.com/settings/usage'));
+      register('usage', () =>
+        shell.openExternal(
+          activeId() === 'claude'
+            ? 'https://claude.ai/settings/usage'
+            : 'https://chatgpt.com/settings/usage',
+        ),
+      );
+      register('ai-provider', async (action, value) => {
+        if (
+          activeAI &&
+          ['use', 'claude-sign-in', 'claude-path', 'claude-terminal'].includes(action)
+        )
+          throw new Error('Stop the current AI response before changing AI settings.');
+        if (action === 'use') {
+          if (!providerIds.includes(value)) throw new Error('Unknown AI provider.');
+          store.setting('provider', value);
+          if (value === 'claude') void claude.refresh();
+          return aiNow();
+        }
+        if (action === 'refresh') {
+          await claude.refresh();
+          return aiNow();
+        }
+        if (action === 'claude-sign-in') {
+          await claude.signIn();
+          return aiNow();
+        }
+        if (action === 'claude-cancel') {
+          claude.cancel();
+          return aiNow();
+        }
+        if (action === 'claude-path') {
+          if (value != null && (typeof value !== 'string' || !value.startsWith('/')))
+            throw new Error('Choose the full path to the claude program.');
+          store.setting('claudePath', value || null);
+          await claude.setPath(value || null);
+          return aiNow();
+        }
+        if (action === 'claude-terminal') {
+          // Install and sign-in run in Anthropic's own installer and CLI, visibly in Terminal.
+          if (!['sign-in', 'install'].includes(value))
+            throw new Error('Unknown Claude setup step.');
+          const dir = join(app.getPath('userData'), 'claude-work');
+          mkdirSync(dir, { recursive: true, mode: 0o700 });
+          const file = join(dir, `claude-${value}.command`);
+          writeFileSync(file, terminalScript(value, claude.status().path), { mode: 0o700 });
+          const failure = await shell.openPath(file);
+          if (failure) throw new Error('Could not open Terminal: ' + failure);
+          return aiNow();
+        }
+        if (action === 'models') return providerFor(activeId()).models();
+        if (action === 'install-help')
+          return shell.openExternal('https://code.claude.com/docs/en/setup');
+        throw new Error('Unknown AI provider action.');
+      });
       register('ai', ai);
       register('cancel-ai', () => activeAI?.abort());
       register('export', async (id) =>
@@ -752,6 +854,7 @@ if (!app.requestSingleInstanceLock()) {
         }
         activeAI?.abort();
         auth.cancel();
+        claude.cancel();
         native?.stdin.end();
       });
       app.on('window-all-closed', () => app.quit());

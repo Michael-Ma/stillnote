@@ -9,7 +9,11 @@ const probe = JSON.parse(execFileSync(helper, ['--self-test'], { encoding: 'utf8
 assert.equal(probe.type, 'ready');
 const desktop = await electron.launch({
   executablePath: join(bundle, 'Contents/MacOS/Stillnote'),
-  env: { ...process.env, STILLNOTE_DATA_DIR: mkdtempSync(resolve('.test-data-package-')) },
+  env: {
+    ...process.env,
+    STILLNOTE_DATA_DIR: mkdtempSync(resolve('.test-data-package-')),
+    STILLNOTE_DISABLE_CLAUDE: '1',
+  },
   timeout: 30000,
 });
 try {

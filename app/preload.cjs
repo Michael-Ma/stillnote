@@ -15,6 +15,7 @@ const channels = [
   'transcribe-recording',
   'calendar',
   'account',
+  'ai-provider',
   'usage',
   'ai',
   'cancel-ai',

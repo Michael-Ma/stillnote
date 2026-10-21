@@ -173,6 +173,17 @@ Sign-out attempts remote refresh-token revocation, clears local tokens, and repo
 
 The app does not provide the model with filesystem, shell, email, calendar-write, or other execution tools. Meeting content is explicitly treated as untrusted source material. Follow-up emails are drafts inside chat.
 
+### The Claude plan path
+
+`app/providers/` gives ChatGPT and Claude one contract (`status`, `models`, `respond`, `cancel`). The selected provider is `settings.provider`; when none is chosen, the first ready plan is used, preferring ChatGPT. The renderer receives both statuses as `state.ai` and `{ type: 'ai' }` events.
+
+Anthropic does not permit third-party apps to offer Claude.ai sign-in or to collect or store subscription tokens, but it allows an end user's own unmodified Claude Code to run with their plan ([legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)). Stillnote therefore only runs the user's `claude` program:
+
+- **Detect.** Look in `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.claude/local`, `~/.npm-global/bin`, then ask the login shell, because packaged apps do not inherit the shell `PATH`. `claude auth status --json` reports the sign-in method; only `claude.ai` or `oauth_token` counts as a plan. Status refreshes when the window regains focus.
+- **Set up.** Sign-in runs `claude auth login --claudeai`, which completes in the browser. Install and sign-in can also run visibly in Terminal through a generated `.command` script that calls only Anthropic's installer and CLI.
+- **Infer.** `claude -p --output-format stream-json --verbose --include-partial-messages --model <alias> --tools "" --safe-mode --no-session-persistence --max-turns 1 --system-prompt <instructions>`, with the prompt on stdin, an empty working folder, and `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` removed. `--bare` is not used because it ignores plan sign-in. Text deltas stream to the UI; only a successful `result` event commits text. `rate_limit_event` usage is kept in memory for display.
+- **Fail visibly.** Signed out, plan limit (with reset time), outdated CLI, missing CLI, empty or interrupted output, and cancellation all preserve the previous summary.
+
 ## 6. Notes, evidence, and chat
 
 A meeting stores separate `notes`, `summary`, `transcript`, and `versions` fields. Enhancing never overwrites the user's rough notes. Updating an existing summary keeps up to 20 prior versions. Transcript segments can be corrected, renamed, or deleted; their search index is updated transactionally.

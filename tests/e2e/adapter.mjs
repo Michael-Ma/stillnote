@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { consumeResponse } from '../../app/stream.mjs';
+import { claudeModels } from '../../app/providers/claude-code.mjs';
 
 export function wav(seconds = 2, frequency = 440) {
   const rate = 16000;
@@ -121,6 +122,45 @@ export function createTestAdapter({ dataDir }) {
             }
           })();
           return consumeResponse(body, onDelta);
+        },
+      };
+    },
+    // Never runs the developer's own Claude Code. scenario.claude overrides the status.
+    createClaude() {
+      const fixture = {
+        id: 'claude',
+        label: 'Claude',
+        installed: false,
+        checking: false,
+        path: null,
+        version: null,
+        loggedIn: false,
+        authMethod: null,
+        subscriptionType: null,
+        email: null,
+        ready: false,
+        billing: null,
+        usage: null,
+        signingIn: false,
+        loginUrl: null,
+        error: null,
+        ...scenario.claude,
+      };
+      const status = () => ({ ...fixture });
+      return {
+        load() {},
+        refresh: async () => status(),
+        setPath: async () => status(),
+        status,
+        cancel() {},
+        disconnect: status,
+        async signIn() {
+          throw new Error('Fixture Claude sign-in is unavailable.');
+        },
+        models: async () => claudeModels,
+        async respond() {
+          log({ type: 'claude-request' });
+          throw new Error('Fixture Claude responses are not configured.');
         },
       };
     },

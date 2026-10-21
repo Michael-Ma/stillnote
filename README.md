@@ -1,6 +1,6 @@
 # Stillnote
 
-A local macOS meeting notebook inspired by Granola, powered by your ChatGPT subscription instead of an API key.
+A local macOS meeting notebook inspired by Granola, powered by your ChatGPT or Claude subscription instead of an API key.
 
 Stillnote keeps the core loop small: **open a note → capture a conversation → jot down what matters → enhance the notes → ask follow-up questions**. Its home feed, focused document view, and bottom recording/chat dock follow Granola's interaction patterns. It is an independent project, not an official Granola client.
 
@@ -49,13 +49,24 @@ This uses OpenAI's documented **Sign in with ChatGPT** flow for eligible local p
 
 The subscription route supports text inference but **does not include the transcription API**. That is why audio is transcribed on the Mac. See the official [sign-in guide](https://developers.openai.com/siwc/token-sharing-open-source/sign-in) and [preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
 
+## Or use your Claude plan
+
+If Claude Code is installed and signed in with a Claude Pro or Max plan, Stillnote detects it and can use it with no extra setup.
+
+1. Open **Settings** and choose **Claude**.
+2. If Claude Code is missing, choose **Install Claude Code**. Terminal runs Anthropic's official installer (`curl -fsSL https://claude.ai/install.sh | bash`) and then `claude auth login`.
+3. If it is installed but signed out, choose **Sign in to Claude**. Sign-in completes in your browser through Anthropic's own flow. You can also run `claude auth login` yourself.
+4. Choose a model (Sonnet by default).
+
+Stillnote runs your own, unmodified `claude` program in print mode with tools, MCP servers, hooks, and CLAUDE.md files disabled, from an empty working folder. It never reads Claude credentials or the keychain and stores no Claude tokens. `ANTHROPIC_API_KEY` is removed from the program's environment, and a Claude Code that is signed in with an API key rather than a plan is refused, so usage is never silently billed to an API account. Requests count against your Claude plan's usage limits. See Anthropic's [legal and compliance](https://code.claude.com/docs/en/legal-and-compliance) notes on subscription sign-in.
+
 ## Take your first note
 
 1. Choose **Quick note**, or connect your Mac calendars and select a meeting.
 2. Press the waveform button at the bottom to start recording.
 3. Grant **Microphone**, **Speech Recognition**, and, for meeting audio, **Screen & System Audio Recording** access in macOS.
 4. Write a few notes while the transcript accumulates.
-5. Choose **Finish meeting**. Open **Recordings** to listen to the saved sources or retry transcription. If ChatGPT is connected and automatic enhancement is enabled, Stillnote enhances notes unless transcript coverage looks sparse. You can also choose **Enhance notes** later. Rough notes are optional.
+5. Choose **Finish meeting**. Open **Recordings** to listen to the saved sources or retry transcription. If ChatGPT or Claude is connected and automatic enhancement is enabled, Stillnote enhances notes unless transcript coverage looks sparse. You can also choose **Enhance notes** later. Rough notes are optional.
 
 If on-device recognition is unavailable, enable Dictation and install the meeting language in macOS Settings, then restart Stillnote. Audio capture can continue even when recognition is unavailable. It will not silently switch to a cloud transcription service. English, Chinese, and other language choices depend on the recognizer installed on your Mac.
 
@@ -69,14 +80,15 @@ If on-device recognition is unavailable, enable Dictation and install the meetin
 | Packaged app | `~/Library/Application Support/Stillnote/` |
 | Override | Set `STILLNOTE_DATA_DIR` to an absolute directory |
 
-Notes, transcripts, and chat history are stored locally in `notebook.sqlite`. This notebook database is not application-encrypted; macOS account access and FileVault are the disk protection boundary. ChatGPT credentials are separately encrypted with Electron's macOS `safeStorage` mechanism and are never included in notebook backups or renderer state.
+Notes, transcripts, and chat history are stored locally in `notebook.sqlite`. This notebook database is not application-encrypted; macOS account access and FileVault are the disk protection boundary. ChatGPT credentials are separately encrypted with Electron's macOS `safeStorage` mechanism and are never included in notebook backups or renderer state. Stillnote holds no Claude credentials; Claude Code keeps its own sign-in.
 
-**AI is online:** selected notes, transcripts, and recent chat context go to OpenAI when you enhance or chat. Automatic enhancement is enabled by default after you connect ChatGPT; it can be disabled in Settings. Audio is saved as separate 16 kHz mono PCM WAV files under `recordings/<meeting-id>/<session-id>/`, and is never sent to OpenAI. It remains until you remove the local files; moving a note to Trash does not remove audio. Storage is approximately 110 MiB per hour per source. JSON notebook backups explicitly exclude these audio files; copy the data folder separately to preserve audio.
+**AI is online:** selected notes, transcripts, and recent chat context go to OpenAI or Anthropic, whichever you use, when you enhance or chat. Automatic enhancement is enabled by default once an AI plan is connected; it can be disabled in Settings. Audio is saved as separate 16 kHz mono PCM WAV files under `recordings/<meeting-id>/<session-id>/`, and is never sent to an AI provider. It remains until you remove the local files; moving a note to Trash does not remove audio. Storage is approximately 110 MiB per hour per source. JSON notebook backups explicitly exclude these audio files; copy the data folder separately to preserve audio.
 
 ## Development and verification
 
 ```sh
-npm test                 # storage, search, imports, streaming, and synthetic OAuth tests
+npm test                 # storage, search, imports, streaming, synthetic OAuth and Claude CLI tests
+npm run test:claude      # opt-in: one tiny live request through your own Claude Code
 npm run test:ui          # original notebook smoke checks
 npm run test:e2e         # reusable notebook/capture/playback/AI/crash-recovery suites
 npm run test:native-scheduler # deterministic native scheduling regression
@@ -89,7 +101,7 @@ npm run build            # Swift helper, Electron main/preload, and renderer
 npm run package          # standalone macOS app
 ```
 
-The desktop test exercises real persistence, transcript editing, folder assignment, stars, search, Trash/restore, Markdown export, immediate-close draft saving, and sign-in error recovery. The deterministic E2E suite replaces device and ChatGPT transports, but exercises the real renderer, IPC, SQLite, media protocol, seeking, decoded playback, and restart recovery. Native file dialogs are stubbed for import/export. The separate native tests use synthesized speech and the real audio writer; recognition is opt-in. No automatic test records a real meeting or accesses a real ChatGPT account.
+The desktop test exercises real persistence, transcript editing, folder assignment, stars, search, Trash/restore, Markdown export, immediate-close draft saving, and sign-in error recovery. The deterministic E2E suite replaces device, ChatGPT and Claude transports, but exercises the real renderer, IPC, SQLite, media protocol, seeking, decoded playback, and restart recovery. Native file dialogs are stubbed for import/export. The separate native tests use synthesized speech and the real audio writer; recognition is opt-in. No automatic test records a real meeting or accesses a real ChatGPT or Claude account; Claude provider tests drive a fake `claude` program.
 
 See [validation results and remaining checks](docs/VALIDATION.md) for the evidence boundary. Live account inference and actual microphone/system-audio transcription still require a user-authorized acceptance test.
 

@@ -12,7 +12,7 @@ async function launch() {
   desktop = await electron.launch({
     args: ['.'],
     cwd: process.cwd(),
-    env: { ...process.env, STILLNOTE_DATA_DIR: dataDir },
+    env: { ...process.env, STILLNOTE_DATA_DIR: dataDir, STILLNOTE_DISABLE_CLAUDE: '1' },
     timeout: 30000,
   });
   const page = await desktop.firstWindow();

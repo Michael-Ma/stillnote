@@ -21,7 +21,8 @@
     "test:e2e": "node scripts/e2e.mjs",
     "test:native": "node scripts/native-audio-test.mjs",
     "test:native:recognize": "node scripts/native-audio-test.mjs --recognize",
-    "test:native-scheduler": "node scripts/native-scheduler-test.mjs"
+    "test:native-scheduler": "node scripts/native-scheduler-test.mjs",
+    "test:claude": "node scripts/claude-smoke.mjs"
   },
   "build": {
     "appId": "local.stillnote.app",

@@ -452,8 +452,13 @@ export class Store {
   }
 }
 function validateSetting(key, value) {
-  if (['model', 'locale'].includes(key)) text(value, 300);
-  else if (['systemAudio', 'autoEnhance'].includes(key)) {
+  if (['model', 'claudeModel', 'locale'].includes(key)) text(value, 300);
+  else if (key === 'provider') {
+    if (!['chatgpt', 'claude'].includes(value)) throw new Error('Invalid AI provider.');
+  } else if (key === 'claudePath') {
+    if (value !== null && !(typeof value === 'string' && /^\/.{1,999}$/s.test(value)))
+      throw new Error('Invalid Claude Code path.');
+  } else if (['systemAudio', 'autoEnhance'].includes(key)) {
     if (typeof value !== 'boolean') throw new Error('Invalid preference.');
   } else if (['templates', 'recipes'].includes(key)) {
     if (!Array.isArray(value)) throw new Error('Invalid templates or recipes.');
