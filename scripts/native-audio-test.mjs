@@ -89,17 +89,38 @@ function run(command, commandArgs) {
 }
 
 async function recognizeFile(path, recordingId) {
-  // LaunchServices gives this dedicated application its own TCC identity. Direct
-  // spawning from Node attributes Speech access to the host application instead.
-  const app = join(reportDir, 'Stillnote Audio Test.app');
-  const contents = join(app, 'Contents');
-  const executable = join(contents, 'MacOS', 'StillnoteCapture');
   const resultPath = join(reportDir, 'recognition-events.jsonl');
-  await mkdir(dirname(executable), { recursive: true });
-  await copyFile(helper, executable);
-  await writeFile(
-    join(contents, 'Info.plist'),
-    `<?xml version="1.0" encoding="UTF-8"?>
+  const selfTest = JSON.parse((await run(helper, ['--self-test'])).trim());
+  const recognitionArgs = [
+    '--transcribe-file',
+    path,
+    '--result',
+    resultPath,
+    '--recording-id',
+    recordingId,
+    '--locale',
+    'en-US',
+    ...(streamed ? ['--streamed'] : []),
+    ...(dualSource ? ['--dual-source'] : []),
+  ];
+  if (selfTest.engine === 'speechTranscriber') {
+    report.recognitionLaunch = {
+      resultPath,
+      permissionMayBeRequested: false,
+      engine: selfTest.engine,
+    };
+    await run(helper, recognitionArgs);
+  } else {
+    // LaunchServices gives this dedicated application its own TCC identity. Direct
+    // spawning from Node attributes Speech access to the host application instead.
+    const app = join(reportDir, 'Stillnote Audio Test.app');
+    const contents = join(app, 'Contents');
+    const executable = join(contents, 'MacOS', 'StillnoteCapture');
+    await mkdir(dirname(executable), { recursive: true });
+    await copyFile(helper, executable);
+    await writeFile(
+      join(contents, 'Info.plist'),
+      `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>local.stillnote.audio-test</string>
@@ -111,29 +132,16 @@ async function recognizeFile(path, recordingId) {
 <key>LSUIElement</key><true/>
 <key>NSSpeechRecognitionUsageDescription</key><string>Stillnote Audio Test checks transcription accuracy using only synthetic prerecorded speech.</string>
 </dict></plist>\n`,
-  );
-  await run('/usr/bin/codesign', ['--force', '--sign', '-', app]);
-  report.recognitionLaunch = {
-    app,
-    bundleId: 'local.stillnote.audio-test',
-    resultPath,
-    permissionMayBeRequested: true,
-  };
-  await run('/usr/bin/open', [
-    '-n',
-    app,
-    '--args',
-    '--transcribe-file',
-    path,
-    '--result',
-    resultPath,
-    '--recording-id',
-    recordingId,
-    '--locale',
-    'en-US',
-    ...(streamed ? ['--streamed'] : []),
-    ...(dualSource ? ['--dual-source'] : []),
-  ]);
+    );
+    await run('/usr/bin/codesign', ['--force', '--sign', '-', app]);
+    report.recognitionLaunch = {
+      app,
+      bundleId: 'local.stillnote.audio-test',
+      resultPath,
+      permissionMayBeRequested: true,
+    };
+    await run('/usr/bin/open', ['-n', app, '--args', ...recognitionArgs]);
+  }
   while (Date.now() < deadline) {
     let data = '';
     try {
@@ -321,6 +329,12 @@ function wordErrorRate(referenceTokens, hypothesisTokens) {
 try {
   assert.equal(process.platform, 'darwin', 'Native audio acceptance requires macOS');
   await mkdir(reportDir, { recursive: true });
+  report.captureInvariants = (await run(helper, ['--capture-self-test']))
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .find((event) => event.type === 'capture-self-test');
+  assert.equal(report.captureInvariants?.status, 'passed');
   temporary = await mkdtemp(join(tmpdir(), 'stillnote-native-audio-'));
   const input = join(temporary, 'input.aiff');
   const fixture = join(root, 'tests/fixtures/native-speech.txt');
@@ -348,10 +362,7 @@ try {
     spokenScriptPath,
   };
   if (repetitions > 1)
-    assert.ok(
-      report.input.duration > 60,
-      'Long fixture must cross two 30-second recognition chunk boundaries',
-    );
+    assert.ok(report.input.duration > 60, 'Long fixture must cross one minute of continuous audio');
   assert.ok(
     report.input.duration > 5,
     'Synthetic speech should be long enough to detect truncation',
@@ -418,10 +429,14 @@ try {
     const result = await recognizeFile(resolve(reportDir, microphone.fileName), recordingId);
     if (streamed) {
       assert.equal(result.streamed, true, 'Native helper must confirm the live streaming path');
+      for (const stats of Object.values(result.diagnostics ?? {})) {
+        assert.equal(stats.recognitionErrors, 0, 'Streaming recognition must not fail');
+        assert.equal(stats.recognitionTimeouts, 0, 'Streaming finalization must not time out');
+      }
       if (repetitions > 1) {
         assert.ok(
           new Set((result.segments ?? []).map((segment) => segment.segmentId)).size >= 2,
-          'Long streaming test must cross a recognition-window boundary',
+          'Long streaming test must cross multiple finalized phrases',
         );
       }
     }
@@ -431,6 +446,19 @@ try {
     );
     if (dualSource)
       assert.equal(result.dualSource, true, 'Native helper must confirm dual-source streaming');
+    assert.equal(
+      new Set(result.segments.map((segment) => segment.segmentId)).size,
+      result.segments.length,
+      'Finalized phrase IDs must be unique',
+    );
+    for (const segment of result.segments) {
+      assert.ok(
+        Number.isFinite(segment.timestamp) &&
+          segment.timestamp >= 0 &&
+          segment.timestamp <= report.input.duration,
+        'Phrase timestamps must be within the recording',
+      );
+    }
     const transcript = result.segments.map((segment) => segment.text).join(' ');
     const spoken = words(script);
     const recognized = words(transcript);
@@ -496,16 +524,8 @@ try {
     }
     for (const score of scored) {
       assert.ok(
-        score.keywordRecall >= 0.7,
-        `${score.source ?? 'microphone'} keyword recall must be at least 70%`,
-      );
-      assert.ok(
-        score.wordCountRatio >= 0.75 && score.wordCountRatio <= 1.5,
-        `${score.source ?? 'microphone'} word count must be 75–150% of the script`,
-      );
-      assert.ok(
-        score.wordErrorRate.value <= 0.25,
-        `${score.source ?? 'microphone'} word error rate must be at most 25%`,
+        score.wordErrorRate.value <= 0.15,
+        `${score.source ?? 'microphone'} word error rate must be at most 15%`,
       );
     }
     report.realStreamingRecognizerTested = streamed;

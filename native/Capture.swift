@@ -1,6 +1,8 @@
 // Every PCM buffer crossing queues is copied and then transferred to the main actor.
 @preconcurrency import AVFoundation
 import AppKit
+import AudioToolbox
+import CoreAudio
 import EventKit
 import Foundation
 // Delegate references cross to the main actor only for identity checks; stream operations stay isolated.
@@ -104,11 +106,29 @@ final class RecognitionWindow {
   let offset: TimeInterval
   let buffer = AVAudioPCMBuffer(
     pcmFormat: AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!,
-    frameCapacity: 10 * 16000)!
+    frameCapacity: 15 * 16000)!
+  var quietFrames = 0
   var latest = ""
   var firstWordTime: TimeInterval = 0
   var finalized = false
   init(offset: TimeInterval) { self.offset = offset }
+  var ready: Bool {
+    buffer.frameLength == buffer.frameCapacity
+      || (buffer.frameLength >= 8 * 16000 && quietFrames >= 4800)
+  }
+  func append(_ input: UnsafePointer<Float>, count available: Int) -> Int {
+    let existing = Int(buffer.frameLength)
+    var count = 0
+    while count < available, existing + count < Int(buffer.frameCapacity) {
+      quietFrames = abs(input[count]) < 0.003 ? quietFrames + 1 : 0
+      count += 1
+      if existing + count >= 8 * 16000 && quietFrames >= 4800 { break }
+    }
+    memcpy(
+      buffer.floatChannelData![0].advanced(by: existing), input, count * MemoryLayout<Float>.size)
+    buffer.frameLength += AVAudioFrameCount(count)
+    return count
+  }
 }
 
 // Apple recognition requests for the two captured inputs must not compete. Audio
@@ -118,18 +138,20 @@ final class SpeechJob {
   let key: String
   let window: RecognitionWindow
   let recognizer: SFSpeechRecognizer
+  let context: [String]
   let control = RecognitionCancellation()
   let partial: (String, TimeInterval) -> Void
   let complete: (Result<(String, TimeInterval), Error>) -> Void
   var cancelled = false
   init(
-    key: String, window: RecognitionWindow, recognizer: SFSpeechRecognizer,
+    key: String, window: RecognitionWindow, recognizer: SFSpeechRecognizer, context: [String] = [],
     partial: @escaping (String, TimeInterval) -> Void,
     complete: @escaping (Result<(String, TimeInterval), Error>) -> Void
   ) {
     self.key = key
     self.window = window
     self.recognizer = recognizer
+    self.context = context
     self.partial = partial
     self.complete = complete
   }
@@ -187,7 +209,7 @@ final class SpeechScheduler {
       try writer.close()
       let result = try await recognizeFile(
         writer.url, recognizer: job.recognizer,
-        control: job.control, onPartial: job.partial)
+        control: job.control, context: job.context, onPartial: job.partial)
       if !job.cancelled { job.complete(.success(result)) }
     } catch { if !job.cancelled { job.complete(.failure(error)) } }
   }
@@ -263,29 +285,382 @@ func schedulerSelfTest() async throws {
   guard !scheduler.running, maximum == 1, successes == 13, failures == 13, order.last == 31 else {
     throw problem("Active cancellation caused duplicate completion or blocked the queue.")
   }
+  let voiced = [Float](repeating: 0.1, count: 16 * 16000)
+  let quiet = [Float](repeating: 0, count: 8 * 16000)
+  let cut = RecognitionWindow(offset: 0)
+  _ = voiced.withUnsafeBufferPointer { cut.append($0.baseAddress!, count: 8 * 16000) }
+  guard !cut.ready else { throw problem("Legacy window cut before silence.") }
+  _ = quiet.withUnsafeBufferPointer { cut.append($0.baseAddress!, count: 4799) }
+  guard !cut.ready else { throw problem("Legacy window cut before 300 ms of silence.") }
+  _ = quiet.withUnsafeBufferPointer { cut.append($0.baseAddress!, count: 1) }
+  guard cut.ready, cut.buffer.frameLength == 132800 else {
+    throw problem("Legacy silence boundary regression.")
+  }
+  let hard = RecognitionWindow(offset: 0)
+  let consumed = voiced.withUnsafeBufferPointer { hard.append($0.baseAddress!, count: $0.count) }
+  guard hard.ready, consumed == 15 * 16000 else { throw problem("Legacy hard cap regression.") }
+  let silent = RecognitionWindow(offset: 0)
+  _ = quiet.withUnsafeBufferPointer { silent.append($0.baseAddress!, count: $0.count) }
+  guard silent.ready, silent.buffer.frameLength == 8 * 16000 else {
+    throw problem("Legacy minimum window regression.")
+  }
   emit([
     "type": "scheduler-self-test", "status": "passed", "maximumConcurrentRecognition": maximum,
     "successfulJobs": successes, "cancelledJobs": failures, "backlogBound": 24,
-    "speechRecognitionInvoked": false, "liveAudioInvoked": false,
+    "speechRecognitionInvoked": false, "liveAudioInvoked": false, "silenceBoundaryChecks": 5,
   ])
 }
 
 @MainActor
-final class SpeechChannel {
+protocol SpeechChannel: AnyObject {
+  var errors: Int { get }
+  var timeouts: Int { get }
+  func append(_ buffer: AVAudioPCMBuffer, offset: TimeInterval)
+  func finish() async
+}
+
+var recognitionEngine: String {
+  if #available(macOS 26.0, *) { return "speechTranscriber" }
+  return "legacy"
+}
+func contextHints(_ value: Any?) -> [String] {
+  Array((value as? [String] ?? []).prefix(100)).map { String($0.prefix(100)) }
+}
+@MainActor
+func speechChannel(source: String, locale: String, recordingId: String, context: [String])
+  async throws -> any SpeechChannel
+{
+  if #available(macOS 26.0, *) {
+    return try await ModernSpeechChannel(
+      source: source, locale: locale, recordingId: recordingId, context: context)
+  }
+  return try LegacySpeechChannel(
+    source: source, locale: locale, recordingId: recordingId, context: context)
+}
+
+@available(macOS 26.0, *)
+@MainActor
+final class ModernSpeechChannel: SpeechChannel {
+  let source: String
+  let recordingId: String
+  let transcriber: SpeechTranscriber
+  let analyzer: SpeechAnalyzer
+  let format: AVAudioFormat
+  var converter: AVAudioConverter?
+  var continuation: AsyncStream<AnalyzerInput>.Continuation?
+  var analysisTask: Task<Void, Never>?
+  var resultsTask: Task<Void, Never>?
+  var analysisDone = false
+  var resultsDone = false
+  var finishing = false
+  var closed = false
+  var failure: Error?
+  var errors = 0
+  var timeouts = 0
+  var baseOffset: TimeInterval?
+  var frames: Int64 = 0
+  var pending: [Double: [String: Any]] = [:]
+  var pendingEnds: [Double: Double] = [:]
+  var segments: [[String: Any]] = []
+  var progress: ((Double) -> Void)?
+  let live: Bool
+  init(source: String, locale: String, recordingId: String, context: [String], live: Bool = true)
+    async throws
+  {
+    self.source = source
+    self.recordingId = recordingId
+    self.live = live
+    guard SpeechTranscriber.isAvailable,
+      let supported = await SpeechTranscriber.supportedLocale(
+        equivalentTo: Locale(identifier: locale))
+    else {
+      throw problem("On-device recognition is unavailable for \(locale). Audio is still saved.")
+    }
+    transcriber = SpeechTranscriber(
+      locale: supported, transcriptionOptions: [],
+      reportingOptions: live ? [.volatileResults] : [], attributeOptions: [.audioTimeRange])
+    // `AssetInventory.status` reports `.supported` for usable installed locales on macOS 26, so the
+    // installed-locale list is the reliable signal (and matches what the `languages` op reports).
+    let installed = await SpeechTranscriber.installedLocales.contains {
+      $0.identifier(.bcp47) == supported.identifier(.bcp47)
+    }
+    guard installed else {
+      throw problem(
+        "Download the \(locale) language in Settings to enable transcription. Audio is still saved."
+      )
+    }
+    analyzer = SpeechAnalyzer(modules: [transcriber])
+    let hints = AnalysisContext()
+    hints.contextualStrings[.general] = context
+    try await analyzer.setContext(hints)
+    guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber])
+    else {
+      throw problem("No compatible speech audio format is available.")
+    }
+    self.format = format
+    try await analyzer.prepareToAnalyze(in: format)
+    resultsTask = Task { @MainActor [weak self, transcriber] in
+      do {
+        for try await result in transcriber.results {
+          guard let self, !self.closed else { break }
+          self.receive(result)
+        }
+      } catch { self?.failed(error) }
+      self?.resultsDone = true
+    }
+    if live {
+      let sequence = AsyncStream<AnalyzerInput>(bufferingPolicy: .bufferingOldest(256)) {
+        self.continuation = $0
+      }
+      analysisTask = Task { @MainActor [weak self, analyzer] in
+        do {
+          if let end = try await analyzer.analyzeSequence(sequence) {
+            try await analyzer.finalizeAndFinish(through: end)
+          } else {
+            try await analyzer.finalizeAndFinishThroughEndOfInput()
+          }
+        } catch { self?.failed(error) }
+        self?.analysisDone = true
+      }
+    }
+  }
+  deinit {
+    continuation?.finish()
+    analysisTask?.cancel()
+    resultsTask?.cancel()
+  }
+  func failed(_ error: Error) {
+    guard !closed, failure == nil else { return }
+    failure = error
+    errors += 1
+    emit([
+      "type": "warning", "recordingId": recordingId, "source": source,
+      "message": "Recognition: \(error.localizedDescription). Original audio is preserved.",
+    ])
+    continuation?.finish()
+  }
+  func receive(_ result: SpeechTranscriber.Result) {
+    let start = result.range.start.seconds
+    let end = CMTimeRangeGetEnd(result.range).seconds
+    let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard start.isFinite, end.isFinite, !text.isEmpty else { return }
+    // Revisions retain the phrase's ID even if its first word boundary shifts slightly.
+    let key =
+      pending.keys.filter {
+        abs($0 - start) < 0.1 || (start < (pendingEnds[$0] ?? $0) && $0 < end)
+      }.min { abs($0 - start) < abs($1 - start) } ?? start
+    let id = pending[key]?["segmentId"] as? String ?? UUID().uuidString
+    let event: [String: Any] = [
+      "type": result.isFinal ? "segment" : "partial", "recordingId": recordingId,
+      "segmentId": id, "source": source,
+      "speaker": source == "microphone" ? "You" : "Meeting audio",
+      "text": text, "timestamp": (baseOffset ?? 0) + start, "partial": !result.isFinal,
+    ]
+    if result.isFinal {
+      pending.removeValue(forKey: key)
+      pendingEnds.removeValue(forKey: key)
+      segments.append(event)
+    } else {
+      pending[key] = event
+      pendingEnds[key] = end
+    }
+    if live { emit(event) }
+    progress?(end)
+  }
+  func yield(_ buffer: AVAudioPCMBuffer) {
+    guard let continuation, buffer.frameLength > 0 else { return }
+    let time = CMTime(value: frames, timescale: CMTimeScale(format.sampleRate))
+    frames += Int64(buffer.frameLength)
+    if case .dropped = continuation.yield(AnalyzerInput(buffer: buffer, bufferStartTime: time)) {
+      failed(
+        problem("Transcription is falling behind; retry from the saved recording after the meeting")
+      )
+    }
+  }
+  func append(_ buffer: AVAudioPCMBuffer, offset: TimeInterval) {
+    guard !finishing, !closed, failure == nil else { return }
+    if baseOffset == nil { baseOffset = offset }
+    if buffer.format.isEqual(format) {
+      if let copy = copyPCM(buffer) { yield(copy) }
+      return
+    }
+    if converter == nil {
+      converter = AVAudioConverter(from: buffer.format, to: format)
+      converter?.downmix = true
+      converter?.sampleRateConverterQuality = AVAudioQuality.max.rawValue
+    }
+    guard let converter else {
+      failed(problem("Speech audio conversion failed"))
+      return
+    }
+    let capacity =
+      AVAudioFrameCount(
+        ceil(Double(buffer.frameLength) * format.sampleRate / buffer.format.sampleRate)) + 64
+    let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity)!
+    var supplied = false
+    var error: NSError?
+    let status = converter.convert(to: output, error: &error) { _, status in
+      if supplied {
+        status.pointee = .noDataNow
+        return nil
+      }
+      supplied = true
+      status.pointee = .haveData
+      return buffer
+    }
+    if status == .error {
+      failed(error ?? problem("Speech audio conversion failed"))
+    } else {
+      yield(output)
+    }
+  }
+  func preservePending() {
+    for key in pending.keys.sorted() {
+      var event = pending[key]!
+      event["type"] = "segment"
+      event["partial"] = true
+      segments.append(event)
+      if live { emit(event) }
+    }
+    pending.removeAll()
+    pendingEnds.removeAll()
+  }
+  func finish() async {
+    guard !finishing else { return }
+    finishing = true
+    if let converter, failure == nil {
+      let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096)!
+      var error: NSError?
+      let status = converter.convert(to: output, error: &error) { _, status in
+        status.pointee = .endOfStream
+        return nil
+      }
+      if status == .error {
+        failed(error ?? problem("Speech audio conversion failed"))
+      } else {
+        yield(output)
+      }
+    }
+    continuation?.finish()
+    let deadline = Date().addingTimeInterval(29.5)
+    while !(analysisDone && resultsDone), failure == nil, Date() < deadline {
+      try? await Task.sleep(nanoseconds: 50_000_000)
+    }
+    if !(analysisDone && resultsDone), failure == nil {
+      timeouts += 1
+      emit([
+        "type": "warning", "recordingId": recordingId, "source": source,
+        "message":
+          "Recognition finalization timed out. The latest partial and original audio are preserved.",
+      ])
+    }
+    preservePending()
+    closed = true
+    analysisTask?.cancel()
+    resultsTask?.cancel()
+    // Do not let a stalled Speech XPC cancellation extend the 30-second stop bound.
+    if !analysisDone || !resultsDone { Task { [analyzer] in await analyzer.cancelAndFinishNow() } }
+  }
+  func transcribeFile(_ file: AVAudioFile, offset: Double) async throws -> [[String: Any]] {
+    baseOffset = offset
+    do {
+      if let end = try await analyzer.analyzeSequence(from: file) {
+        try await analyzer.finalizeAndFinish(through: end)
+      } else {
+        try await analyzer.finalizeAndFinishThroughEndOfInput()
+      }
+      analysisDone = true
+      await finish()
+      if let failure { throw failure }
+      if timeouts > 0 {
+        throw problem("File transcription finalization timed out. Retry from the saved audio.")
+      }
+      return segments
+    } catch {
+      closed = true
+      resultsTask?.cancel()
+      Task { [analyzer] in await analyzer.cancelAndFinishNow() }
+      throw error
+    }
+  }
+}
+
+func localeNames(_ locales: [Locale]) -> [String] {
+  Array(Set(locales.map { $0.identifier.replacingOccurrences(of: "_", with: "-") })).sorted()
+}
+@MainActor
+func languages() async -> [String: Any] {
+  if #available(macOS 26.0, *) {
+    return [
+      "type": "languages", "engine": recognitionEngine,
+      "supported": localeNames(await SpeechTranscriber.supportedLocales),
+      "installed": localeNames(await SpeechTranscriber.installedLocales),
+    ]
+  }
+  let locales = localeNames(
+    SFSpeechRecognizer.supportedLocales().filter {
+      SFSpeechRecognizer(locale: $0)?.supportsOnDeviceRecognition == true
+    })
+  return ["type": "languages", "engine": "legacy", "supported": locales, "installed": locales]
+}
+@MainActor
+func installLanguage(_ locale: String) async throws {
+  guard #available(macOS 26.0, *) else {
+    throw problem("Install this language in macOS Dictation settings, then retry.")
+  }
+  guard
+    let supported = await SpeechTranscriber.supportedLocale(
+      equivalentTo: Locale(identifier: locale))
+  else {
+    throw problem("This language is not supported by on-device transcription.")
+  }
+  let module = SpeechTranscriber(
+    locale: supported, transcriptionOptions: [], reportingOptions: [],
+    attributeOptions: [.audioTimeRange])
+  try await AssetInventory.reserve(locale: supported)
+  var lastProgress = Date.distantPast
+  if let request = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
+    let polling = Task { @MainActor in
+      while !Task.isCancelled {
+        lastProgress = Date()
+        emit([
+          "type": "language-progress", "locale": locale,
+          "fraction": max(0, min(1, request.progress.fractionCompleted)),
+        ])
+        do { try await Task.sleep(nanoseconds: 250_000_000) } catch { break }
+      }
+    }
+    defer { polling.cancel() }
+    try await request.downloadAndInstall()
+    polling.cancel()
+  }
+  let remaining = 0.25 - Date().timeIntervalSince(lastProgress)
+  if remaining > 0 { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) }
+  emit(["type": "language-progress", "locale": locale, "fraction": 1])
+  emit([
+    "type": "language-installed", "locale": locale,
+    "installed": localeNames(await SpeechTranscriber.installedLocales),
+  ])
+}
+
+@MainActor
+final class LegacySpeechChannel: SpeechChannel {
   let source: String
   let speaker: String
   let recordingId: String
   let recognizer: SFSpeechRecognizer
+  let context: [String]
   var key: String { recordingId + ":" + source }
   var current: RecognitionWindow?
   var windows: [RecognitionWindow] = []
   var finishing = false
   var errors = 0
   var timeouts = 0
-  init(source: String, locale: String, recordingId: String) throws {
+  init(source: String, locale: String, recordingId: String, context: [String]) throws {
     self.source = source
     speaker = source == "microphone" ? "You" : "Meeting audio"
     self.recordingId = recordingId
+    self.context = context
     recognizer = try SpeechScheduler.shared.recognizer(locale: locale)
   }
   func append(_ buffer: AVAudioPCMBuffer, offset: TimeInterval) {
@@ -294,15 +669,9 @@ final class SpeechChannel {
     while consumed < Int(buffer.frameLength) {
       let window = current ?? RecognitionWindow(offset: offset + Double(consumed) / 16000)
       current = window
-      let existing = Int(window.buffer.frameLength)
-      let count = min(
-        Int(buffer.frameLength) - consumed, Int(window.buffer.frameCapacity) - existing)
-      memcpy(
-        window.buffer.floatChannelData![0].advanced(by: existing), input.advanced(by: consumed),
-        count * MemoryLayout<Float>.size)
-      window.buffer.frameLength += AVAudioFrameCount(count)
-      consumed += count
-      if window.buffer.frameLength == window.buffer.frameCapacity {
+      consumed += window.append(
+        input.advanced(by: consumed), count: Int(buffer.frameLength) - consumed)
+      if window.ready {
         submit(window)
         current = nil
       }
@@ -312,7 +681,7 @@ final class SpeechChannel {
     guard window.buffer.frameLength > 0 else { return }
     windows.append(window)
     let job = SpeechJob(
-      key: key, window: window, recognizer: recognizer,
+      key: key, window: window, recognizer: recognizer, context: context,
       partial: { [weak self, weak window] text, time in
         guard let self, let window, !window.finalized else { return }
         window.latest = text
@@ -320,7 +689,7 @@ final class SpeechChannel {
         emit([
           "type": "partial", "recordingId": self.recordingId, "segmentId": window.id,
           "source": self.source, "speaker": self.speaker, "text": text,
-          "timestamp": window.offset + time,
+          "timestamp": window.offset + time, "partial": true,
         ])
       },
       complete: { [weak self, weak window] result in
@@ -402,6 +771,12 @@ final class AudioTrack {
   var closed = false
   var events = true
   var captureError: String?
+  var deviceName = ""
+  var quietFrames: Int64 = 0
+  var silent = false
+  var lastSignal = Date()
+  var lastBuffer = Date()
+  var padOnNextBuffer = false
   init(source: String, recordingId: String, directory: URL, start: Date) throws {
     self.source = source
     self.recordingId = recordingId
@@ -410,9 +785,9 @@ final class AudioTrack {
       url: directory.appendingPathComponent(
         source == "microphone" ? "microphone.wav" : "system.wav"))
   }
-  func accept(_ buffer: AVAudioPCMBuffer) {
+  func accept(_ buffer: AVAudioPCMBuffer, capturedAt: Date? = nil) {
     guard !closed else { return }
-    do { try process(buffer) } catch {
+    do { try process(buffer, capturedAt: capturedAt) } catch {
       captureError = error.localizedDescription
       emit([
         "type": "warning", "recordingId": recordingId, "source": source,
@@ -422,11 +797,19 @@ final class AudioTrack {
       try? writer.close()
     }
   }
-  func process(_ buffer: AVAudioPCMBuffer) throws {
+  func process(_ buffer: AVAudioPCMBuffer, capturedAt: Date? = nil) throws {
     guard buffer.frameLength > 0 else { return }
-    if startOffset == nil { startOffset = max(0, Date().timeIntervalSince(start)) }
+    let elapsed = max(0, (capturedAt ?? Date()).timeIntervalSince(start))
+    if padOnNextBuffer {
+      try pad(to: elapsed)
+      padOnNextBuffer = false
+    }
+    lastBuffer = Date()
+    if startOffset == nil { startOffset = elapsed }
     if inputFormat == nil || !inputFormat!.isEqual(buffer.format) {
       converter = AVAudioConverter(from: buffer.format, to: format)
+      converter?.downmix = true
+      converter?.sampleRateConverterQuality = AVAudioQuality.max.rawValue
       inputFormat = buffer.format
     }
     guard let converter else { throw problem("Unsupported input audio format.") }
@@ -463,6 +846,17 @@ final class AudioTrack {
     sumSquares += squares
     peak = max(peak, localPeak)
     if rms > 0.005 { signalFrames += Int64(buffer.frameLength) }
+    if localPeak < 0.003 {
+      quietFrames += Int64(buffer.frameLength)
+      if quietFrames >= 6 * 16000 { reportSilence() }
+    } else {
+      quietFrames = 0
+      lastSignal = Date()
+      if silent {
+        silent = false
+        if events { emit(["type": "source-signal", "recordingId": recordingId, "source": source]) }
+      }
+    }
     try writer.append(buffer)
     speech?.append(buffer, offset: offset)
     if events && Date().timeIntervalSince(lastLevel) >= 0.5 {
@@ -471,6 +865,27 @@ final class AudioTrack {
         "type": "audio-level", "recordingId": recordingId, "source": source, "rms": rms,
         "peak": localPeak, "seconds": Double(writer.frames) / 16000,
       ])
+    }
+  }
+  func reportSilence() {
+    guard !silent, !closed else { return }
+    silent = true
+    if events {
+      emit([
+        "type": "source-silent", "recordingId": recordingId, "source": source, "device": deviceName,
+      ])
+    }
+  }
+  func pad(to elapsed: TimeInterval) throws {
+    if startOffset == nil { startOffset = 0 }
+    var missing = max(0, Int64((elapsed - (startOffset ?? 0)) * 16000) - writer.frames)
+    while missing > 0 {
+      let count = AVAudioFrameCount(min(missing, 16000))
+      let silence = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: count)!
+      silence.frameLength = count
+      memset(silence.floatChannelData![0], 0, Int(count) * MemoryLayout<Float>.size)
+      try save(silence)
+      missing -= Int64(count)
     }
   }
   func closeAudio() throws {
@@ -521,6 +936,92 @@ func copyPCM(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
   return copy
 }
 
+struct InputDevice {
+  let id: AudioDeviceID
+  let uid: String
+  let name: String
+  let isDefault: Bool
+  let transport: String
+  var identity: [String: String] { ["uid": uid, "name": name] }
+  var json: [String: Any] {
+    ["uid": uid, "name": name, "isDefault": isDefault, "transport": transport]
+  }
+}
+func audioNumber(
+  _ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
+  scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal
+) -> UInt32 {
+  var address = AudioObjectPropertyAddress(
+    mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+  var value: UInt32 = 0
+  var size = UInt32(MemoryLayout<UInt32>.size)
+  guard AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr else {
+    return 0
+  }
+  return value
+}
+func audioString(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String {
+  var address = AudioObjectPropertyAddress(
+    mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+    mElement: kAudioObjectPropertyElementMain)
+  var value: Unmanaged<CFString>?
+  var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+  guard AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr else {
+    return ""
+  }
+  return value?.takeRetainedValue() as String? ?? ""
+}
+func audioIDs(
+  _ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
+  scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal
+) -> [UInt32] {
+  var address = AudioObjectPropertyAddress(
+    mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+  var size: UInt32 = 0
+  guard AudioObjectGetPropertyDataSize(object, &address, 0, nil, &size) == noErr, size > 0 else {
+    return []
+  }
+  var values = [UInt32](repeating: 0, count: Int(size) / MemoryLayout<UInt32>.size)
+  let status = values.withUnsafeMutableBytes {
+    AudioObjectGetPropertyData(object, &address, 0, nil, &size, $0.baseAddress!)
+  }
+  return status == noErr ? values : []
+}
+func inputDevices() -> [InputDevice] {
+  let system = AudioObjectID(kAudioObjectSystemObject)
+  let defaultID = audioNumber(system, kAudioHardwarePropertyDefaultInputDevice)
+  return audioIDs(system, kAudioHardwarePropertyDevices).compactMap { id in
+    guard !audioIDs(id, kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeInput).isEmpty
+    else { return nil }
+    let transport: String
+    switch audioNumber(id, kAudioDevicePropertyTransportType) {
+    case kAudioDeviceTransportTypeBuiltIn: transport = "built-in"
+    case kAudioDeviceTransportTypeUSB: transport = "usb"
+    case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
+      transport = "bluetooth"
+    case kAudioDeviceTransportTypeVirtual: transport = "virtual"
+    case kAudioDeviceTransportTypeAggregate: transport = "aggregate"
+    default: transport = "other"
+    }
+    return InputDevice(
+      id: id, uid: audioString(id, kAudioDevicePropertyDeviceUID),
+      name: audioString(id, kAudioObjectPropertyName), isDefault: id == defaultID,
+      transport: transport)
+  }.sorted { $0.name < $1.name }
+}
+func builtInSpeakers() -> Bool {
+  let output = audioNumber(
+    AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice)
+  guard audioNumber(output, kAudioDevicePropertyTransportType) == kAudioDeviceTransportTypeBuiltIn
+  else { return false }
+  let streams = audioIDs(
+    output, kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeOutput)
+  // The terminal type distinguishes speakers from a built-in headphone jack.
+  return streams.contains {
+    audioNumber($0, kAudioStreamPropertyTerminalType) == kAudioStreamTerminalTypeSpeaker
+  }
+}
+
 @MainActor
 final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   var engine: AVAudioEngine?
@@ -531,36 +1032,53 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   var operation = 0
   var isStarting = false
   var stopping = false
+  var inputUID: String?
+  var microphoneDevice: InputDevice?
+  var echoMode = "auto"
+  var echoEnabled = false
+  var configurationObserver: NSObjectProtocol?
+  var monitoringTask: Task<Void, Never>?
+  var restarting = false
+  var tapInstalled = false
+  var microphoneGeneration = 0
   nonisolated let audioQueue = DispatchQueue(label: "local.stillnote.audio")
   nonisolated let pendingAudio = DispatchGroup()
-  func start(locale: String, includeSystem: Bool, directory: URL, id: String) async throws {
-    guard engine == nil, !isStarting, !stopping else {
+  func start(
+    locale: String, includeSystem: Bool, directory: URL, id: String, inputDevice: String?,
+    context: [String], echoCancellation: String
+  ) async throws {
+    guard engine == nil, started == nil, !isStarting, !stopping else {
       throw problem("Already recording or finishing a recording.")
     }
     operation += 1
     let generation = operation
     isStarting = true
     recordingId = id
+    inputUID = inputDevice
+    echoMode = echoCancellation
     defer { if generation == operation { isStarting = false } }
     guard await AVCaptureDevice.requestAccess(for: .audio) else {
       throw problem(
         "Allow Microphone access for Stillnote in System Settings → Privacy & Security.")
     }
     guard generation == operation else { throw CancellationError() }
-    var speechStatus = SFSpeechRecognizer.authorizationStatus()
-    if speechStatus == .notDetermined {
-      speechStatus = await withCheckedContinuation { c in
-        SFSpeechRecognizer.requestAuthorization { c.resume(returning: $0) }
+    var speechAllowed = true
+    if #available(macOS 26.0, *) {
+    } else {
+      var status = SFSpeechRecognizer.authorizationStatus()
+      if status == .notDetermined {
+        status = await withCheckedContinuation { c in
+          SFSpeechRecognizer.requestAuthorization { c.resume(returning: $0) }
+        }
+      }
+      speechAllowed = status == .authorized
+      if !speechAllowed {
+        warning(
+          "Speech Recognition permission is unavailable. Audio is still saved; enable permission and retry transcription later."
+        )
       }
     }
     guard generation == operation else { throw CancellationError() }
-    if speechStatus != .authorized {
-      emit([
-        "type": "warning", "recordingId": id,
-        "message":
-          "Speech Recognition permission is unavailable. Original audio will be saved for playback; enable permission and retry transcription later.",
-      ])
-    }
     try FileManager.default.createDirectory(
       at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let start = Date()
@@ -569,37 +1087,23 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     let mic = try AudioTrack(
       source: "microphone", recordingId: id, directory: directory, start: start)
     tracks["microphone"] = mic
-    if speechStatus == .authorized {
+    if speechAllowed {
       do {
-        mic.speech = try SpeechChannel(source: "microphone", locale: locale, recordingId: id)
+        mic.speech = try await speechChannel(
+          source: "microphone", locale: locale, recordingId: id, context: context)
       } catch {
         emit(["type": "warning", "recordingId": id, "message": error.localizedDescription])
       }
     }
-    let engine = AVAudioEngine()
-    self.engine = engine
-    let input = engine.inputNode
-    let format = input.outputFormat(forBus: 0)
-    guard format.sampleRate > 0, format.channelCount > 0 else {
-      throw problem("No microphone input is available.")
+    guard generation == operation else {
+      await mic.speech?.finish()
+      throw CancellationError()
     }
-    let pending = pendingAudio
-    input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self, pending] buffer, _ in
-      pending.enter()
-      guard let copy = copyPCM(buffer) else {
-        pending.leave()
-        return
-      }
-      DispatchQueue.main.async {
-        defer { pending.leave() }
-        guard let self, self.recordingId == id else { return }
-        self.tracks["microphone"]?.accept(copy)
-      }
-    }
-    try engine.start()
+    let device = try startMicrophone()
+    startMonitoring()
     var systemActive = false
-    var sources: [String: [String: String]] = [
-      "microphone": ["status": "recording"],
+    var sources: [String: [String: Any]] = [
+      "microphone": ["status": "recording", "device": device.identity],
       "system": ["status": includeSystem ? "starting" : "disabled"],
     ]
     if includeSystem {
@@ -626,12 +1130,17 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         let track = try AudioTrack(
           source: "system", recordingId: id, directory: directory, start: start)
         tracks["system"] = track
-        if speechStatus == .authorized {
+        if speechAllowed {
           do {
-            track.speech = try SpeechChannel(source: "system", locale: locale, recordingId: id)
+            track.speech = try await speechChannel(
+              source: "system", locale: locale, recordingId: id, context: context)
           } catch {
             emit(["type": "warning", "recordingId": id, "message": error.localizedDescription])
           }
+        }
+        guard generation == operation else {
+          await track.speech?.finish()
+          throw CancellationError()
         }
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
@@ -661,21 +1170,179 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
       }
     }
     guard generation == operation else { throw CancellationError() }
+    sources["microphone"]?["device"] = (microphoneDevice ?? device).identity
     emit([
       "type": "started", "recordingId": id, "systemAudio": systemActive, "sources": sources,
       "startedAt": start.timeIntervalSince1970 * 1000,
+      "engine": recognitionEngine, "echoCancellation": echoEnabled,
     ])
   }
+  func warning(_ message: String) {
+    emit(["type": "warning", "recordingId": recordingId, "message": message])
+  }
+  func startMicrophone(allowVoiceProcessing: Bool = true) throws -> InputDevice {
+    let devices = inputDevices()
+    let requested = devices.first { $0.uid == inputUID }
+    if inputUID != nil && requested == nil {
+      warning("The selected microphone is missing. Using the default input device.")
+    }
+    guard var device = requested ?? devices.first(where: { $0.isDefault }) else {
+      throw problem(
+        "No microphone input is available. Connect a microphone; capture will retry automatically.")
+    }
+    let engine = AVAudioEngine()
+    self.engine = engine
+    let input = engine.inputNode
+    func select(_ device: InputDevice) throws {
+      guard let unit = input.audioUnit else {
+        throw problem("Microphone audio unit is unavailable.")
+      }
+      var id = device.id
+      let status = AudioUnitSetProperty(
+        unit, kAudioOutputUnitProperty_CurrentDevice,
+        kAudioUnitScope_Global, 0, &id, UInt32(MemoryLayout<AudioDeviceID>.size))
+      guard status == noErr else {
+        throw problem("Cannot select microphone \(device.name) (\(status)).")
+      }
+    }
+    do { try select(device) } catch {
+      guard let fallback = devices.first(where: { $0.isDefault }), fallback.id != device.id else {
+        throw error
+      }
+      warning("\(error.localizedDescription) Using the default input device.")
+      device = fallback
+      try select(device)
+    }
+    echoEnabled = false
+    if allowVoiceProcessing && (echoMode == "on" || (echoMode == "auto" && builtInSpeakers())) {
+      do {
+        try input.setVoiceProcessingEnabled(true)
+        if #available(macOS 14.0, *) {
+          input.voiceProcessingOtherAudioDuckingConfiguration =
+            AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
+              enableAdvancedDucking: false, duckingLevel: .min)
+        }
+        // Voice processing can replace the I/O unit; reapply the selected device.
+        try select(device)
+        echoEnabled = input.isVoiceProcessingEnabled
+      } catch {
+        warning(
+          "Echo cancellation could not be enabled: \(error.localizedDescription). Continuing without it."
+        )
+        removeMicrophone()
+        return try startMicrophone(allowVoiceProcessing: false)
+      }
+    }
+    let format = input.outputFormat(forBus: 0)
+    guard format.sampleRate > 0, format.channelCount > 0 else {
+      throw problem("Microphone input format is unavailable.")
+    }
+    let id = recordingId
+    microphoneGeneration += 1
+    let generation = microphoneGeneration
+    let pending = pendingAudio
+    input.installTap(onBus: 0, bufferSize: 4096, format: format) {
+      [weak self, pending] buffer, time in
+      pending.enter()
+      let capturedAt = Date().addingTimeInterval(
+        time.isHostTimeValid
+          ? AVAudioTime.seconds(forHostTime: time.hostTime)
+            - AVAudioTime.seconds(forHostTime: mach_absolute_time())
+          : -Double(buffer.frameLength) / buffer.format.sampleRate)
+      guard let copy = copyPCM(buffer) else {
+        pending.leave()
+        return
+      }
+      DispatchQueue.main.async {
+        defer { pending.leave() }
+        guard let self, self.recordingId == id, self.microphoneGeneration == generation else {
+          return
+        }
+        self.tracks["microphone"]?.accept(copy, capturedAt: capturedAt)
+      }
+    }
+    tapInstalled = true
+    try engine.start()
+    microphoneDevice = device
+    tracks["microphone"]?.deviceName = device.name
+    tracks["microphone"]?.lastBuffer = Date()
+    configurationObserver = NotificationCenter.default.addObserver(
+      forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+    ) { [weak self, weak engine] _ in
+      Task { @MainActor in
+        guard let self, let engine, self.engine === engine else { return }
+        self.restartMicrophone()
+      }
+    }
+    return device
+  }
+  func removeMicrophone() {
+    if let configurationObserver {
+      NotificationCenter.default.removeObserver(configurationObserver)
+    }
+    configurationObserver = nil
+    engine?.stop()
+    if tapInstalled { engine?.inputNode.removeTap(onBus: 0) }
+    tapInstalled = false
+    engine = nil
+  }
+  func restartMicrophone() {
+    guard !stopping, !restarting, started != nil else { return }
+    restarting = true
+    defer { restarting = false }
+    removeMicrophone()
+    tracks["microphone"]?.converter = nil
+    tracks["microphone"]?.inputFormat = nil
+    tracks["microphone"]?.padOnNextBuffer = true
+    do {
+      let device = try startMicrophone()
+      emit([
+        "type": "device-changed", "recordingId": recordingId, "source": "microphone",
+        "device": device.identity,
+      ])
+      warning(
+        "Microphone input restarted on \(device.name). The capture gap is padded with silence.")
+      emit([
+        "type": "recording-status", "recordingId": recordingId,
+        "sources": ["microphone": ["status": "recording", "device": device.identity]],
+      ])
+    } catch {
+      removeMicrophone()
+      warning("Microphone restart failed: \(error.localizedDescription). Retrying in two seconds.")
+      emit([
+        "type": "recording-status", "recordingId": recordingId,
+        "sources": [
+          "microphone": ["status": "unavailable", "message": error.localizedDescription]
+        ],
+      ])
+    }
+  }
+  func startMonitoring() {
+    monitoringTask = Task { @MainActor [weak self] in
+      while !Task.isCancelled {
+        do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { break }
+        guard let self, !self.stopping, self.started != nil else { break }
+        for track in self.tracks.values where Date().timeIntervalSince(track.lastSignal) >= 6 {
+          track.reportSilence()
+        }
+        if self.engine?.isRunning != true
+          || self.tracks["microphone"].map({ Date().timeIntervalSince($0.lastBuffer) > 6 }) == true
+        {
+          self.restartMicrophone()
+        }
+      }
+    }
+  }
   func stop(status: String = "completed") async {
-    guard !stopping else { return }
+    guard !stopping, !recordingId.isEmpty else { return }
     stopping = true
     operation += 1
     isStarting = false
     let id = recordingId
     let duration = started.map { Date().timeIntervalSince($0) } ?? 0
-    engine?.stop()
-    if let engine { engine.inputNode.removeTap(onBus: 0) }
-    engine = nil
+    monitoringTask?.cancel()
+    monitoringTask = nil
+    removeMicrophone()
     if let stream { try? await stream.stopCapture() }
     // Drain the source callback queue, then every copied buffer enqueued on the
     // main actor. A fixed sleep can close the WAV before queued tail audio arrives.
@@ -686,7 +1353,10 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
     stream = nil
     for track in tracks.values {
-      do { try track.closeAudio() } catch {
+      do {
+        if track.source == "microphone", track.padOnNextBuffer { try track.pad(to: duration) }
+        try track.closeAudio()
+      } catch {
         emit(["type": "warning", "recordingId": id, "message": error.localizedDescription])
       }
     }
@@ -771,13 +1441,16 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
 @MainActor
 func recognizeFile(
   _ url: URL, recognizer: SFSpeechRecognizer, control: RecognitionCancellation? = nil,
-  onPartial: ((String, TimeInterval) -> Void)? = nil
+  context: [String] = [], onPartial: ((String, TimeInterval) -> Void)? = nil
 ) async throws -> (
   String, TimeInterval
 ) {
   try await withCheckedThrowingContinuation { continuation in
     let request = SFSpeechURLRecognitionRequest(url: url)
     request.requiresOnDeviceRecognition = true
+    request.addsPunctuation = true
+    request.taskHint = .dictation
+    request.contextualStrings = context
     request.shouldReportPartialResults = onPartial != nil
     var task: SFSpeechRecognitionTask?
     var done = false
@@ -836,7 +1509,45 @@ func recognizeFile(
 }
 
 @MainActor
-func transcribe(_ input: [[String: Any]], id: String, locale: String) async throws {
+func transcribe(_ input: [[String: Any]], id: String, locale: String, context: [String] = [])
+  async throws
+{
+  if #available(macOS 26.0, *) {
+    var segments: [[String: Any]] = []
+    for track in input {
+      guard let path = track["path"] as? String, let source = track["source"] as? String,
+        ["microphone", "system"].contains(source)
+      else { throw problem("Invalid recording track.") }
+      let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
+      let duration = Double(file.length) / file.processingFormat.sampleRate
+      let channel = try await ModernSpeechChannel(
+        source: source, locale: locale, recordingId: id, context: context, live: false)
+      var lastProgress = Date.distantPast
+      var completed = 0.0
+      channel.progress = { seconds in
+        completed = max(completed, min(duration, seconds))
+        guard Date().timeIntervalSince(lastProgress) >= 0.25 else { return }
+        lastProgress = Date()
+        emit([
+          "type": "transcription-progress", "recordingId": id, "source": source,
+          "completed": completed, "total": duration,
+        ])
+      }
+      segments += try await channel.transcribeFile(
+        file, offset: track["startOffset"] as? Double ?? 0)
+      emit([
+        "type": "transcription-progress", "recordingId": id, "source": source,
+        "completed": duration, "total": duration,
+      ])
+    }
+    emit([
+      "type": "retranscription-completed", "recordingId": id,
+      "segments": segments.sorted {
+        ($0["timestamp"] as? Double ?? 0) < ($1["timestamp"] as? Double ?? 0)
+      },
+    ])
+    return
+  }
   var permission = SFSpeechRecognizer.authorizationStatus()
   if permission == .notDetermined {
     permission = await withCheckedContinuation { c in
@@ -885,7 +1596,7 @@ func transcribe(_ input: [[String: Any]], id: String, locale: String) async thro
       // Silent input is not useful speech, and should not occupy a recognition request.
       if chunkTrack.peak > 0.001 {
         let (text, firstWord) = try await recognizeFile(
-          chunkTrack.writer.url, recognizer: recognizer)
+          chunkTrack.writer.url, recognizer: recognizer, context: context)
         if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
           results.append([
             "segmentId": UUID().uuidString, "source": source,
@@ -916,14 +1627,17 @@ func transcribe(_ input: [[String: Any]], id: String, locale: String) async thro
 func streamedRecognition(input: URL, id: String, locale: String, dualSource: Bool = false)
   async throws
 {
-  var permission = SFSpeechRecognizer.authorizationStatus()
-  if permission == .notDetermined {
-    permission = await withCheckedContinuation { c in
-      SFSpeechRecognizer.requestAuthorization { c.resume(returning: $0) }
+  if #available(macOS 26.0, *) {
+  } else {
+    var permission = SFSpeechRecognizer.authorizationStatus()
+    if permission == .notDetermined {
+      permission = await withCheckedContinuation { c in
+        SFSpeechRecognizer.requestAuthorization { c.resume(returning: $0) }
+      }
     }
-  }
-  guard permission == .authorized else {
-    throw problem("Speech Recognition permission is required for this test.")
+    guard permission == .authorized else {
+      throw problem("Speech Recognition permission is required for this test.")
+    }
   }
   let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(
     "stillnote-stream-test-" + UUID().uuidString)
@@ -941,12 +1655,14 @@ func streamedRecognition(input: URL, id: String, locale: String, dualSource: Boo
   }
   let file = try AVAudioFile(forReading: input, commonFormat: .pcmFormatFloat32, interleaved: false)
   let sources = dualSource ? ["microphone", "system"] : ["microphone"]
-  let tracks = try sources.map { source -> AudioTrack in
+  var tracks: [AudioTrack] = []
+  for source in sources {
     let track = try AudioTrack(source: source, recordingId: id, directory: temporary, start: Date())
     track.events = false
     track.startOffset = 0
-    track.speech = try SpeechChannel(source: source, locale: locale, recordingId: id)
-    return track
+    track.speech = try await speechChannel(
+      source: source, locale: locale, recordingId: id, context: [])
+    tracks.append(track)
   }
   let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096)!
   while file.framePosition < file.length {
@@ -966,6 +1682,63 @@ func streamedRecognition(input: URL, id: String, locale: String, dualSource: Boo
     "type": "retranscription-completed", "recordingId": id, "segments": segments, "streamed": true,
     "dualSource": dualSource,
     "diagnostics": Dictionary(uniqueKeysWithValues: tracks.map { ($0.source, $0.stats()) }),
+  ])
+}
+
+@MainActor
+func captureSelfTest() throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "stillnote-capture-test-" + UUID().uuidString)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  let previous = eventObserver
+  defer {
+    eventObserver = previous
+    try? FileManager.default.removeItem(at: directory)
+  }
+  var observed: [String] = []
+  eventObserver = { event in
+    if let type = event["type"] as? String, ["source-silent", "source-signal"].contains(type) {
+      observed.append(type)
+    }
+  }
+  let track = try AudioTrack(
+    source: "microphone", recordingId: "capture-self-test", directory: directory, start: Date())
+  track.startOffset = 2
+  let quiet = AVAudioPCMBuffer(pcmFormat: track.format, frameCapacity: 16000)!
+  quiet.frameLength = 16000
+  memset(quiet.floatChannelData![0], 0, 16000 * MemoryLayout<Float>.size)
+  for _ in 0..<5 { try track.save(quiet) }
+  guard observed.isEmpty else { throw problem("Silence reported before six seconds.") }
+  try track.save(quiet)
+  try track.save(quiet)
+  guard observed == ["source-silent"] else { throw problem("Silence notification must fire once.") }
+  let signal = copyPCM(quiet)!
+  signal.floatChannelData![0][0] = 0.1
+  try track.save(signal)
+  guard observed == ["source-silent", "source-signal"] else {
+    throw problem("Signal recovery notification missing.")
+  }
+  try track.pad(to: 11.25)
+  guard track.writer.frames == 148000 else {
+    throw problem("Gap padding ignored the track start offset.")
+  }
+  for _ in 0..<5 { try track.save(quiet) }
+  guard observed == ["source-silent", "source-signal", "source-silent"] else {
+    throw problem("Silence did not rearm after signal.")
+  }
+  try track.closeAudio()
+  let file = try AVAudioFile(forReading: track.writer.url)
+  guard file.length == 228000 else { throw problem("Padded WAV header/frame count mismatch.") }
+  file.framePosition = 128000
+  let gap = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 20000)!
+  try file.read(into: gap)
+  guard gap.frameLength == 20000, (0..<20000).allSatisfy({ gap.floatChannelData![0][$0] == 0 })
+  else {
+    throw problem("Padded gap contains signal.")
+  }
+  emit([
+    "type": "capture-self-test", "status": "passed", "checks": 7,
+    "paddedFrames": 20000, "sampleCount": file.length, "liveAudioInvoked": false,
   ])
 }
 
@@ -995,6 +1768,7 @@ func audioSelfTest(input: URL, output: URL) throws {
 let capture = MainActor.assumeIsolated { Capture() }
 let events = EKEventStore()
 var transcribing = false
+var pendingCommands = 0
 @MainActor
 func calendar() async throws {
   let allowed: Bool
@@ -1025,7 +1799,9 @@ func command(_ data: Data) {
   guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
     let op = obj["op"] as? String
   else { return }
+  pendingCommands += 1
   Task { @MainActor in
+    defer { pendingCommands -= 1 }
     do {
       switch op {
       case "start":
@@ -1036,7 +1812,9 @@ func command(_ data: Data) {
           try await capture.start(
             locale: obj["locale"] as? String ?? "en-US",
             includeSystem: obj["systemAudio"] as? Bool ?? true,
-            directory: URL(fileURLWithPath: directory), id: id)
+            directory: URL(fileURLWithPath: directory), id: id,
+            inputDevice: obj["inputDevice"] as? String, context: contextHints(obj["context"]),
+            echoCancellation: obj["echoCancellation"] as? String ?? "auto")
         } catch is CancellationError { return } catch {
           emit([
             "type": "error", "op": op, "recordingId": id, "message": error.localizedDescription,
@@ -1045,12 +1823,15 @@ func command(_ data: Data) {
         }
       case "stop": await capture.stop()
       case "transcribe":
-        guard !transcribing, capture.engine == nil, let id = obj["recordingId"] as? String,
+        guard !transcribing, capture.started == nil, !capture.isStarting, !capture.stopping,
+          let id = obj["recordingId"] as? String,
           let tracks = obj["tracks"] as? [[String: Any]]
         else { throw problem("Finish the current operation before retrying transcription.") }
         transcribing = true
         do {
-          try await transcribe(tracks, id: id, locale: obj["locale"] as? String ?? "en-US")
+          try await transcribe(
+            tracks, id: id, locale: obj["locale"] as? String ?? "en-US",
+            context: contextHints(obj["context"]))
         } catch {
           emit([
             "type": "retranscription-error", "recordingId": id,
@@ -1058,6 +1839,13 @@ func command(_ data: Data) {
           ])
         }
         transcribing = false
+      case "devices": emit(["type": "devices", "inputs": inputDevices().map { $0.json }])
+      case "languages": emit(await languages())
+      case "install-language":
+        let locale = obj["locale"] as? String ?? ""
+        do { try await installLanguage(locale) } catch {
+          emit(["type": "error", "op": op, "locale": locale, "message": error.localizedDescription])
+        }
       case "calendar": try await calendar()
       case "status":
         emit([
@@ -1068,6 +1856,15 @@ func command(_ data: Data) {
       default: throw problem("Unknown native operation.")
       }
     } catch { emit(["type": "error", "op": op, "message": error.localizedDescription]) }
+  }
+}
+if CommandLine.arguments.contains("--capture-self-test") {
+  do {
+    try MainActor.assumeIsolated { try captureSelfTest() }
+    exit(0)
+  } catch {
+    emit(["type": "capture-self-test", "status": "failed", "message": error.localizedDescription])
+    exit(1)
   }
 }
 if CommandLine.arguments.contains("--scheduler-self-test") {
@@ -1088,7 +1885,7 @@ if CommandLine.arguments.contains("--scheduler-self-test") {
 if CommandLine.arguments.contains("--self-test") {
   emit([
     "type": "ready", "platform": "macOS",
-    "speechLocales": SFSpeechRecognizer.supportedLocales().count,
+    "speechLocales": SFSpeechRecognizer.supportedLocales().count, "engine": recognitionEngine,
   ])
   exit(0)
 }
@@ -1156,7 +1953,8 @@ FileHandle.standardInput.readabilityHandler = { handle in
   let bytes = handle.availableData
   if bytes.isEmpty {
     DispatchQueue.main.async {
-      Task {
+      Task { @MainActor in
+        while pendingCommands > 0 { try? await Task.sleep(nanoseconds: 50_000_000) }
         await capture.stop()
         exit(0)
       }
