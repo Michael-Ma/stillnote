@@ -1181,7 +1181,7 @@ kbd {
   border-radius: 5px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 600;
   vertical-align: 2px;
 }
@@ -1382,7 +1382,7 @@ kbd {
   border: 1.4px solid currentColor;
   border-radius: 4px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 600;
   line-height: 1;
 }
@@ -1835,7 +1835,7 @@ kbd {
   border-radius: 50%;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 .thinking {
@@ -2307,4 +2307,59 @@ dialog.settings-dialog {
     animation: none !important;
     transition: none !important;
   }
+}
+
+.capture-warnings {
+  display: grid;
+  gap: 6px;
+  max-width: 100%;
+}
+.capture-warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border: 1px solid var(--warn-line);
+  border-radius: var(--radius-lg);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.capture-warning.soft {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--muted);
+}
+.language-download {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.language-download progress {
+  width: 140px;
+  accent-color: var(--accent);
+}
+.context-coverage {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+.settings-body .setting-row select {
+  min-width: 0;
+  max-width: 60%;
+}
+.capture-source-name {
+  overflow-wrap: anywhere;
+}
+
+.dock-wrap:empty,
+.dock-wrap.capture-only::before {
+  display: none;
+}
+.dock-wrap.capture-only {
+  bottom: 160px;
 }

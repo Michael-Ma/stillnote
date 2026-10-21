@@ -11,24 +11,13 @@ import {
   RefreshCw,
   Sparkles,
 } from 'lucide-react';
+import { RecordingSettings } from './RecordingSettings.jsx';
 import { claudeSummary, modelKey, usageSummary } from '../ai-view.mjs';
 
 const sections = [
   ['ai', 'AI', Sparkles],
   ['capture', 'Recording', Mic],
   ['notebook', 'Notebook', NotebookPen],
-];
-const locales = [
-  ['en-US', 'English (US)'],
-  ['en-GB', 'English (UK)'],
-  ['zh-CN', '中文（普通话）'],
-  ['zh-TW', '中文（台灣）'],
-  ['es-ES', 'Español'],
-  ['fr-FR', 'Français'],
-  ['de-DE', 'Deutsch'],
-  ['ja-JP', '日本語'],
-  ['ko-KR', '한국어'],
-  ['pt-BR', 'Português'],
 ];
 
 function Toggle({ id, checked, onChange }) {
@@ -75,6 +64,9 @@ function ProviderCard({ id, name, active, ready, onUse, children, status }) {
 
 export function SettingsDialog({
   data,
+  initialSection = 'ai',
+  call,
+  subscribe,
   ai,
   accountBusy,
   account,
@@ -87,7 +79,7 @@ export function SettingsDialog({
   onTemplate,
   onUsage,
 }) {
-  const [section, setSection] = useState('ai');
+  const [section, setSection] = useState(initialSection);
   const { chatgpt, claude } = ai;
   const activeModels = ai.provider === 'claude' ? models.claude : models.chatgpt;
   return (
@@ -278,23 +270,13 @@ export function SettingsDialog({
         {section === 'capture' && (
           <section>
             <h3>Recording</h3>
-            <div className="setting-row">
-              <div>
-                <label htmlFor="locale">Meeting language</label>
-                <small>Transcribed on this Mac. The language must be installed in macOS.</small>
-              </div>
-              <select
-                id="locale"
-                value={data.settings.locale ?? 'en-US'}
-                onChange={(e) => guard(() => setting('locale', e.target.value))}
-              >
-                {locales.map(([v, n]) => (
-                  <option key={v} value={v}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <RecordingSettings
+              settings={data.settings}
+              setting={setting}
+              guard={guard}
+              call={call}
+              subscribe={subscribe}
+            />
             <div className="setting-row">
               <div>
                 <label htmlFor="systemAudio">Capture meeting audio</label>

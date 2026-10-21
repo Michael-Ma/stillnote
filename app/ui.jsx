@@ -10,12 +10,10 @@ import { TranscriptSheet } from './components/TranscriptSheet.jsx';
 import { ChatPanel } from './components/ChatPanel.jsx';
 import { SettingsDialog } from './components/SettingsDialog.jsx';
 import { aiView, claudeModels, modelKey } from './ai-view.mjs';
-import { date, time, duration } from './format.mjs';
+import { cleanError, date, time, duration, silentState } from './format.mjs';
 import './style.css';
 import stillnoteIcon from '../assets/icon-small.png';
 const api = window.stillnote;
-const cleanError = (message) =>
-  message.replace(/^Error invoking remote method '[^']+': Error: /, '');
 function App() {
   const [data, setData] = useState(null),
     [selected, setSelected] = useState(null),
@@ -25,7 +23,10 @@ function App() {
     [tab, setTab] = useState('notes'),
     [sheet, setSheet] = useState(null),
     [searchOpen, setSearchOpen] = useState(false),
-    [error, setError] = useState(''),
+    [errorState, setErrorState] = useState(null),
+    [loading, setLoading] = useState(true),
+    [silent, setSilent] = useState({}),
+    [aiTarget, setAiTarget] = useState(null),
     [notice, setNotice] = useState(''),
     [modal, setModal] = useState(null),
     [chatOpen, setChatOpen] = useState(false),
@@ -49,29 +50,48 @@ function App() {
     timers = useRef({}),
     dialogRef = useRef(),
     searchRef = useRef(),
-    busyRef = useRef(null);
+    busyRef = useRef(null),
+    current = useRef({}),
+    backdropDown = useRef(false),
+    aiRequest = useRef({}),
+    answerContexts = useRef(new Map()),
+    messagesRequest = useRef(0);
+  const error = errorState?.message ?? '';
+  const setError = (message) =>
+    setErrorState(message ? { message: cleanError(message), owner: 'external' } : null);
+  current.current = { selected, view, recording: data?.recording };
   const call = async (name, ...args) => api.call(name, ...args);
   const updateMeeting = (m) =>
-    setData((d) => ({
-      ...d,
-      meetings: d.meetings.some((x) => x.id === m.id)
-        ? d.meetings.map((x) => (x.id === m.id ? m : x))
-        : [m, ...d.meetings],
-    }));
+    setData((d) =>
+      d
+        ? {
+            ...d,
+            meetings: d.meetings.some((x) => x.id === m.id)
+              ? d.meetings.map((x) => (x.id === m.id ? m : x))
+              : [m, ...d.meetings],
+          }
+        : d,
+    );
   const guard = async (fn) => {
-    setError('');
+    setErrorState((e) => (e?.owner === 'guard' ? null : e));
     try {
       return await fn();
     } catch (e) {
-      setError(cleanError(e.message));
+      setErrorState({ message: cleanError(e), owner: 'guard' });
       return null;
     }
   };
   const load = async () => {
-    const d = await call('state');
-    setData(d);
-    if (d.startupError) setError(d.startupError);
-    return d;
+    setLoading(true);
+    try {
+      const d = await call('state');
+      setData(d);
+      current.current.recording = d.recording;
+      if (d.startupError) setError(d.startupError);
+      return d;
+    } finally {
+      setLoading(false);
+    }
   };
   useEffect(() => {
     guard(load);
@@ -84,9 +104,16 @@ function App() {
       if (e.type === 'auto-enhance-start') {
         busyRef.current = 'auto-enhance';
         setBusy('enhance');
-        setSelected(e.id);
-        setTab('summary');
-        setSheet(null);
+        aiRequest.current = { startedAt: Date.now() };
+        setAiTarget({ id: e.id });
+        if (
+          current.current.selected === e.id ||
+          (!current.current.selected && current.current.view === 'home')
+        ) {
+          setSelected(e.id);
+          setTab('summary');
+          setSheet(null);
+        } else setNotice({ text: 'Enhancing your recorded note.', id: e.id });
         setStream('');
       }
       if (e.type === 'ai-done' && busyRef.current === 'auto-enhance') {
@@ -103,12 +130,23 @@ function App() {
         if (e.recording?.sources) setCaptureSources(e.recording.sources);
         else if (e.source) setCaptureSources((sources) => ({ ...sources, [e.source]: e }));
       }
+      const recordingId = current.current.recording?.recordingId;
+      setSilent((s) => silentState(s, e, recordingId));
+      if (e.type === 'device-changed' && e.recordingId === current.current.recording?.recordingId) {
+        setNotice(`Microphone changed to ${e.device.name}.`);
+        setCaptureSources((sources) => ({
+          ...sources,
+          microphone: { ...sources.microphone, device: e.device },
+        }));
+      }
       if (e.type === 'started') {
         setAudioLevels({});
         setCaptureSources(e.recording?.sources ?? {});
       }
-      if (['started', 'stopped'].includes(e.type) || (e.type === 'error' && 'recording' in e))
+      if (['started', 'stopped'].includes(e.type) || (e.type === 'error' && 'recording' in e)) {
+        current.current.recording = e.recording;
         setData((d) => (d ? { ...d, recording: e.recording, starting: false } : d));
+      }
       if (e.type === 'partial') setPartial((p) => ({ ...p, [e.segmentId || e.speaker]: e }));
       if (e.type === 'segment')
         setPartial((p) => {
@@ -117,7 +155,12 @@ function App() {
           return n;
         });
       if (e.type === 'stopped') setPartial({});
-      if (e.type === 'error' || e.type === 'warning') setError(e.message);
+      if (e.type === 'error' || e.type === 'warning') {
+        const message = cleanError(e.message);
+        if (message === 'Stopped.' || message.startsWith('Timed out after 5 minutes.'))
+          setNotice(cleanError(e.message, busyRef.current ? aiErrorOptions() : {}));
+        else setError(message);
+      }
       if (e.type === 'ai-delta') setStream((s) => s + e.delta);
     });
   }, []);
@@ -189,12 +232,19 @@ function App() {
       : view.startsWith('folder:') && chatScope === 'folder'
         ? view
         : 'all';
+  current.current.scope = scope;
+  const withAnswerContext = (rows) =>
+    rows.map((m) =>
+      answerContexts.current.has(m.id) ? { ...m, context: answerContexts.current.get(m.id) } : m,
+    );
   useEffect(() => {
     let valid = true;
+    const request = ++messagesRequest.current;
+    setMessages([]);
     if (chatOpen)
       guard(async () => {
         const rows = await call('messages', scope);
-        if (valid) setMessages(rows);
+        if (valid && request === messagesRequest.current) setMessages(withAnswerContext(rows));
       });
     return () => {
       valid = false;
@@ -296,8 +346,11 @@ function App() {
       guard(async () => applyAi(await call('ai-provider', 'claude-terminal', step))),
     chatgptSignIn: () => account('connect'),
   };
-  async function settings() {
-    setModal({ kind: 'settings' });
+  async function settings(initialSection = 'ai') {
+    setModal({
+      kind: 'settings',
+      initialSection: typeof initialSection === 'string' ? initialSection : 'ai',
+    });
     guard(() => call('ai-provider', 'refresh').then(applyAi));
   }
   async function setting(key, value) {
@@ -308,31 +361,54 @@ function App() {
   const activeRecord = !!data && data.recording?.id === selected;
   const enhanceDisabled =
     !!busy || !!retryingRecording || activeRecord || !!meeting?.deletedAt || !hasContent;
+  function aiErrorOptions() {
+    return {
+      stopped: aiRequest.current.stopped,
+      timedOut: !aiRequest.current.stopped && Date.now() - aiRequest.current.startedAt >= 300000,
+    };
+  }
+  async function cancelAi() {
+    aiRequest.current.stopped = true;
+    await guard(() => call('cancel-ai'));
+  }
+  async function runAi(kind, target, fn) {
+    busyRef.current = kind;
+    aiRequest.current = {};
+    setBusy(kind);
+    setAiTarget(target);
+    setStream('');
+    await guard(async () => {
+      try {
+        await flushAll();
+        if (aiRequest.current.stopped) return;
+        aiRequest.current.startedAt = Date.now();
+        await fn();
+      } catch (e) {
+        const message = cleanError(e, aiErrorOptions());
+        if (message === 'Stopped.' || message.startsWith('Timed out after 5 minutes.'))
+          setNotice(message);
+        else throw e;
+      } finally {
+        busyRef.current = null;
+        setBusy(null);
+        setStream('');
+      }
+    });
+  }
   async function enhance() {
     if (busyRef.current) return;
     setTab('summary');
     setSheet(null);
     setEditingSummary(false);
     if (!ai.ready) return;
-    await guard(async () => {
-      await flushAll();
-      busyRef.current = 'enhance';
-      setBusy('enhance');
-      setStream('');
-      try {
-        const r = await call('ai', { kind: 'enhance', id: selected });
-        updateMeeting(r.meeting);
-      } finally {
-        setBusy(null);
-        busyRef.current = null;
-        setStream('');
-      }
+    await runAi('enhance', { id: selected }, async () => {
+      const r = await call('ai', { kind: 'enhance', id: selected });
+      updateMeeting(r.meeting);
     });
   }
   async function ask(prompt = question) {
     if (busyRef.current || !prompt.trim()) return;
-    await guard(async () => {
-      await flushAll();
+    await runAi('chat', { scope }, async () => {
       const ids =
         chatScope === 'meeting' && selected
           ? [selected]
@@ -341,17 +417,18 @@ function App() {
                 .filter((m) => m.folderId === view.slice(7) && !m.deletedAt)
                 .map((m) => m.id)
             : data.meetings.filter((m) => !m.deletedAt).map((m) => m.id);
-      busyRef.current = 'chat';
-      setBusy('chat');
-      setStream('');
-      try {
-        const r = await call('ai', { kind: 'chat', ids, question: prompt, scope });
-        setMessages(r.messages);
-        setQuestion('');
-      } finally {
-        busyRef.current = null;
-        setBusy(null);
-        setStream('');
+      const r = await call('ai', { kind: 'chat', ids, question: prompt, scope });
+      const answerId = r.message?.id ?? r.messages.findLast((m) => m.role === 'assistant')?.id;
+      if (answerId && r.context) answerContexts.current.set(answerId, r.context);
+      const request = ++messagesRequest.current;
+      if (current.current.scope === scope) {
+        setMessages(withAnswerContext(r.messages));
+        setQuestion((q) => (q === prompt ? '' : q));
+      } else {
+        const activeScope = current.current.scope;
+        const rows = await call('messages', activeScope);
+        if (current.current.scope === activeScope && request === messagesRequest.current)
+          setMessages(withAnswerContext(rows));
       }
     });
   }
@@ -449,7 +526,16 @@ function App() {
     return (
       <div className="loading">
         <Leaf size={28} />
-        <p>Opening your notebook…</p>
+        {loading ? (
+          <p>Opening your notebook…</p>
+        ) : (
+          <>
+            <p role="alert">{error || 'Your notebook could not be opened.'}</p>
+            <button className="primary" onClick={() => guard(load)}>
+              Retry
+            </button>
+          </>
+        )}
       </div>
     );
   const templates = data.templates;
@@ -474,12 +560,12 @@ function App() {
     <ChatPanel
       global={globalChat}
       messages={messages}
-      busy={busy}
-      stream={stream}
+      busy={busy === 'chat' && aiTarget?.scope !== scope ? 'other' : busy}
+      stream={aiTarget?.scope === scope ? stream : ''}
       question={question}
       setQuestion={setQuestion}
       onAsk={() => ask()}
-      onCancel={() => guard(() => call('cancel-ai'))}
+      onCancel={cancelAi}
       onClose={() => {
         setChatOpen(false);
         if (view === 'chat') setView('home');
@@ -516,7 +602,7 @@ function App() {
         chatScope === 'meeting' && meeting
           ? (m) =>
               guard(async () => {
-                await patch({ summary: m.content });
+                if (!(await patch({ summary: m.content, snapshotSummary: true }))) return;
                 setTab('summary');
                 setNotice('Enhanced notes updated. The previous version is saved.');
               })
@@ -653,7 +739,22 @@ function App() {
         {notice && (
           <div className="notice" role="status">
             <Check size={14} />
-            {notice}
+            {typeof notice === 'string' ? notice : notice.text}
+            {notice.id && (
+              <button
+                className="text-button"
+                onClick={async () => {
+                  const target = data.meetings.find((m) => m.id === notice.id);
+                  if (target) {
+                    await openNote(target);
+                    setTab('summary');
+                    setNotice('');
+                  }
+                }}
+              >
+                Open
+              </button>
+            )}
           </div>
         )}
         <div className="workspace-body">
@@ -667,13 +768,13 @@ function App() {
                 tab={tab}
                 draft={draft}
                 patch={patch}
-                busy={busy}
-                stream={stream}
+                busy={aiTarget?.id === selected ? busy : null}
+                stream={aiTarget?.id === selected ? stream : ''}
                 editingSummary={editingSummary}
                 setEditingSummary={setEditingSummary}
                 onEnhance={enhance}
                 enhanceDisabled={enhanceDisabled}
-                onCancel={() => guard(() => call('cancel-ai'))}
+                onCancel={cancelAi}
                 showCancel={chatOpen}
                 onHistory={() => setModal({ kind: 'history' })}
                 onSource={() => setSheet('transcript')}
@@ -703,90 +804,106 @@ function App() {
               />
             )}
           </section>
-          {!chatOpen && (
-            <div className="dock-wrap">
-              {meeting && sheet && (
-                <TranscriptSheet
-                  meeting={meeting}
-                  tab={sheet}
-                  setTab={setSheet}
-                  onClose={() => setSheet(null)}
-                  activeRecord={activeRecord}
-                  partial={partial}
-                  capture={{
-                    levels: audioLevels,
-                    sources: { ...data.recording?.sources, ...captureSources },
-                    systemAudioRequested: data.settings.systemAudio ?? true,
-                    starting: data.starting,
-                  }}
-                  recordings={{
-                    call,
-                    onRetry: retryRecording,
-                    retrying: retryingRecording,
-                    locale: data.settings.locale ?? 'en-US',
-                    disabled: !!data.recording || !!meeting.deletedAt || !!busy,
-                  }}
-                  onAddTranscript={() =>
-                    setModal({ kind: 'transcript', text: '', speaker: 'Speaker' })
-                  }
-                  onEditSegment={(s) => setModal({ kind: 'segment', ...s })}
-                />
-              )}
-              {meeting &&
-                !sheet &&
-                (busy === 'enhance' ||
-                  (!meeting.summary && hasContent && !activeRecord && !meeting.deletedAt)) && (
-                  <EnhancePill
-                    busy={busy === 'enhance'}
-                    disabled={enhanceDisabled}
-                    onEnhance={enhance}
-                    onCancel={() => guard(() => call('cancel-ai'))}
-                  />
+          <div className={'dock-wrap' + (chatOpen ? ' capture-only' : '')}>
+            {data.recording && (silent.microphone || silent.system) && (
+              <div className="capture-warnings" role="status">
+                {silent.microphone && (
+                  <div className="capture-warning">
+                    No sound from {silent.microphone}
+                    <button className="text-button" onClick={() => settings('capture')}>
+                      Change microphone
+                    </button>
+                  </div>
                 )}
-              <div className="dock">
-                {meeting && !meeting.deletedAt && (
-                  <RecordPill
-                    recording={{ ...data.recording, starting: data.starting }}
-                    active={activeRecord}
-                    hasAudio={meeting.recordings?.length > 0 || meeting.transcript.length > 0}
-                    elapsed={elapsed}
-                    level={level}
-                    sheetOpen={!!sheet}
-                    disabled={!!data.recording || !!retryingRecording}
-                    onStart={record}
-                    onStop={() => guard(() => call('stop'))}
-                    onToggleSheet={() => setSheet((s) => (s ? null : 'transcript'))}
-                  />
-                )}
-                <div className="dock-chat">
-                  <button
-                    className="dock-placeholder"
-                    aria-label={meeting ? 'Chat with this meeting' : 'Chat with your notes'}
-                    onClick={() => openChat()}
-                  >
-                    Ask anything
-                    <kbd>⌘J</kbd>
-                  </button>
-                  <button
-                    className="dock-recipe"
-                    onClick={() => {
-                      setQuestion(
-                        meeting
-                          ? 'Draft a concise follow-up email with the decisions and next steps.'
-                          : 'List recent action items with their owners and due dates, citing the source meetings.',
-                      );
-                      openChat();
-                    }}
-                  >
-                    <span className="slash" aria-hidden="true">
-                      /
-                    </span>
-                    {meeting ? 'Write follow-up email' : 'List recent todos'}
-                  </button>
-                </div>
+                {silent.system && <div className="capture-warning soft">No meeting audio yet</div>}
               </div>
-            </div>
-          )}
+            )}
+            {!chatOpen && (
+              <>
+                {meeting && sheet && (
+                  <TranscriptSheet
+                    meeting={meeting}
+                    tab={sheet}
+                    setTab={setSheet}
+                    onClose={() => setSheet(null)}
+                    activeRecord={activeRecord}
+                    partial={partial}
+                    capture={{
+                      levels: audioLevels,
+                      sources: { ...data.recording?.sources, ...captureSources },
+                      systemAudioRequested: data.settings.systemAudio ?? true,
+                      starting: data.starting,
+                      engine: data.recording?.engine,
+                    }}
+                    recordings={{
+                      call,
+                      onRetry: retryRecording,
+                      retrying: retryingRecording,
+                      locale: data.settings.locale ?? 'en-US',
+                      disabled: !!data.recording || !!meeting.deletedAt || !!busy,
+                    }}
+                    onAddTranscript={() =>
+                      setModal({ kind: 'transcript', text: '', speaker: 'Speaker' })
+                    }
+                    onEditSegment={(s) => setModal({ kind: 'segment', ...s })}
+                  />
+                )}
+                {meeting &&
+                  !sheet &&
+                  ((busy === 'enhance' && aiTarget?.id === selected) ||
+                    (!meeting.summary && hasContent && !activeRecord && !meeting.deletedAt)) && (
+                    <EnhancePill
+                      busy={busy === 'enhance' && aiTarget?.id === selected}
+                      disabled={enhanceDisabled}
+                      onEnhance={enhance}
+                      onCancel={cancelAi}
+                    />
+                  )}
+                <div className="dock">
+                  {meeting && !meeting.deletedAt && (
+                    <RecordPill
+                      recording={{ ...data.recording, starting: data.starting }}
+                      active={activeRecord}
+                      hasAudio={meeting.recordings?.length > 0 || meeting.transcript.length > 0}
+                      elapsed={elapsed}
+                      level={level}
+                      sheetOpen={!!sheet}
+                      disabled={!!data.recording || !!retryingRecording}
+                      onStart={record}
+                      onStop={() => guard(() => call('stop'))}
+                      onToggleSheet={() => setSheet((s) => (s ? null : 'transcript'))}
+                    />
+                  )}
+                  <div className="dock-chat">
+                    <button
+                      className="dock-placeholder"
+                      aria-label={meeting ? 'Chat with this meeting' : 'Chat with your notes'}
+                      onClick={() => openChat()}
+                    >
+                      Ask anything
+                      <kbd>⌘J</kbd>
+                    </button>
+                    <button
+                      className="dock-recipe"
+                      onClick={() => {
+                        setQuestion(
+                          meeting
+                            ? 'Draft a concise follow-up email with the decisions and next steps.'
+                            : 'List recent action items with their owners and due dates, citing the source meetings.',
+                        );
+                        openChat();
+                      }}
+                    >
+                      <span className="slash" aria-hidden="true">
+                        /
+                      </span>
+                      {meeting ? 'Write follow-up email' : 'List recent todos'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
           {chatOpen && !globalChat && chat}
         </div>
       </main>
@@ -794,8 +911,12 @@ function App() {
         ref={dialogRef}
         className={modal?.kind === 'settings' ? 'settings-dialog' : ''}
         onCancel={() => setModal(null)}
+        onMouseDown={(e) => {
+          backdropDown.current = e.target === e.currentTarget;
+        }}
         onClick={(e) => {
-          if (e.target === dialogRef.current) setModal(null);
+          if (backdropDown.current && e.target === e.currentTarget) setModal(null);
+          backdropDown.current = false;
         }}
         aria-labelledby="modal-title"
       >
@@ -824,6 +945,9 @@ function App() {
           )}
           {modal?.kind === 'settings' ? (
             <SettingsDialog
+              initialSection={modal.initialSection}
+              call={call}
+              subscribe={api.subscribe}
               data={data}
               ai={ai}
               accountBusy={accountBusy}
@@ -985,7 +1109,7 @@ function App() {
                       className="text-button"
                       onClick={() =>
                         guard(async () => {
-                          await patch({ summary: v.text });
+                          if (!(await patch({ summary: v.text, snapshotSummary: true }))) return;
                           setModal(null);
                         })
                       }

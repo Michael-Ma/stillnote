@@ -146,6 +146,11 @@ export function ChatPanel({
             ) : (
               <>
                 <Rich text={m.content} onSource={(number) => onSource(m, number)} />
+                {m.context?.included < m.context?.total && (
+                  <p className="context-coverage">
+                    Used {m.context.included} of {m.context.total} notes
+                  </p>
+                )}
                 {(m.sources?.length > 0 || onApply) && (
                   <div className="message-tools">
                     {m.sources?.map((s) => (

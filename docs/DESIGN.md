@@ -50,7 +50,7 @@ All colors, type sizes and radii are CSS custom properties in `app/style.css`, w
 5. No AI connected → an inline card with the shortest path: Use Claude (when Claude Code is signed in), Sign in to Claude, or Sign in with ChatGPT.
 6. Enhanced note → citation opens the transcript sheet → edit, regenerate, or restore an earlier version.
 7. Chat → explicit scope and model → streamed answer → persisted message with source chips.
-8. Quota, network failure or cancellation → visible error. Notes and the previous summary stay intact.
+8. Quota, network failure or cancellation → visible recovery message. Notes and the previous summary stay intact.
 
 ## AI providers in the UI
 
@@ -63,3 +63,17 @@ The Recordings tab plays microphone and meeting audio with one transport, so the
 ## Application icon
 
 A folded ivory paper ribbon forms an S on a forest-green macOS tile. See [ICON.md](ICON.md).
+
+## Capture and recovery states
+
+- Opening a notebook shows progress only while the state request is pending. A failed load shows the readable error and a Retry button.
+- Recording settings list the Mac's microphones, including System default, and Auto/On/Off echo cancellation. Device changes apply to the next recording. Auto enables echo cancellation with built-in speakers.
+- Meeting language lists the native engine's supported locales using localized display names and marks installed models. Missing models have a Download action and labeled progress bar. The legacy engine lists the languages that work on this Mac and points to macOS Dictation settings. Unavailable device or language IPC shows a short local message; other settings remain usable.
+- During capture, a warm warning chip above the dock says “No sound from <device>”. Change microphone opens Settings directly to Recording. Silent system audio uses a quieter “No meeting audio yet” chip. Each clears when its signal returns; stopping clears both. A device change gets a transient notice. These states also remain visible while chat is open.
+- Transcript diagnostics name the input device and on-device recognition engine. Saved sessions show that information when available; older recordings do not guess missing metadata.
+- Native warnings remain visible through autosave until dismissed or superseded. User cancellation says “Stopped.”; an AI timeout says “Timed out after 5 minutes. Your notes are unchanged.” Both use a quiet notice.
+- Automatic enhancement opens the captured note only from Home or when already on that note. Elsewhere, a small notice offers Open, preserving the current editing location. AI streams remain attached to the note or chat scope where they began.
+- Answers using a subset of the notebook show “Used N of M notes” below the answer. Applying an answer or restoring a summary explicitly preserves the previous version.
+- Dialog backdrop dismissal requires the press and click to start and end on the backdrop. Dragging a text selection outside the dialog keeps the draft open.
+
+All new chips, progress controls, and coverage labels use the existing color and type tokens, including the dark palette. The smallest label is 11 px.

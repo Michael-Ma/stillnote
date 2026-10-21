@@ -16,3 +16,77 @@ export function dayLabel(value) {
     day: 'numeric',
   }).format(d);
 }
+
+export function cleanError(error, { stopped = false, timedOut = false } = {}) {
+  const raw = typeof error === 'string' ? error : (error?.message ?? String(error));
+  const text = raw.replace(/^Error invoking remote method '[^']+':\s*(?:[\w.]*Error:\s*)?/, '');
+  if (stopped) return 'Stopped.';
+  if (
+    timedOut ||
+    error?.name === 'TimeoutError' ||
+    /TimeoutError:/.test(raw) ||
+    /^Timed out after 5 minutes\./.test(text)
+  )
+    return 'Timed out after 5 minutes. Your notes are unchanged.';
+  if (
+    error?.name === 'AbortError' ||
+    /^(?:AbortError:|This operation was aborted|The operation was aborted|Stopped\.?$)/i.test(
+      text,
+    ) ||
+    /AbortError:/.test(raw)
+  )
+    return 'Stopped.';
+  return text;
+}
+
+export function languageName(locale, displayLocale) {
+  try {
+    return (
+      new Intl.DisplayNames(displayLocale, { type: 'language', languageDisplay: 'standard' }).of(
+        locale,
+      ) ?? locale
+    );
+  } catch {
+    return locale;
+  }
+}
+
+export function languageOptions(languages, displayLocale) {
+  const installed = new Set(languages?.installed ?? []);
+  return [...new Set(languages?.supported ?? [])]
+    .map((locale) => ({
+      locale,
+      name: languageName(locale, displayLocale),
+      installed: installed.has(locale),
+    }))
+    .sort(
+      (a, b) => a.name.localeCompare(b.name, displayLocale) || a.locale.localeCompare(b.locale),
+    );
+}
+
+export function silentState(state, event, recordingId) {
+  if (
+    event.type === 'started' ||
+    event.type === 'stopped' ||
+    (event.type === 'error' && 'recording' in event)
+  )
+    return {};
+  if (
+    !recordingId ||
+    event.recordingId !== recordingId ||
+    !['microphone', 'system'].includes(event.source)
+  )
+    return state;
+  if (event.type === 'source-silent')
+    return {
+      ...state,
+      [event.source]:
+        event.device || (event.source === 'microphone' ? 'microphone' : 'meeting audio'),
+    };
+  if (event.type === 'source-signal') {
+    const next = { ...state };
+    delete next[event.source];
+    return next;
+  }
+  return state;
+}

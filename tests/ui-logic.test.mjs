@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { cleanError, languageName, languageOptions, silentState } from '../app/format.mjs';
 import { ownLineMatcher } from '../app/own-lines.mjs';
 import { aiView, claudeSummary, usageSummary, modelKey } from '../app/ai-view.mjs';
 
@@ -66,4 +67,119 @@ test('usageSummary prefers the weekly window and omits unknown data', () => {
   assert.match(text, /^77% of weekly limit used · resets /);
   assert.equal(usageSummary(null), '');
   assert.equal(usageSummary({ fiveHour: { utilization: 0.1 } }), '10% of 5-hour limit used');
+});
+
+test('cleanError removes Electron remote error names without hiding the useful message', () => {
+  for (const name of ['Error', 'TypeError', 'SyntaxError', 'RangeError', 'CustomError'])
+    assert.equal(
+      cleanError(`Error invoking remote method 'stillnote:state': ${name}: Try again.`),
+      'Try again.',
+    );
+  assert.equal(cleanError(new Error('Cannot read notebook.')), 'Cannot read notebook.');
+  assert.equal(
+    cleanError("Error invoking remote method 'stillnote:state': Unknown operation."),
+    'Unknown operation.',
+  );
+});
+
+test('cleanError gives cancellation and timeout calm, distinct messages', () => {
+  assert.equal(
+    cleanError(
+      "Error invoking remote method 'stillnote:ai': AbortError: This operation was aborted",
+    ),
+    'Stopped.',
+  );
+  assert.equal(cleanError(new DOMException('Cancelled by user', 'AbortError')), 'Stopped.');
+  assert.equal(
+    cleanError('The operation was aborted.', { timedOut: true }),
+    'Timed out after 5 minutes. Your notes are unchanged.',
+  );
+  assert.equal(
+    cleanError('TimeoutError: The operation timed out'),
+    'Timed out after 5 minutes. Your notes are unchanged.',
+  );
+  assert.equal(cleanError('Request cancelled', { stopped: true }), 'Stopped.');
+  assert.equal(
+    cleanError(
+      "Error invoking remote method 'stillnote:ai': TimeoutError: The operation was aborted",
+    ),
+    'Timed out after 5 minutes. Your notes are unchanged.',
+  );
+  assert.equal(
+    cleanError('Audio devices timed out after 10 seconds.'),
+    'Audio devices timed out after 10 seconds.',
+  );
+});
+
+test('language display supports the complete native locale list and falls back safely', () => {
+  assert.equal(languageName('en-US', 'en'), 'English (United States)');
+  assert.equal(languageName('zh-TW', 'en'), 'Chinese (Taiwan)');
+  assert.equal(languageName('not_a_locale', 'en'), 'not_a_locale');
+});
+
+test('language options are deduplicated, sorted by display name, and mark only installed locales', () => {
+  const input = { supported: ['ja-JP', 'en-US', 'de-DE', 'en-US'], installed: ['en-US', 'fr-FR'] };
+  const options = languageOptions(input, 'en');
+  assert.deepEqual(
+    options.map((o) => o.locale),
+    ['en-US', 'de-DE', 'ja-JP'],
+  );
+  assert.deepEqual(
+    options.map((o) => o.installed),
+    [true, false, false],
+  );
+  assert.equal(input.supported.length, 4);
+  assert.deepEqual(languageOptions(null), []);
+});
+
+test('legacy language options show exactly the locales supported on this Mac', () => {
+  const locales = ['en-US', 'en-ID'];
+  const options = languageOptions(
+    { engine: 'legacy', supported: locales, installed: locales },
+    'en',
+  );
+  assert.equal(options.length, 2);
+  assert.ok(options.every((o) => o.installed));
+  assert.ok(!options.some((o) => o.locale === 'zh-CN'));
+});
+
+test('silence warnings track independent sources and clear when their signal returns', () => {
+  const mic = {
+    type: 'source-silent',
+    source: 'microphone',
+    recordingId: 'a',
+    device: 'External Microphone',
+  };
+  const first = silentState({}, mic, 'a');
+  const both = silentState(first, { ...mic, source: 'system', device: '' }, 'a');
+  assert.deepEqual(first, { microphone: 'External Microphone' });
+  assert.deepEqual(both, { microphone: 'External Microphone', system: 'meeting audio' });
+  assert.deepEqual(silentState(both, { ...mic, type: 'source-signal' }, 'a'), {
+    system: 'meeting audio',
+  });
+  assert.deepEqual(silentState({}, { ...mic, device: '' }, 'a'), { microphone: 'microphone' });
+});
+
+test('silence warnings ignore stale recordings and unknown sources', () => {
+  const state = { microphone: 'Built-in microphone' };
+  assert.equal(
+    silentState(state, { type: 'source-signal', source: 'microphone', recordingId: 'old' }, 'new'),
+    state,
+  );
+  assert.equal(
+    silentState(state, { type: 'source-silent', source: 'other', recordingId: 'a' }, 'a'),
+    state,
+  );
+  assert.equal(silentState(state, { type: 'source-silent', source: 'system' }, null), state);
+});
+
+test('silence warnings reset at recording lifecycle boundaries', () => {
+  for (const event of [
+    { type: 'started' },
+    { type: 'stopped' },
+    { type: 'error', recording: null },
+  ])
+    assert.deepEqual(silentState({ microphone: 'External' }, event, 'a'), {});
+  const state = { microphone: 'External' };
+  assert.equal(silentState(state, { type: 'warning', message: 'Permission needed' }, 'a'), state);
 });

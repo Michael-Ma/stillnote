@@ -11,27 +11,13 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { date, duration, time } from '../format.mjs';
+import { cleanError, date, duration, languageName, time } from '../format.mjs';
 
 const sourceName = (source) => (source === 'system' ? 'Meeting audio' : 'Microphone');
-const languageName = (locale) =>
-  ({
-    'en-US': 'English (US)',
-    'en-GB': 'English (UK)',
-    'zh-CN': '中文（普通话）',
-    'zh-TW': '中文（台灣）',
-    'es-ES': 'Español',
-    'fr-FR': 'Français',
-    'de-DE': 'Deutsch',
-    'ja-JP': '日本語',
-    'ko-KR': '한국어',
-    'pt-BR': 'Português',
-  })[locale] ?? locale;
 const isCapturing = (recording) =>
   ['starting', 'recording', 'capturing', 'stopping'].includes(recording.status);
 const playableTracks = (recording) =>
   (recording.tracks ?? []).filter((track) => track.fileName && track.bytes !== 0);
-const cleanError = (e) => e.message.replace(/^Error invoking remote method '[^']+': Error: /, '');
 
 export function transcriptCoverageWarning(meeting) {
   const recordings = meeting.recordings ?? [];
@@ -85,7 +71,7 @@ export function CoverageWarning({ meeting, onListen, onRetry, retrying, disabled
   );
 }
 
-export function CaptureDiagnostics({ levels, sources, systemAudioRequested, starting }) {
+export function CaptureDiagnostics({ levels, sources, systemAudioRequested, starting, engine }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -118,7 +104,10 @@ export function CaptureDiagnostics({ levels, sources, systemAudioRequested, star
             title={state?.message ?? ''}
           >
             {source === 'system' ? <AudioLines size={14} /> : <Mic size={14} />}
-            <span className="capture-source-name">{sourceName(source)}</span>
+            <span className="capture-source-name">
+              {sourceName(source)}
+              {source === 'microphone' && state?.device?.name ? ` · ${state.device.name}` : ''}
+            </span>
             <span
               className="source-meter"
               role="meter"
@@ -134,7 +123,14 @@ export function CaptureDiagnostics({ levels, sources, systemAudioRequested, star
           </div>
         );
       })}
-      <p>Levels show incoming audio. Text arrives in roughly 10-second batches.</p>
+      <p>
+        {engine === 'speechTranscriber'
+          ? 'On-device · Apple SpeechTranscriber'
+          : engine === 'legacy'
+            ? 'On-device · Apple Speech (legacy)'
+            : 'On-device speech recognition'}
+        . Levels show incoming audio.
+      </p>
     </div>
   );
 }
@@ -360,6 +356,17 @@ export function RecordingAudio({ meeting, call, onRetry, retrying, disabled, loc
                   </button>
                 )}
               </header>
+              {(recording.engine || recording.sources?.microphone?.device?.name) && (
+                <p className="recording-footnote">
+                  {recording.sources?.microphone?.device?.name}
+                  {recording.sources?.microphone?.device?.name && recording.engine ? ' · ' : ''}
+                  {recording.engine === 'speechTranscriber'
+                    ? 'On-device · Apple SpeechTranscriber'
+                    : recording.engine === 'legacy'
+                      ? 'On-device · Apple Speech (legacy)'
+                      : ''}
+                </p>
+              )}
               {capturing ? (
                 <p className="recording-pending">
                   Audio is being saved. Finish recording to listen.
