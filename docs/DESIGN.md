@@ -67,7 +67,7 @@ A folded ivory paper ribbon forms an S on a forest-green macOS tile. See [ICON.m
 ## Capture and recovery states
 
 - Opening a notebook shows progress only while the state request is pending. A failed load shows the readable error and a Retry button.
-- Recording settings list the Mac's microphones, including System default, and Auto/On/Off echo cancellation. Device changes apply to the next recording. Auto enables echo cancellation with built-in speakers.
+- Recording settings list the Mac's microphones, including System default, and an opt-in, experimental echo cancellation (Off by default; headphones remain the recommended setup). Device changes apply to the next recording.
 - Meeting language lists the native engine's supported locales using localized display names and marks installed models. Missing models have a Download action and labeled progress bar. The legacy engine lists the languages that work on this Mac and points to macOS Dictation settings. Unavailable device or language IPC shows a short local message; other settings remain usable.
 - During capture, a warm warning chip above the dock says “No sound from <device>”. Change microphone opens Settings directly to Recording. Silent system audio uses a quieter “No meeting audio yet” chip. Each clears when its signal returns; stopping clears both. A device change gets a transient notice. These states also remain visible while chat is open.
 - Transcript diagnostics name the input device and on-device recognition engine. Saved sessions show that information when available; older recordings do not guess missing metadata.

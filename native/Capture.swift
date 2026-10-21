@@ -987,6 +987,14 @@ func audioIDs(
   }
   return status == noErr ? values : []
 }
+func currentDeviceID(_ input: AVAudioInputNode) -> AudioDeviceID? {
+  guard let unit = input.audioUnit else { return nil }
+  var id = AudioDeviceID(0)
+  var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+  let status = AudioUnitGetProperty(
+    unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, &size)
+  return status == noErr ? id : nil
+}
 func inputDevices() -> [InputDevice] {
   let system = AudioObjectID(kAudioObjectSystemObject)
   let defaultID = audioNumber(system, kAudioHardwarePropertyDefaultInputDevice)
@@ -1009,19 +1017,6 @@ func inputDevices() -> [InputDevice] {
       transport: transport)
   }.sorted { $0.name < $1.name }
 }
-func builtInSpeakers() -> Bool {
-  let output = audioNumber(
-    AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice)
-  guard audioNumber(output, kAudioDevicePropertyTransportType) == kAudioDeviceTransportTypeBuiltIn
-  else { return false }
-  let streams = audioIDs(
-    output, kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeOutput)
-  // The terminal type distinguishes speakers from a built-in headphone jack.
-  return streams.contains {
-    audioNumber($0, kAudioStreamPropertyTerminalType) == kAudioStreamTerminalTypeSpeaker
-  }
-}
-
 @MainActor
 final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   var engine: AVAudioEngine?
@@ -1041,6 +1036,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   var restarting = false
   var tapInstalled = false
   var microphoneGeneration = 0
+  var tapFormat: AVAudioFormat?
+  var rebuilds: [Date] = []
   nonisolated let audioQueue = DispatchQueue(label: "local.stillnote.audio")
   nonisolated let pendingAudio = DispatchGroup()
   func start(
@@ -1083,6 +1080,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
       at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let start = Date()
     started = start
+    rebuilds = []
     tracks = [:]
     let mic = try AudioTrack(
       source: "microphone", recordingId: id, directory: directory, start: start)
@@ -1205,7 +1203,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         throw problem("Cannot select microphone \(device.name) (\(status)).")
       }
     }
-    do { try select(device) } catch {
+    // Selecting a device the unit already uses still posts a configuration change; skip it.
+    do { if currentDeviceID(input) != device.id { try select(device) } } catch {
       guard let fallback = devices.first(where: { $0.isDefault }), fallback.id != device.id else {
         throw error
       }
@@ -1214,7 +1213,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
       try select(device)
     }
     echoEnabled = false
-    if allowVoiceProcessing && (echoMode == "on" || (echoMode == "auto" && builtInSpeakers())) {
+    // AVAudioEngine voice processing fails to start on some Macs (-10875) and its teardown can
+    // reset the input device mid-meeting, so it only runs when explicitly turned on.
+    if allowVoiceProcessing && echoMode == "on" {
       do {
         try input.setVoiceProcessingEnabled(true)
         if #available(macOS 14.0, *) {
@@ -1223,7 +1224,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
               enableAdvancedDucking: false, duckingLevel: .min)
         }
         // Voice processing can replace the I/O unit; reapply the selected device.
-        try select(device)
+        if currentDeviceID(input) != device.id { try select(device) }
         echoEnabled = input.isVoiceProcessingEnabled
       } catch {
         warning(
@@ -1262,7 +1263,20 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
       }
     }
     tapInstalled = true
-    try engine.start()
+    tapFormat = format
+    // The voice-processing I/O unit only initializes with a complete input → output path;
+    // route the input through a muted mixer so nothing is played back.
+    if echoEnabled {
+      engine.connect(input, to: engine.mainMixerNode, format: format)
+      engine.mainMixerNode.outputVolume = 0
+    }
+    do { try engine.start() } catch {
+      guard echoEnabled, allowVoiceProcessing else { throw error }
+      warning(
+        "Echo cancellation could not start: \(error.localizedDescription). Continuing without it.")
+      removeMicrophone()
+      return try startMicrophone(allowVoiceProcessing: false)
+    }
     microphoneDevice = device
     tracks["microphone"]?.deviceName = device.name
     tracks["microphone"]?.lastBuffer = Date()
@@ -1271,7 +1285,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     ) { [weak self, weak engine] _ in
       Task { @MainActor in
         guard let self, let engine, self.engine === engine else { return }
-        self.restartMicrophone()
+        self.configurationChanged(engine)
       }
     }
     return device
@@ -1286,8 +1300,34 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     tapInstalled = false
     engine = nil
   }
-  func restartMicrophone() {
+  // AVAudioEngine posts configuration changes for benign reasons too (including its own start).
+  // Rebuild only when the device or format really changed, and announce only a new device.
+  func configurationChanged(_ engine: AVAudioEngine) {
     guard !stopping, !restarting, started != nil else { return }
+    let input = engine.inputNode
+    let format = input.outputFormat(forBus: 0)
+    let sameDevice = currentDeviceID(input) == microphoneDevice?.id
+    let sameFormat =
+      tapFormat.map { $0.sampleRate == format.sampleRate && $0.channelCount == format.channelCount }
+      ?? false
+    if sameDevice && sameFormat {
+      if engine.isRunning { return }
+      tracks["microphone"]?.padOnNextBuffer = true
+      if (try? engine.start()) != nil { return }
+    }
+    restartMicrophone(announce: !sameDevice)
+  }
+  func restartMicrophone(announce: Bool = true) {
+    guard !stopping, !restarting, started != nil else { return }
+    // A device that keeps resetting must not turn into a rebuild loop that drops the audio.
+    rebuilds = rebuilds.filter { Date().timeIntervalSince($0) < 10 } + [Date()]
+    guard rebuilds.count <= 3 else {
+      if rebuilds.count == 4 {
+        warning(
+          "The microphone keeps resetting. Check the input device in Settings › Recording.")
+      }
+      return
+    }
     restarting = true
     defer { restarting = false }
     removeMicrophone()
@@ -1296,12 +1336,14 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     tracks["microphone"]?.padOnNextBuffer = true
     do {
       let device = try startMicrophone()
-      emit([
-        "type": "device-changed", "recordingId": recordingId, "source": "microphone",
-        "device": device.identity,
-      ])
-      warning(
-        "Microphone input restarted on \(device.name). The capture gap is padded with silence.")
+      if announce {
+        emit([
+          "type": "device-changed", "recordingId": recordingId, "source": "microphone",
+          "device": device.identity,
+        ])
+        warning(
+          "Microphone input restarted on \(device.name). The capture gap is padded with silence.")
+      }
       emit([
         "type": "recording-status", "recordingId": recordingId,
         "sources": ["microphone": ["status": "recording", "device": device.identity]],

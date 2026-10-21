@@ -17,7 +17,7 @@ relies on this contract instead of editing the other workstream's files.
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `inputDevice` | string (CoreAudio device UID) or `null` | `null` | `null` follows the macOS default input. |
-| `echoCancellation` | `'auto'` \| `'on'` \| `'off'` | `'auto'` | `auto` enables voice processing only when the default output is built-in speakers. |
+| `echoCancellation` | `'auto'` \| `'on'` \| `'off'` | `'auto'` | Revised 2026-10-21: voice processing runs only for `on`; `auto` behaves as `off` (it failed to start and destabilized input on the test Mac). |
 | `locale` | BCP-47 string matching `/^[a-z]{2,3}(-[A-Za-z0-9]{2,8}){0,2}$/` | `'en-US'` | Recognition language, e.g. `zh-CN`, `en-GB`, `yue-CN`. |
 
 `inputDevice`, `provider` and `claudePath` are machine-specific. They are excluded from JSON backups and never restored.

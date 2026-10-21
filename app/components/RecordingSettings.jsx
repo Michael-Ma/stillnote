@@ -92,16 +92,18 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
           <div className="setting-row">
             <div>
               <label htmlFor="echoCancellation">Echo cancellation</label>
-              <small>Auto uses echo cancellation with built-in speakers.</small>
+              <small>
+                Experimental. Use headphones for the cleanest transcript; Stillnote falls back to
+                normal capture if your Mac can’t start it.
+              </small>
             </div>
             <select
               id="echoCancellation"
-              value={settings.echoCancellation ?? 'auto'}
+              value={settings.echoCancellation === 'on' ? 'on' : 'off'}
               onChange={(e) => guard(() => setting('echoCancellation', e.target.value))}
             >
-              <option value="auto">Auto</option>
-              <option value="on">On</option>
               <option value="off">Off</option>
+              <option value="on">On (experimental)</option>
             </select>
           </div>
         </>
