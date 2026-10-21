@@ -41,6 +41,10 @@ app.setPath(
   process.env.STILLNOTE_DATA_DIR ??
     (app.isPackaged ? join(app.getPath('appData'), 'Stillnote') : join(root, '.data')),
 );
+// Scripted runs against an isolated data directory use Chromium's mock keychain, so test
+// launches never ask for access to the real “Stillnote Safe Storage” keychain item.
+if (process.env.STILLNOTE_MOCK_KEYCHAIN && process.env.STILLNOTE_DATA_DIR)
+  app.commandLine.appendSwitch('use-mock-keychain');
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {

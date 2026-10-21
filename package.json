@@ -17,6 +17,7 @@
     "format:check": "prettier --check app scripts tests index.html package.json",
     "icon": "node scripts/make-icon.mjs",
     "test:package": "node scripts/package-smoke.mjs",
+    "signing:setup": "node scripts/setup-signing.mjs",
     "screenshots": "node scripts/screenshots.mjs",
     "test:e2e": "node scripts/e2e.mjs",
     "test:native": "node scripts/native-audio-test.mjs",

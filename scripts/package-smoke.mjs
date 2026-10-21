@@ -16,6 +16,7 @@ const desktop = await electron.launch({
     ...process.env,
     STILLNOTE_DATA_DIR: mkdtempSync(resolve('.test-data-package-')),
     STILLNOTE_DISABLE_CLAUDE: '1',
+    STILLNOTE_MOCK_KEYCHAIN: '1',
   },
   timeout: 30000,
 });
