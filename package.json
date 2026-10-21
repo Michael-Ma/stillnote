@@ -28,7 +28,7 @@
     "appId": "local.stillnote.app",
     "productName": "Stillnote",
     "directories": {
-      "output": "release"
+      "output": "release.noindex"
     },
     "files": [
       "dist/**/*",

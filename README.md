@@ -36,7 +36,7 @@ To create a standalone app:
 npm run package
 ```
 
-The app is written under `release/mac-arm64/Stillnote.app` on Apple Silicon, or `release/mac/Stillnote.app` on Intel. This is an ad-hoc-signed local development build, not an Apple-notarized distribution. Use the packaged app for macOS permission testing; development runs may identify the host process as Electron.
+The app is written under `release.noindex/mac-arm64/Stillnote.app` on Apple Silicon, or `release.noindex/mac/Stillnote.app` on Intel. The `.noindex` suffix keeps Spotlight and Launchpad from listing this build next to the copy you install in `/Applications`. This is an ad-hoc-signed local development build, not an Apple-notarized distribution. Use the packaged app for macOS permission testing; development runs may identify the host process as Electron.
 
 ## Connect your ChatGPT plan
 

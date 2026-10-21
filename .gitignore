@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-electron/
 release/
+release.noindex/
 native/bin/
 .data/
 .test-data/
