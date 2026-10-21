@@ -1,6 +1,6 @@
 # Stillnote icon
 
-The icon uses a folded-paper **S** for Stillnote. Two broad curves suggest the turns of a conversation, while the paper material connects the mark to notes. Warm ivory against a deep forest-green tile keeps the silhouette readable at Dock and small UI sizes. A pale pistachio underside ties it to the app's restrained green accents.
+The active icon is **Conversation Fold**, selected by the user: two overlapping warm-ivory conversation cards on a forest-green macOS tile. The front card folds into a speech tail, connecting conversation with written notes.
 
 The mark is original to this project and does not reuse Granola's logo or artwork. It was created with Codex's built-in image generation, then resampled into platform assets. No API key or image-generation SDK is required to rebuild the icon assets.
 
@@ -23,7 +23,13 @@ The master has transparent padding around the tile. The exported icon was inspec
 Method: Codex built-in `image_gen`, with `transparent_background: true`. This is a new generated asset, not an edit of Granola artwork or the previous icon.
 
 ```text
-Design one finished macOS application icon for Stillnote, a calm, local meeting-notes app. Create an original, exceptionally polished, simple brand mark: a broad ivory folded-paper ribbon forming a clear flowing S, with two generous curves subtly suggesting two conversational turns. The shape must have a strong, instantly recognizable silhouette, not a typed letter, not a notebook illustration. A tiny visible pale pistachio underside on one fold adds a considered accent; the principal S remains warm ivory. Center it on a deep forest-green macOS squircle tile, very subtly shaded from mossy forest at the upper left to dark pine at the bottom. Native macOS icon craft: restrained dimensionality, softly beveled edges, delicate ambient shadow under the paper folds, smooth large forms, precise geometry, satin paper material, no plastic toy aesthetic, no busy texture. The S occupies about 62% of the tile width. Canvas 1024x1024, straight-on orthographic front view. Tile approximately 840x840, centered with even transparent padding, standard macOS rounded-square corners. Outside the tile and its very subtle drop shadow must be genuinely transparent. No letters other than the abstract S shape, no app name, no captions, no border, no sparkles, no microphone, no small lines, no surrounding objects, no presentation mockup. This is the production icon asset, not a design board. Prioritize legibility at 16, 32, and 64 pixels.
+Use case: logo-brand
+Asset type: polished macOS app icon for Stillnote, a calm meeting recorder and personal notes app.
+Primary request: an original "Conversation Fold" icon. Two broad ivory paper conversation cards overlap, forming one compact sculptural conversational emblem. The front card has a single generous folded lower corner that also reads as a short speech tail; the rear card peeks out at upper left. No marks or text on either card. Strong readable silhouette at 32 pixels.
+Scene/backdrop: one forest-green rounded-square macOS icon tile, inset about 10% from all canvas edges. True transparent alpha outside the tile, including the corners. Front facing square composition.
+Style/medium: elegant tactile paper sculpture, crisp but softly rounded ivory card edges, single broad fold, subtle top-left lighting and convincing soft contact shadows. Deep matte forest-green tile with restrained bevel.
+Color palette: warm ivory paper against deep forest green, no accent colors.
+Constraints: one icon only, no collage, no text, no letters, no microphone, no headphones, no lines suggesting writing, no watermark, no external cast shadow. Avoid the existing folded S ribbon; the silhouette is two overlapping conversational notes.
 ```
 
 The generator returned a 1254 × 1254 PNG. The checked-in 1024 px export is a proportional resample; the artwork is not stretched or cropped.

@@ -123,9 +123,9 @@ sequenceDiagram
 - `AVAudioEngine` captures the microphone. Capture, audio-track, and recognition-window state are isolated to the Swift main actor; audio callbacks transfer independently copied buffers.
 - `SCStream` captures system audio using a display filter and audio output callback; no screen-frame output is registered or persisted.
 - Two speech channels label the streams **You** and **Meeting audio**. These labels identify the input source, not individual remote participants.
-- Each `SFSpeechAudioBufferRecognitionRequest` sets `requiresOnDeviceRecognition = true`.
-- Recognition windows rotate after 40 seconds of audio. A draining window retains its task and callbacks for finalization instead of being cancelled immediately. Stable segment IDs keep overlapping final/partial events separate.
-- Stopping finalizes the WAV files and waits for recognition completion, with a bounded 15-second fallback that retains the last partial. The stored duration excludes this drain time.
+- Audio capture remains continuous, but recognition is performed on roughly 10-second chunks through one shared serial `SpeechScheduler`. Each `SFSpeechURLRecognitionRequest` requires on-device recognition. Two simultaneous live recognizers were observed to repeatedly fail on the tested Mac; the queue avoids that design.
+- Each source keeps its own buffers, timestamps, chunk IDs, and WAV file. Both submit inference jobs to the shared queue; the queue limits its backlog to 24 jobs and preserves raw audio if it cannot keep up.
+- Stopping drains queued audio callbacks before finalizing the WAV files, then waits for pending recognition work with a bounded 30-second fallback. Cancellation preserves the latest partial and the original audio. The stored duration excludes this wait. System-audio callbacks are accepted only from the active stream instance.
 - Starting another recording on the same note adds a duration offset to transcript timestamps.
 - `AVAudioConverter` normalizes hardware formats to 16 kHz mono float PCM. The same samples feed recognition and a canonical 16-bit WAV writer. Headers are checkpointed every second; audio is retained locally for replay and retry.
 

@@ -79,10 +79,11 @@ Notes, transcripts, and chat history are stored locally in `notebook.sqlite`. Th
 npm test                 # storage, search, imports, streaming, and synthetic OAuth tests
 npm run test:ui          # original notebook smoke checks
 npm run test:e2e         # reusable notebook/capture/playback/AI/crash-recovery suites
+npm run test:native-scheduler # deterministic native scheduling regression
 npm run test:native      # real native audio writer with synthetic speech
 npm run test:native -- --long # 60+ second native audio regression
 npm run test:native:recognize # opt-in on-device recognition; macOS permission may be needed
-npm run test:native -- --long --recognize --streamed # live recognition path, synthetic audio
+npm run test:native -- --long --recognize --streamed --dual-source # both sources, synthetic audio
 npm run format:check     # source formatting
 npm run build            # Swift helper, Electron main/preload, and renderer
 npm run package          # standalone macOS app
@@ -100,6 +101,7 @@ See [validation results and remaining checks](docs/VALIDATION.md) for the eviden
 - [Three additional icon options](docs/ICON-OPTIONS.md)
 - [Reusable E2E testing design and commands](docs/TESTING.md)
 - [Recording and transcription diagnostics](docs/CAPTURE-DIAGNOSTICS.md)
+- [Follow-up code review and reproduced failure](docs/CODE-REVIEW.md)
 - [Validation and limitations](docs/VALIDATION.md)
 - [Optional local MCP integration](docs/MCP.md)
 

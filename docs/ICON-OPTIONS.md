@@ -1,18 +1,18 @@
 # Stillnote icon alternatives
 
-Three additional directions, generated with the built-in image generation tool on 2026-10-20. The active application icon is unchanged. Originals remain in the tool's generated-images directory; copies of all requested final options are stored here.
+Three additional directions, generated with the built-in image generation tool on 2026-10-20. **Conversation Fold is now the active application icon.** Originals remain in the tool's generated-images directory; copies of all requested final options are stored here.
 
 ![Three options, with 32px and 64px checks](../assets/icon-options/comparison.png)
 
 | Option | Intent | Tradeoff |
 | --- | --- | --- |
 | [Listening Ripple](../assets/icon-options/listening-ripple.png) | Quiet listening, sound settling into memory; bold circular porcelain mark. | Clearest abstract silhouette at small size; can suggest a broadcast or audio utility more than notes. |
-| [Conversation Fold](../assets/icon-options/conversation-fold.png) | Conversation becomes a tactile paper note; overlapping ivory cards. | Best balance of meeting and note meaning. Broad shapes survive reduction; the folded corner becomes subtle at 32px. Recommended. |
+| [Conversation Fold](../assets/icon-options/conversation-fold.png) | Conversation becomes a tactile paper note; overlapping ivory cards. | Best balance of meeting and note meaning. Broad shapes survive reduction; the folded corner becomes subtle at 32px. Selected. |
 | [Quiet Notebook](../assets/icon-options/quiet-notebook.png) | A personal notebook with a broad voice-wave inlay. | Most literal note-taking signal and warmest material. More cover detail and visual weight than the other options. |
 
 ## Verification
 
-All three final PNGs were inspected at full size and in a comparison showing 32px and 64px versions. All have RGBA channels, transparent outside corners, green rounded-square tiles, and distinct central silhouettes. No text was requested or generated. Texture and shading naturally simplify at small sizes. These are review options; no replacement of the installed icon or packaging assets was performed.
+All three final PNGs were inspected at full size and in a comparison showing 32px and 64px versions. All have RGBA channels, transparent outside corners, green rounded-square tiles, and distinct central silhouettes. No text was requested or generated. Texture and shading naturally simplify at small sizes. Conversation Fold has been applied to the active icon master, macOS packaging assets, and in-app mark. The other directions remain available for reference.
 
 The notebook direction was refined to keep a clean transparent silhouette. Only the three final options and their comparison are published.
 

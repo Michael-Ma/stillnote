@@ -3,7 +3,8 @@
 import AppKit
 import EventKit
 import Foundation
-import ScreenCaptureKit
+// Delegate references cross to the main actor only for identity checks; stream operations stay isolated.
+@preconcurrency import ScreenCaptureKit
 import Speech
 
 var eventFile: FileHandle?
@@ -93,22 +94,180 @@ final class WAVWriter {
 }
 
 @MainActor
+final class RecognitionCancellation {
+  var cancel: (() -> Void)?
+}
+
+@MainActor
 final class RecognitionWindow {
   let id = UUID().uuidString
-  let request = SFSpeechAudioBufferRecognitionRequest()
   let offset: TimeInterval
-  var task: SFSpeechRecognitionTask?
+  let buffer = AVAudioPCMBuffer(
+    pcmFormat: AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!,
+    frameCapacity: 10 * 16000)!
   var latest = ""
   var firstWordTime: TimeInterval = 0
-  var frames: Int64 = 0
-  var ended = false
   var finalized = false
-  init(offset: TimeInterval) {
-    self.offset = offset
-    request.shouldReportPartialResults = true
-    request.requiresOnDeviceRecognition = true
-    request.taskHint = .dictation
+  init(offset: TimeInterval) { self.offset = offset }
+}
+
+// Apple recognition requests for the two captured inputs must not compete. Audio
+// capture continues independently; this queue serializes only on-device inference.
+@MainActor
+final class SpeechJob {
+  let key: String
+  let window: RecognitionWindow
+  let recognizer: SFSpeechRecognizer
+  let control = RecognitionCancellation()
+  let partial: (String, TimeInterval) -> Void
+  let complete: (Result<(String, TimeInterval), Error>) -> Void
+  var cancelled = false
+  init(
+    key: String, window: RecognitionWindow, recognizer: SFSpeechRecognizer,
+    partial: @escaping (String, TimeInterval) -> Void,
+    complete: @escaping (Result<(String, TimeInterval), Error>) -> Void
+  ) {
+    self.key = key
+    self.window = window
+    self.recognizer = recognizer
+    self.partial = partial
+    self.complete = complete
   }
+}
+
+@MainActor
+final class SpeechScheduler {
+  static let shared = SpeechScheduler()
+  var pending: [SpeechJob] = []
+  var active: SpeechJob?
+  var running = false
+  var recognizers: [String: SFSpeechRecognizer] = [:]
+  let testWorker: ((SpeechJob) async -> Void)?
+  init(testWorker: ((SpeechJob) async -> Void)? = nil) { self.testWorker = testWorker }
+  func recognizer(locale: String) throws -> SFSpeechRecognizer {
+    if let cached = recognizers[locale] { return cached }
+    guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: locale)),
+      recognizer.supportsOnDeviceRecognition, recognizer.isAvailable
+    else {
+      throw problem(
+        "On-device recognition is unavailable for \(locale). Audio will still be saved. Install the language in macOS Dictation settings, then retry transcription."
+      )
+    }
+    recognizers[locale] = recognizer
+    return recognizer
+  }
+  func enqueue(_ job: SpeechJob) -> Bool {
+    // Bounded memory if recognition falls behind; the original WAV remains durable.
+    guard pending.count < 24 else { return false }
+    pending.append(job)
+    if !running {
+      running = true
+      Task { @MainActor in
+        while !self.pending.isEmpty {
+          let next = self.pending.removeFirst()
+          self.active = next
+          if let worker = self.testWorker { await worker(next) } else { await self.perform(next) }
+          self.active = nil
+        }
+        self.running = false
+      }
+    }
+    return true
+  }
+  func perform(_ job: SpeechJob) async {
+    guard !job.cancelled else { return }
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "stillnote-live-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    do {
+      try FileManager.default.createDirectory(
+        at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+      let writer = try WAVWriter(url: directory.appendingPathComponent("chunk.wav"))
+      try writer.append(job.window.buffer)
+      try writer.close()
+      let result = try await recognizeFile(
+        writer.url, recognizer: job.recognizer,
+        control: job.control, onPartial: job.partial)
+      if !job.cancelled { job.complete(.success(result)) }
+    } catch { if !job.cancelled { job.complete(.failure(error)) } }
+  }
+  func cancel(key: String) {
+    let removed = pending.filter { $0.key == key }
+    pending.removeAll { $0.key == key }
+    for job in removed {
+      job.cancelled = true
+      job.complete(.failure(CancellationError()))
+    }
+    if let job = active, job.key == key {
+      job.cancelled = true
+      job.control.cancel?()
+      job.complete(.failure(CancellationError()))
+    }
+  }
+}
+
+// Deterministic regression of the actual scheduler; no recognition request or
+// audio device is opened. The worker is substituted, not the queue being tested.
+@MainActor
+func schedulerSelfTest() async throws {
+  guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")) else {
+    throw problem("Speech framework unavailable.")
+  }
+  var concurrent = 0
+  var maximum = 0
+  var order: [Int] = []
+  var successes = 0
+  var failures = 0
+  let scheduler = SpeechScheduler(testWorker: { job in
+    concurrent += 1
+    maximum = max(maximum, concurrent)
+    try? await Task.sleep(nanoseconds: 10_000_000)
+    concurrent -= 1
+    if !job.cancelled {
+      order.append(Int(job.window.offset))
+      job.complete(.success(("fixture", 0)))
+    }
+  })
+  func job(_ index: Int, key: String) -> SpeechJob {
+    SpeechJob(
+      key: key, window: RecognitionWindow(offset: Double(index)), recognizer: recognizer,
+      partial: { _, _ in },
+      complete: { result in
+        switch result {
+        case .success: successes += 1
+        case .failure: failures += 1
+        }
+      })
+  }
+  for index in 0..<24 {
+    guard scheduler.enqueue(job(index, key: index % 2 == 0 ? "microphone" : "system")) else {
+      throw problem("Scheduler rejected work below its limit.")
+    }
+  }
+  guard !scheduler.enqueue(job(25, key: "overflow")) else {
+    throw problem("Scheduler failed its backlog bound.")
+  }
+  scheduler.cancel(key: "system")
+  let deadline = Date().addingTimeInterval(5)
+  while scheduler.running && Date() < deadline { try? await Task.sleep(nanoseconds: 5_000_000) }
+  guard !scheduler.running, maximum == 1, order == Array(stride(from: 0, to: 24, by: 2)),
+    successes == 12, failures == 12
+  else { throw problem("Scheduler serialization/order/cancellation regression.") }
+  // Cancel work after it has become active; completion must not be delivered twice.
+  guard scheduler.enqueue(job(30, key: "active")), scheduler.enqueue(job(31, key: "next")) else {
+    throw problem("Scheduler did not resume after draining.")
+  }
+  while scheduler.active == nil { await Task.yield() }
+  scheduler.cancel(key: "active")
+  while scheduler.running && Date() < deadline { try? await Task.sleep(nanoseconds: 5_000_000) }
+  guard !scheduler.running, maximum == 1, successes == 13, failures == 13, order.last == 31 else {
+    throw problem("Active cancellation caused duplicate completion or blocked the queue.")
+  }
+  emit([
+    "type": "scheduler-self-test", "status": "passed", "maximumConcurrentRecognition": maximum,
+    "successfulJobs": successes, "cancelledJobs": failures, "backlogBound": 24,
+    "speechRecognitionInvoked": false, "liveAudioInvoked": false,
+  ])
 }
 
 @MainActor
@@ -117,6 +276,7 @@ final class SpeechChannel {
   let speaker: String
   let recordingId: String
   let recognizer: SFSpeechRecognizer
+  var key: String { recordingId + ":" + source }
   var current: RecognitionWindow?
   var windows: [RecognitionWindow] = []
   var finishing = false
@@ -126,66 +286,72 @@ final class SpeechChannel {
     self.source = source
     speaker = source == "microphone" ? "You" : "Meeting audio"
     self.recordingId = recordingId
-    guard let r = SFSpeechRecognizer(locale: Locale(identifier: locale)),
-      r.supportsOnDeviceRecognition, r.isAvailable
-    else {
-      throw problem(
-        "On-device recognition is unavailable for \(locale). Your audio is still being saved. Install the language in macOS Dictation settings, then retry transcription."
-      )
-    }
-    recognizer = r
+    recognizer = try SpeechScheduler.shared.recognizer(locale: locale)
   }
-  func startWindow(offset: TimeInterval) -> RecognitionWindow {
-    let window = RecognitionWindow(offset: offset)
+  func append(_ buffer: AVAudioPCMBuffer, offset: TimeInterval) {
+    guard !finishing, let input = buffer.floatChannelData?[0] else { return }
+    var consumed = 0
+    while consumed < Int(buffer.frameLength) {
+      let window = current ?? RecognitionWindow(offset: offset + Double(consumed) / 16000)
+      current = window
+      let existing = Int(window.buffer.frameLength)
+      let count = min(
+        Int(buffer.frameLength) - consumed, Int(window.buffer.frameCapacity) - existing)
+      memcpy(
+        window.buffer.floatChannelData![0].advanced(by: existing), input.advanced(by: consumed),
+        count * MemoryLayout<Float>.size)
+      window.buffer.frameLength += AVAudioFrameCount(count)
+      consumed += count
+      if window.buffer.frameLength == window.buffer.frameCapacity {
+        submit(window)
+        current = nil
+      }
+    }
+  }
+  func submit(_ window: RecognitionWindow) {
+    guard window.buffer.frameLength > 0 else { return }
     windows.append(window)
-    current = window
-    window.task = recognizer.recognitionTask(with: window.request) {
-      [weak self, weak window] result, error in
-      DispatchQueue.main.async {
+    let job = SpeechJob(
+      key: key, window: window, recognizer: recognizer,
+      partial: { [weak self, weak window] text, time in
         guard let self, let window, !window.finalized else { return }
-        if let result {
-          window.latest = result.bestTranscription.formattedString
-          window.firstWordTime = result.bestTranscription.segments.first?.timestamp ?? 0
-          emit([
-            "type": "partial", "recordingId": self.recordingId, "segmentId": window.id,
-            "source": self.source, "speaker": self.speaker, "text": window.latest,
-            "timestamp": window.offset + window.firstWordTime,
-          ])
-          if result.isFinal { self.finalize(window, partial: false) }
-        } else if let error {
+        window.latest = text
+        window.firstWordTime = time
+        emit([
+          "type": "partial", "recordingId": self.recordingId, "segmentId": window.id,
+          "source": self.source, "speaker": self.speaker, "text": text,
+          "timestamp": window.offset + time,
+        ])
+      },
+      complete: { [weak self, weak window] result in
+        guard let self, let window, !window.finalized else { return }
+        switch result {
+        case .success(let value):
+          if !value.0.isEmpty {
+            window.latest = value.0
+            window.firstWordTime = value.1
+          }
+          self.finalize(window, partial: value.0.isEmpty && !window.latest.isEmpty)
+        case .failure(let error):
           self.errors += 1
-          let ns = error as NSError
-          if ns.code != 1110 && !self.finishing {
+          if !(error is CancellationError) {
             emit([
               "type": "warning", "recordingId": self.recordingId, "source": self.source,
               "message":
-                "\(self.speaker) recognition: \(error.localizedDescription). Original audio continues to be saved.",
+                "\(self.speaker) recognition: \(error.localizedDescription). Original audio is preserved.",
             ])
           }
           self.finalize(window, partial: true)
         }
-      }
-    }
-    return window
-  }
-  func append(_ buffer: AVAudioPCMBuffer, offset: TimeInterval) {
-    guard !finishing else { return }
-    let window = current ?? startWindow(offset: offset)
-    window.request.append(buffer)
-    window.frames += Int64(buffer.frameLength)
-    if window.frames >= 40 * 16000 { drain(window) }
-  }
-  func drain(_ window: RecognitionWindow) {
-    guard !window.ended, !window.finalized else { return }
-    window.ended = true
-    window.request.endAudio()
-    if current === window { current = nil }
-    // Do not cancel or invalidate this task on rotation: its final result often
-    // arrives AFTER the next window has begun. Each window has its own identity.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self, weak window] in
-      guard let self, let window, !window.finalized else { return }
-      self.timeouts += 1
-      self.finalize(window, partial: true)
+      })
+    if !SpeechScheduler.shared.enqueue(job) {
+      errors += 1
+      emit([
+        "type": "warning", "recordingId": recordingId, "source": source,
+        "message":
+          "Transcription is falling behind. Audio is still being saved; retry transcription from the recording after the meeting.",
+      ])
+      finalize(window, partial: true)
     }
   }
   func finalize(_ window: RecognitionWindow, partial: Bool) {
@@ -193,27 +359,25 @@ final class SpeechChannel {
     window.finalized = true
     if !window.latest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
       emit([
-        "type": "segment", "recordingId": recordingId, "segmentId": window.id, "source": source,
-        "speaker": speaker, "text": window.latest,
+        "type": "segment", "recordingId": recordingId, "segmentId": window.id,
+        "source": source, "speaker": speaker, "text": window.latest,
         "timestamp": window.offset + window.firstWordTime, "partial": partial,
       ])
     }
-    if current === window { current = nil }
-    window.request.endAudio()
-    if partial { window.task?.cancel() }
-    window.task = nil
     windows.removeAll { $0.finalized }
   }
   func finish() async {
     finishing = true
-    for window in windows { drain(window) }
-    let deadline = Date().addingTimeInterval(16)
-    while windows.contains(where: { !$0.finalized }) && Date() < deadline {
-      try? await Task.sleep(nanoseconds: 100_000_000)
+    if let window = current {
+      submit(window)
+      current = nil
     }
-    for window in windows where !window.finalized {
-      timeouts += 1
-      finalize(window, partial: true)
+    let deadline = Date().addingTimeInterval(30)
+    while !windows.isEmpty && Date() < deadline { try? await Task.sleep(nanoseconds: 100_000_000) }
+    if !windows.isEmpty {
+      timeouts += windows.count
+      SpeechScheduler.shared.cancel(key: key)
+      for window in windows { finalize(window, partial: true) }
     }
   }
 }
@@ -367,7 +531,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   var operation = 0
   var isStarting = false
   var stopping = false
-  let audioQueue = DispatchQueue(label: "local.stillnote.audio")
+  nonisolated let audioQueue = DispatchQueue(label: "local.stillnote.audio")
+  nonisolated let pendingAudio = DispatchGroup()
   func start(locale: String, includeSystem: Bool, directory: URL, id: String) async throws {
     guard engine == nil, !isStarting, !stopping else {
       throw problem("Already recording or finishing a recording.")
@@ -418,9 +583,15 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     guard format.sampleRate > 0, format.channelCount > 0 else {
       throw problem("No microphone input is available.")
     }
-    input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
-      guard let copy = copyPCM(buffer) else { return }
+    let pending = pendingAudio
+    input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self, pending] buffer, _ in
+      pending.enter()
+      guard let copy = copyPCM(buffer) else {
+        pending.leave()
+        return
+      }
       DispatchQueue.main.async {
+        defer { pending.leave() }
         guard let self, self.recordingId == id else { return }
         self.tracks["microphone"]?.accept(copy)
       }
@@ -439,8 +610,11 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         guard let display = content.displays.first else {
           throw problem("No display is available for system-audio capture.")
         }
+        let ownApps = content.applications.filter {
+          $0.processID == getppid() || $0.bundleIdentifier.hasPrefix("local.stillnote.app")
+        }
         let filter = SCContentFilter(
-          display: display, excludingApplications: [], exceptingWindows: [])
+          display: display, excludingApplications: ownApps, exceptingWindows: [])
         let config = SCStreamConfiguration()
         config.capturesAudio = true
         config.excludesCurrentProcessAudio = true
@@ -461,16 +635,23 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
+        self.stream = stream
         try await stream.startCapture()
         guard generation == operation else {
           try? await stream.stopCapture()
           throw CancellationError()
         }
-        self.stream = stream
+        guard self.stream === stream else {
+          throw problem("System-audio capture stopped while starting.")
+        }
         systemActive = true
         sources["system"] = ["status": "recording"]
       } catch {
         if generation != operation { throw CancellationError() }
+        if let failedStream = self.stream {
+          self.stream = nil
+          try? await failedStream.stopCapture()
+        }
         sources["system"] = ["status": "unavailable", "message": error.localizedDescription]
         emit([
           "type": "warning", "recordingId": id,
@@ -496,9 +677,14 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     if let engine { engine.inputNode.removeTap(onBus: 0) }
     engine = nil
     if let stream { try? await stream.stopCapture() }
+    // Drain the source callback queue, then every copied buffer enqueued on the
+    // main actor. A fixed sleep can close the WAV before queued tail audio arrives.
+    await withCheckedContinuation { continuation in
+      audioQueue.async { [pendingAudio] in
+        pendingAudio.notify(queue: .main) { continuation.resume() }
+      }
+    }
     stream = nil
-    // Let already-enqueued copies reach the serialized writer before closing files.
-    try? await Task.sleep(nanoseconds: 50_000_000)
     for track in tracks.values {
       do { try track.closeAudio() } catch {
         emit(["type": "warning", "recordingId": id, "message": error.localizedDescription])
@@ -522,7 +708,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   }
   nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
     DispatchQueue.main.async {
-      guard !self.stopping else { return }
+      guard !self.stopping, self.stream === stream else { return }
+      self.stream = nil
       emit([
         "type": "recording-status", "recordingId": self.recordingId,
         "sources": ["system": ["status": "unavailable", "message": error.localizedDescription]],
@@ -571,35 +758,61 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         memcpy(d, s, min(Int(src[i].mDataByteSize), Int(dst[i].mDataByteSize)))
       }
     }
-    DispatchQueue.main.async { self.tracks["system"]?.accept(pcm) }
+    let pending = pendingAudio
+    pending.enter()
+    DispatchQueue.main.async {
+      defer { pending.leave() }
+      guard self.stream === stream else { return }
+      self.tracks["system"]?.accept(pcm)
+    }
   }
 }
 
 @MainActor
-func recognizeFile(_ url: URL, recognizer: SFSpeechRecognizer) async throws -> (
+func recognizeFile(
+  _ url: URL, recognizer: SFSpeechRecognizer, control: RecognitionCancellation? = nil,
+  onPartial: ((String, TimeInterval) -> Void)? = nil
+) async throws -> (
   String, TimeInterval
 ) {
   try await withCheckedThrowingContinuation { continuation in
     let request = SFSpeechURLRecognitionRequest(url: url)
     request.requiresOnDeviceRecognition = true
-    request.shouldReportPartialResults = false
+    request.shouldReportPartialResults = onPartial != nil
     var task: SFSpeechRecognitionTask?
     var done = false
     let timeout = DispatchWorkItem {
       if !done {
         done = true
         task?.cancel()
+        task = nil
+        control?.cancel = nil
         continuation.resume(
           throwing: problem("On-device transcription timed out. The recording is preserved."))
       }
     }
     DispatchQueue.main.asyncAfter(deadline: .now() + 70, execute: timeout)
+    control?.cancel = {
+      guard !done else { return }
+      done = true
+      timeout.cancel()
+      task?.cancel()
+      task = nil
+      control?.cancel = nil
+      continuation.resume(throwing: CancellationError())
+    }
     task = recognizer.recognitionTask(with: request) { result, error in
       DispatchQueue.main.async {
         guard !done else { return }
+        if let result {
+          onPartial?(
+            result.bestTranscription.formattedString,
+            result.bestTranscription.segments.first?.timestamp ?? 0)
+        }
         if let result, result.isFinal {
           done = true
           timeout.cancel()
+          control?.cancel = nil
           continuation.resume(
             returning: (
               result.bestTranscription.formattedString,
@@ -609,6 +822,7 @@ func recognizeFile(_ url: URL, recognizer: SFSpeechRecognizer) async throws -> (
         } else if let error {
           done = true
           timeout.cancel()
+          control?.cancel = nil
           if (error as NSError).code == 1110 {
             continuation.resume(returning: ("", 0))
           } else {
@@ -699,7 +913,9 @@ func transcribe(_ input: [[String: Any]], id: String, locale: String) async thro
 // Reusable acceptance path: production streaming recognition, prerecorded PCM,
 // real-time pacing and window finalization, without opening any live audio input.
 @MainActor
-func streamedRecognition(input: URL, id: String, locale: String) async throws {
+func streamedRecognition(input: URL, id: String, locale: String, dualSource: Bool = false)
+  async throws
+{
   var permission = SFSpeechRecognizer.authorizationStatus()
   if permission == .notDetermined {
     permission = await withCheckedContinuation { c in
@@ -724,26 +940,32 @@ func streamedRecognition(input: URL, id: String, locale: String) async throws {
     }
   }
   let file = try AVAudioFile(forReading: input, commonFormat: .pcmFormatFloat32, interleaved: false)
-  let track = try AudioTrack(
-    source: "microphone", recordingId: id, directory: temporary, start: Date())
-  track.events = false
-  track.startOffset = 0
-  track.speech = try SpeechChannel(source: "microphone", locale: locale, recordingId: id)
+  let sources = dualSource ? ["microphone", "system"] : ["microphone"]
+  let tracks = try sources.map { source -> AudioTrack in
+    let track = try AudioTrack(source: source, recordingId: id, directory: temporary, start: Date())
+    track.events = false
+    track.startOffset = 0
+    track.speech = try SpeechChannel(source: source, locale: locale, recordingId: id)
+    return track
+  }
   let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096)!
   while file.framePosition < file.length {
     try file.read(into: buffer)
     guard buffer.frameLength > 0 else { break }
-    try track.process(buffer)
+    for track in tracks { try track.process(buffer) }
     try await Task.sleep(
       nanoseconds: UInt64(
         Double(buffer.frameLength) / file.processingFormat.sampleRate * 1_000_000_000))
   }
-  try track.closeAudio()
-  await track.speech?.finish()
+  for track in tracks { try track.closeAudio() }
+  await withTaskGroup(of: Void.self) { group in
+    for track in tracks { group.addTask { @MainActor in await track.speech?.finish() } }
+  }
   eventObserver = nil
   emit([
     "type": "retranscription-completed", "recordingId": id, "segments": segments, "streamed": true,
-    "diagnostics": track.stats(),
+    "dualSource": dualSource,
+    "diagnostics": Dictionary(uniqueKeysWithValues: tracks.map { ($0.source, $0.stats()) }),
   ])
 }
 
@@ -848,6 +1070,21 @@ func command(_ data: Data) {
     } catch { emit(["type": "error", "op": op, "message": error.localizedDescription]) }
   }
 }
+if CommandLine.arguments.contains("--scheduler-self-test") {
+  Task { @MainActor in
+    do {
+      try await schedulerSelfTest()
+      exit(0)
+    } catch {
+      emit([
+        "type": "scheduler-self-test", "status": "failed", "message": error.localizedDescription,
+      ])
+      exit(1)
+    }
+  }
+  RunLoop.main.run()
+  exit(0)
+}
 if CommandLine.arguments.contains("--self-test") {
   emit([
     "type": "ready", "platform": "macOS",
@@ -894,7 +1131,8 @@ if let index = CommandLine.arguments.firstIndex(of: "--transcribe-file"),
       if CommandLine.arguments.contains("--streamed") {
         try await streamedRecognition(
           input: URL(fileURLWithPath: CommandLine.arguments[index + 1]), id: id,
-          locale: argument("--locale") ?? "en-US")
+          locale: argument("--locale") ?? "en-US",
+          dualSource: CommandLine.arguments.contains("--dual-source"))
       } else {
         try await transcribe(
           [["source": "microphone", "path": CommandLine.arguments[index + 1], "startOffset": 0]],

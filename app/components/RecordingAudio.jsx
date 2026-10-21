@@ -123,7 +123,8 @@ export function CaptureDiagnostics({ levels, sources, systemAudioRequested, star
         );
       })}
       <p>
-        Levels show incoming audio, not transcript completeness. Raw audio is saved on this Mac.
+        Levels show incoming audio, not transcript completeness. Text updates in roughly 10-second
+        batches. Raw audio is saved on this Mac.
       </p>
     </div>
   );

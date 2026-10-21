@@ -1,6 +1,6 @@
 {
   "name": "stillnote",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "A local macOS meeting notebook powered by your ChatGPT plan",
   "author": "Michael Ma",
@@ -20,7 +20,8 @@
     "screenshots": "node scripts/screenshots.mjs",
     "test:e2e": "node scripts/e2e.mjs",
     "test:native": "node scripts/native-audio-test.mjs",
-    "test:native:recognize": "node scripts/native-audio-test.mjs --recognize"
+    "test:native:recognize": "node scripts/native-audio-test.mjs --recognize",
+    "test:native-scheduler": "node scripts/native-scheduler-test.mjs"
   },
   "build": {
     "appId": "local.stillnote.app",

@@ -18,6 +18,7 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: native/bin/StillnoteCapture --self-test
+      - run: npm run test:native-scheduler
       - run: npm run test:e2e -- --no-build
       - uses: actions/upload-artifact@v4
         if: always()

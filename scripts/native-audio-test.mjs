@@ -9,11 +9,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
-if (args.some((arg) => !['--recognize', '--long', '--streamed'].includes(arg))) {
+if (args.some((arg) => !['--recognize', '--long', '--streamed', '--dual-source'].includes(arg))) {
   console.error('Usage: node scripts/native-audio-test.mjs [--long] [--recognize [--streamed]]');
   process.exit(2);
 }
 const recognize = args.includes('--recognize');
+const dualSource = args.includes('--dual-source');
+if (dualSource && !args.includes('--streamed'))
+  throw new Error('--dual-source requires --streamed --recognize');
 const streamed = args.includes('--streamed');
 if (streamed && !recognize) {
   console.error('--streamed requires --recognize');
@@ -32,6 +35,7 @@ const report = {
   status: 'running',
   startedAt: new Date().toISOString(),
   recognitionRequested: recognize,
+  dualSourceRequested: dualSource,
   streamingRecognizerRequested: streamed,
   realStreamingRecognizerTested: false,
   longFixtureRequested: repetitions > 1,
@@ -128,6 +132,7 @@ async function recognizeFile(path, recordingId) {
     '--locale',
     'en-US',
     ...(streamed ? ['--streamed'] : []),
+    ...(dualSource ? ['--dual-source'] : []),
   ]);
   while (Date.now() < deadline) {
     let data = '';
@@ -424,6 +429,8 @@ try {
       Array.isArray(result.segments) && result.segments.length > 0,
       'Recognition must produce segments',
     );
+    if (dualSource)
+      assert.equal(result.dualSource, true, 'Native helper must confirm dual-source streaming');
     const transcript = result.segments.map((segment) => segment.text).join(' ');
     const spoken = words(script);
     const recognized = words(transcript);
@@ -455,26 +462,52 @@ try {
     report.recognition = {
       ...result,
       transcript,
-      spokenWords: spoken.length,
+      spokenWords: spoken.length * (dualSource ? 2 : 1),
       recognizedWords: recognized.length,
-      wordCountRatio: recognized.length / spoken.length,
+      wordCountRatio: recognized.length / (spoken.length * (dualSource ? 2 : 1)),
       keywordRecall: matched.length / keywords.length,
       matchedKeywords: matched,
       missingKeywords: keywords.filter((keyword) => !found.has(keyword)),
       wordErrorRate: wordErrorRate(spoken, recognized),
     };
-    assert.ok(
-      report.recognition.keywordRecall >= 0.7,
-      'Recognition keyword recall must be at least 70%',
-    );
-    assert.ok(
-      report.recognition.wordCountRatio >= 0.75 && report.recognition.wordCountRatio <= 1.5,
-      'Recognized word count must be 75–150% of the script',
-    );
-    assert.ok(
-      report.recognition.wordErrorRate.value <= 0.25,
-      'Recognition word error rate must be at most 25%',
-    );
+    const scored = dualSource
+      ? ['microphone', 'system'].map((source) => {
+          const hypothesis = words(
+            result.segments
+              .filter((segment) => segment.source === source)
+              .map((segment) => segment.text)
+              .join(' '),
+          );
+          const found = new Set(hypothesis);
+          return {
+            source,
+            recognizedWords: hypothesis.length,
+            spokenWords: spoken.length,
+            wordCountRatio: hypothesis.length / spoken.length,
+            keywordRecall:
+              keywords.filter((keyword) => found.has(keyword)).length / keywords.length,
+            wordErrorRate: wordErrorRate(spoken, hypothesis),
+          };
+        })
+      : [report.recognition];
+    if (dualSource) {
+      report.recognition.perSource = scored;
+      delete report.recognition.wordErrorRate;
+    }
+    for (const score of scored) {
+      assert.ok(
+        score.keywordRecall >= 0.7,
+        `${score.source ?? 'microphone'} keyword recall must be at least 70%`,
+      );
+      assert.ok(
+        score.wordCountRatio >= 0.75 && score.wordCountRatio <= 1.5,
+        `${score.source ?? 'microphone'} word count must be 75–150% of the script`,
+      );
+      assert.ok(
+        score.wordErrorRate.value <= 0.25,
+        `${score.source ?? 'microphone'} word error rate must be at most 25%`,
+      );
+    }
     report.realStreamingRecognizerTested = streamed;
   }
   report.status = 'passed';
@@ -500,6 +533,7 @@ try {
         spokenWords: report.recognition?.spokenWords,
         keywordRecall: report.recognition?.keywordRecall,
         wordErrorRate: report.recognition?.wordErrorRate,
+        perSource: report.recognition?.perSource,
         error: report.error,
       },
       null,

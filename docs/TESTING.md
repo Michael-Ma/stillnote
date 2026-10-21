@@ -10,6 +10,7 @@ These tests establish application behavior; they do not measure native recogniti
 
 ```sh
 npm test
+npm run test:native-scheduler # after npm run build; no speech/device permission
 node scripts/e2e.mjs
 node scripts/e2e.mjs --suite notebook --no-build
 node scripts/e2e.mjs --suite capture --no-build
@@ -21,6 +22,7 @@ node scripts/native-audio-test.mjs --long
 node scripts/native-audio-test.mjs --recognize
 node scripts/native-audio-test.mjs --long --recognize
 node scripts/native-audio-test.mjs --long --recognize --streamed
+node scripts/native-audio-test.mjs --long --recognize --streamed --dual-source
 ```
 
 The default command rebuilds the app. Use `--no-build` only after building the current
@@ -94,7 +96,7 @@ solely for tests. Never make this adapter available to a packaged build.
 passes it through the native `--audio-self-test` path. It tests the actual native audio
 writer using known input, without accessing a microphone, network, or Speech permission.
 Its report and synthetic audio remain in `output/native-audio/<run>/report.json`.
-The optional `--recognize` flag exercises on-device file recognition through a dedicated macOS test app with its own Speech usage description. `--streamed` additionally feeds prerecorded PCM through the production live recognition windows in real time, exercising rotation and finalization without opening a microphone. `--long` repeats the fixture to span more than 60 seconds. These modes may prompt for Speech Recognition permission.
+The optional `--recognize` flag exercises on-device file recognition through a dedicated macOS test app with its own Speech usage description. `--streamed` additionally feeds prerecorded PCM through the production live recognition windows in real time, exercising chunk scheduling and finalization without opening a microphone. `--long` repeats the fixture to span more than 60 seconds. `--dual-source` drives microphone and system channels together and scores each independently. It reproduces the concurrency failure that single-source tests missed. These modes may prompt for Speech Recognition permission.
 It is deliberately excluded from the automatic deterministic suite. Synthetic recognition acceptance requires at least 70% keyword recall, 75–150% of reference word count, and token-level WER ≤25%. WER is token Levenshtein edit distance divided by reference token count; normalization changes case and punctuation only. Brand spellings and word boundaries are not rewritten, so “time stamps” versus “timestamps” and “Still note” versus “Stillnote” count as errors. Reports include the edit distance, token counts, and scoring definition. This small synthetic fixture is a regression test, not a general accuracy benchmark.
 Every native audio run also converts the synthetic fixture to 48 kHz stereo AIFF, matching common microphone/system formats, then verifies native normalization to 16 kHz mono WAV with preserved duration and non-silent signal. Those metrics appear under `stereoNormalization`; recognition uses the original case.
 
@@ -141,3 +143,7 @@ whether final words survived stop/restart. Set quality thresholds before a relea
 there is no universal accuracy threshold that a synthetic test can establish. Retain the
 reference, recognized transcript, recording metadata, and local audio paths together as
 the evidence for each acceptance result. Label unexecuted cases as pending.
+
+## Native scheduler regression
+
+`npm run test:native-scheduler` exercises the production Swift scheduler with a substituted async worker, not a substituted queue. It verifies maximum concurrency of one, FIFO progress across sources, the 24-job backlog bound, pending-job cancellation, active cancellation without duplicate completion, and recovery for the next job. It invokes no speech-recognition requests or audio devices and runs in CI after the native build. This complements, rather than replaces, the real dual-source acceptance test.

@@ -4,12 +4,14 @@ A summary such as “only brief, disconnected fragments” can accurately descri
 
 Version 0.2 adds observable checkpoints between audio input, recognition, persistence, and enhancement. It does not use the quality of an AI summary as proof that audio capture succeeded.
 
+See [the follow-up code review](CODE-REVIEW.md) for the reproduced dual-source failure, fix, and validation limits.
+
 ## What changed
 
 - Original microphone and system audio are written independently of recognition. Recognition permission or language availability can fail without discarding captured audio.
 - Each source is normalized to 16 kHz mono PCM. Those same normalized samples are written to WAV and supplied to live recognition.
 - WAV headers are checkpointed every second and finalized on stop. Interrupted sessions are detected on restart, and canonical WAV headers can be repaired from actual sample bytes.
-- Recognition windows rotate after 40 seconds of audio. An ended window can deliver its final result while the next window begins; it is not immediately cancelled or invalidated. Each window has a stable segment ID, preventing one window's final result from deleting another's latest partial.
+- Version 0.2.1 serializes on-device recognition across both sources, using roughly 10-second chunks. The earlier two-live-recognizer design failed in a controlled dual-source test even though each captured track contained clear speech. Stable chunk IDs keep partial/final results separate.
 - Finishing waits for recognition finalization, with a bounded fallback preserving the last partial. The reported recording duration excludes this wait.
 - Per-source input meters show captured signal, not recognition accuracy. Microphone and system-audio availability are tracked separately.
 - A sparse-transcript heuristic flags cases such as a roughly one-minute recording yielding only a few dozen characters. It is a diagnostic prompt, not a claim that speech definitely occurred throughout the recording.
