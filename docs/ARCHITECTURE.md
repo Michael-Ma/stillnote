@@ -31,6 +31,8 @@ flowchart TB
       Bridge[Sandboxed preload: narrow IPC methods]
       Main[Electron main: operations and lifecycle]
       Store[(SQLite notebook + FTS5)]
+      Audio[(Local per-source WAV files)]
+      Media[Validated local media protocol]
       Auth[OAuth client + encrypted credential file]
       Native[Swift native helper]
       Mic[AVAudioEngine microphone]
@@ -41,6 +43,10 @@ flowchart TB
       UI <--> Bridge
       Bridge <--> Main
       Main <--> Store
+      Native --> Audio
+      Main --> Media
+      Audio --> Media
+      Media --> UI
       Main <--> Auth
       Main <-->|JSON lines over stdio| Native
       Mic --> Native
@@ -72,7 +78,10 @@ The renderer does not have Node.js access, raw filesystem access, credentials, o
 | Local store | `app/store.mjs` | SQLite transactions, FTS indexing, meeting revisions, folders, message history, backup validation/restore, and bounded AI context construction. |
 | Subscription authentication | `app/auth.mjs` | PKCE/OIDC sign-in, profile separation, model discovery, protected token storage, refresh, revocation, and public Responses requests. |
 | Streaming parser | `app/stream.mjs` | Decodes fragmented SSE events and accepts a result only after `response.completed`. |
-| Native capture | `native/Capture.swift` | Microphone/system audio, on-device speech requests, transcript events, and EventKit calendar reads. |
+| Native capture | `native/Capture.swift` | Microphone/system audio, normalized PCM WAV persistence, graceful recognition windows, saved-file transcription, diagnostics, and EventKit reads. |
+| Recording media | `app/recordings.mjs` | Validates recording paths, inspects/repairs canonical WAV headers, streams byte ranges, and assesses sparse transcript coverage. |
+| Recording UI | `app/components/RecordingAudio.jsx` | Per-source playback, retry, language/source state, and coverage notices. |
+| E2E harness | `scripts/e2e.mjs`, `tests/e2e/` | Isolated real Electron flows with deterministic native/provider adapters and persistent reports. |
 | Local MCP | `scripts/mcp.mjs` | Optional read-only notebook access for local MCP clients. No network listener or write tools. |
 | Build pipeline | `scripts/build.mjs` | Compiles the Swift executable, bundles main/preload with esbuild, and bundles React with Vite. |
 | Packaging | `package.json` | Builds the macOS `.app`, bundles the native executable, and declares macOS permission descriptions. |
@@ -87,11 +96,13 @@ sequenceDiagram
     participant Native
     participant Speech
     participant DB as SQLite
+    participant Audio as Local WAV files
     User->>UI: Start recording
     UI->>Main: Save drafts, then record(meetingId)
     Main->>Native: start(locale, systemAudio)
     Native->>User: macOS permission prompts if needed
-    Native->>Speech: On-device audio recognition requests
+    Native->>Audio: Normalize and checkpoint microphone/system PCM
+    Native->>Speech: Same normalized samples, on-device
     Native-->>Main: started / partial / segment
     Main->>DB: Persist completed transcript segments
     Main-->>UI: Current partials and saved transcript
@@ -100,27 +111,33 @@ sequenceDiagram
     Main->>Native: stop
     Native->>Speech: End audio and allow final results to settle
     Native-->>Main: Final segments, stopped(duration)
-    Main->>DB: Save duration and transcript
+    Main->>DB: Save duration, transcript, audio metadata and diagnostics
     Main-->>UI: Recording finished
-    opt Connected ChatGPT + automatic enhancement enabled
+    opt Connected ChatGPT + enhancement enabled + sufficient source text
       Main->>Main: Start enhancement using saved source text
     end
 ```
 
 ### Native details
 
-- `AVAudioEngine` captures the microphone.
+- `AVAudioEngine` captures the microphone. Capture, audio-track, and recognition-window state are isolated to the Swift main actor; audio callbacks transfer independently copied buffers.
 - `SCStream` captures system audio using a display filter and audio output callback; no screen-frame output is registered or persisted.
 - Two speech channels label the streams **You** and **Meeting audio**. These labels identify the input source, not individual remote participants.
 - Each `SFSpeechAudioBufferRecognitionRequest` sets `requiresOnDeviceRecognition = true`.
-- Recognition tasks rotate approximately every 45 seconds. The last partial is committed on rotation, then the request is restarted. This avoids treating one recognizer task as an indefinitely supported streaming session.
-- Stopping drains audio and gives the recognizers a short finalization window before the latest text is committed.
+- Recognition windows rotate after 40 seconds of audio. A draining window retains its task and callbacks for finalization instead of being cancelled immediately. Stable segment IDs keep overlapping final/partial events separate.
+- Stopping finalizes the WAV files and waits for recognition completion, with a bounded 15-second fallback that retains the last partial. The stored duration excludes this drain time.
 - Starting another recording on the same note adds a duration offset to transcript timestamps.
-- Audio buffers stay in memory. The app writes transcript text, not audio files.
+- `AVAudioConverter` normalizes hardware formats to 16 kHz mono float PCM. The same samples feed recognition and a canonical 16-bit WAV writer. Headers are checkpointed every second; audio is retained locally for replay and retry.
 
-The helper emits newline-delimited JSON: `ready`, `started`, `partial`, `segment`, `warning`, `stopped`, `calendar`, and `error`. A helper failure preserves committed segments and attempts to save the latest partial available to the main process. An entire app/OS crash can still lose an in-memory partial; this is not a lossless audio recorder.
+The helper emits newline-delimited JSON: lifecycle events, source levels, partial/final segments, warnings, calendar results, and file-transcription progress/completion. A helper failure preserves committed segments and the last available partial. On restart, unfinished sessions are marked interrupted; saved canonical WAV headers are repaired against actual bytes where necessary. An app/OS crash can still lose an in-memory partial, but retained audio provides a retry source.
 
-System-audio permission failure falls back visibly to microphone-only capture. Unsupported on-device recognition fails with a setup message rather than silently invoking a cloud recognizer. Echo cancellation, overlapping speech, device changes, recognizer accuracy, and long-session stability need real meeting acceptance testing.
+System-audio permission failure falls back visibly to microphone-only capture. Unsupported on-device recognition or denied Speech permission produces a setup message while audio continues to be saved; it never silently invokes a cloud recognizer. Echo cancellation, overlapping speech, device changes, recognizer accuracy, and long-session stability need real meeting acceptance testing.
+
+### Playback and retry
+
+Each recording session has an ID, start time, duration offset, recognition locale, source status, track metadata, and diagnostics. `stillnote-audio://recording/...` resolves only registered local tracks, validates real paths, and supports streaming/byte ranges for native audio controls. No HTTP listener or arbitrary file URL is exposed.
+
+Retry passes validated track paths to the helper. It transcribes saved audio in 30-second chunks using on-device file recognition. Only a successful, nonempty completed result replaces that session’s segments; manual text, other sessions, rough notes, and prior transcript versions are retained. Empty/error results preserve the old transcript. Sparse coverage skips automatic enhancement when there are no substantial rough notes, and directs the user to listen/retry.
 
 ## 5. The ChatGPT subscription path
 
@@ -170,7 +187,7 @@ Current source blocks receive `[1]`, `[2]`, etc., with stable meeting IDs. Retur
 
 | SQLite object | Contents |
 | --- | --- |
-| `meetings` | One JSON meeting document per UUID: title, timestamps, participants, rough notes, summary, transcript segments, duration, template, folder, star, Trash state, summary versions. |
+| `meetings` | One JSON meeting document per UUID: title, timestamps, participants, rough notes, summary, transcript segments, duration, template, folder, star, Trash state, summary versions, recording metadata, and prior recording transcript versions. |
 | `folders` | Folder UUID and name. |
 | `messages` | Chat message UUID, scope, role, content, timestamp, and source references. |
 | `settings` | Local preferences, selected model, language, capture mode, custom templates/recipes, automatic enhancement. |
@@ -178,7 +195,7 @@ Current source blocks receive `[1]`, `[2]`, etc., with stable meeting IDs. Retur
 
 WAL mode permits the read-only MCP process to read while the desktop app writes. Search-index changes and meeting writes share a transaction. Trash is recoverable; this version does not implement permanent deletion or retention policies.
 
-A JSON backup contains notebook data and settings, never credentials. Restore validates the complete input before starting mutations, merges new meeting IDs, and preserves existing meetings and existing preference values. Markdown export includes the user's notes, enhanced notes, and timestamped transcript.
+A JSON backup contains notebook data and settings, never credentials or raw audio. `audioIncluded: false` makes this explicit. Imported recording metadata cannot grant access to existing local audio files; copy the data directory separately to preserve recordings. Restore validates the complete input before starting mutations, merges new meeting IDs, and preserves existing meetings and existing preference values. Markdown export includes the user's notes, enhanced notes, and timestamped transcript.
 
 The database is local but not application-encrypted. Disk protection relies on the macOS user account and, if enabled, FileVault. The credential file has a separate encryption boundary.
 
@@ -202,5 +219,7 @@ The implementation order was:
 ## 9. Validation and deliberate limits
 
 See [VALIDATION.md](VALIDATION.md) for executed checks and outstanding acceptance tests. Synthetic OAuth tests are not proof that an arbitrary ChatGPT account is eligible. Compiling the Swift helper is not proof that a real microphone/system-audio session has succeeded.
+
+The native and deterministic E2E testing layers are described in [TESTING.md](TESTING.md); they have separate acceptance boundaries.
 
 The core release deliberately omits shared spaces, cloud sync, CRM integrations, published share links, mobile clients, automatic meeting detection, and automatic remote-speaker diarization. The macOS UI currently targets desktop window sizes of 1,000 pixels and above. Network or account failures preserve the notebook, but this version has no offline LLM and no background retry queue for AI jobs.

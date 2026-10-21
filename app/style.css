@@ -2556,3 +2556,226 @@ dialog::backdrop {
   max-width: none;
   object-fit: contain;
 }
+
+/* Original recordings and capture feedback stay alongside the notebook. */
+.coverage-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid #e8dfc9;
+  border-radius: 9px;
+  background: #fdf9ee;
+  color: #806b42;
+  padding: 12px 14px;
+  margin: 0 0 14px;
+}
+.coverage-warning > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.coverage-warning strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+.coverage-warning p {
+  font-size: 11px;
+  line-height: 1.65;
+  margin: 5px 0 8px;
+}
+.recording-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 17px;
+}
+.coverage-warning .text-button {
+  color: #7d6436;
+  font-size: 10px;
+}
+.capture-diagnostics {
+  margin: 0 0 15px;
+  padding: 12px 14px;
+  border: 1px solid #e1e5d8;
+  border-radius: 9px;
+  background: #fafbf6;
+}
+.capture-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #69735c;
+  font-size: 10px;
+}
+.capture-source-name {
+  width: 90px;
+  color: #4b5340;
+}
+.source-meter {
+  display: block;
+  overflow: hidden;
+  height: 5px;
+  width: 66px;
+  background: #e7ebdf;
+  border-radius: 4px;
+}
+.source-meter > span {
+  display: block;
+  height: 100%;
+  background: #83976c;
+  transition: width 0.15s;
+}
+.capture-source-state {
+  color: #788169;
+  font-size: 10px;
+}
+.capture-source.unavailable .capture-source-state {
+  color: #a36b48;
+}
+.capture-source small {
+  width: 100%;
+  padding-left: 22px;
+  color: #9a7557;
+  line-height: 1.5;
+}
+.capture-diagnostics > p {
+  color: #858d79;
+  font-size: 10px;
+  line-height: 1.5;
+  margin: 3px 0 0;
+}
+.recordings-intro {
+  display: flex;
+  gap: 11px;
+  color: #78836a;
+  margin-bottom: 22px;
+}
+.recordings-intro > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.recordings-intro strong {
+  font-size: 12px;
+  font-weight: 500;
+  color: #505b42;
+}
+.recordings-intro p,
+.recording-footnote {
+  color: #808b73;
+  font-size: 11px;
+  line-height: 1.7;
+  margin: 6px 0 0;
+}
+.saved-recording {
+  background: #fff;
+  border: 1px solid #e0e5d8;
+  border-radius: 11px;
+  padding: 15px;
+  margin: 0 0 14px;
+}
+.saved-recording > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.saved-recording > header strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: #4b5540;
+}
+.saved-recording > header span {
+  display: block;
+  font-size: 10px;
+  color: #919985;
+  margin-top: 5px;
+}
+.saved-recording .text-button {
+  font-size: 10px;
+}
+.audio-track + .audio-track {
+  margin-top: 17px;
+  padding-top: 15px;
+  border-top: 1px solid #eef0e9;
+}
+.audio-track-label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: #89947c;
+  font-size: 10px;
+  margin-bottom: 8px;
+}
+.audio-track-label strong {
+  color: #5a674c;
+  font-size: 11px;
+  font-weight: 500;
+}
+.audio-track-label small {
+  margin-left: auto;
+  color: #939c88;
+  font-size: 9px;
+}
+.audio-track audio {
+  display: block;
+  width: 100%;
+  height: 38px;
+}
+.audio-track-error {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 11px;
+  color: #9b6c4a;
+  line-height: 1.6;
+}
+.audio-loading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #8b967e;
+  font-size: 10px;
+}
+.recording-pending,
+.recording-detail-warning {
+  font-size: 11px;
+  line-height: 1.65;
+  color: #929b86;
+  margin: 8px 0 0;
+}
+.recording-detail-warning {
+  color: #9c7b51;
+}
+.recordings-empty {
+  padding: 40px 20px;
+  max-width: 375px;
+  margin: 0 auto;
+  text-align: center;
+  color: #a2ac93;
+}
+.recordings-empty h2 {
+  font:
+    400 21px Georgia,
+    serif;
+  color: #69795a;
+  margin: 17px 0 12px;
+}
+.recordings-empty p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #8a967d;
+}
+@media (max-width: 1080px) {
+  .chat-open .tabs > div {
+    gap: 12px;
+  }
+  .chat-open .tabs {
+    flex-wrap: wrap;
+    gap: 0;
+  }
+}

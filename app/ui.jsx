@@ -2,6 +2,11 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { IconButton, Rich } from './components/Content.jsx';
 import { HomeFeed } from './components/HomeFeed.jsx';
+import {
+  CaptureDiagnostics,
+  CoverageWarning,
+  RecordingAudio,
+} from './components/RecordingAudio.jsx';
 import { date, time, duration } from './format.mjs';
 import {
   Plus,
@@ -70,6 +75,9 @@ function App() {
     [calendarBusy, setCalendarBusy] = useState(false),
     [editingSummary, setEditingSummary] = useState(false),
     [elapsed, setElapsed] = useState(0),
+    [audioLevels, setAudioLevels] = useState({}),
+    [captureSources, setCaptureSources] = useState({}),
+    [retryingRecording, setRetryingRecording] = useState(null),
     [saving, setSaving] = useState(false),
     [drafts, setDrafts] = useState({});
   const draftRef = useRef({}),
@@ -122,13 +130,24 @@ function App() {
         setStream('');
       }
       if (e.type === 'meeting') updateMeeting(e.meeting);
+      if (e.type === 'audio-level')
+        setAudioLevels((levels) => ({ ...levels, [e.source]: { ...e, receivedAt: Date.now() } }));
+      if (e.type === 'recording-status') {
+        if (e.recording) setData((d) => (d ? { ...d, recording: e.recording } : d));
+        if (e.recording?.sources) setCaptureSources(e.recording.sources);
+        else if (e.source) setCaptureSources((sources) => ({ ...sources, [e.source]: e }));
+      }
+      if (e.type === 'started') {
+        setAudioLevels({});
+        setCaptureSources(e.recording?.sources ?? {});
+      }
       if (['started', 'stopped'].includes(e.type) || (e.type === 'error' && 'recording' in e))
         setData((d) => (d ? { ...d, recording: e.recording, starting: false } : d));
-      if (e.type === 'partial') setPartial((p) => ({ ...p, [e.speaker]: e }));
+      if (e.type === 'partial') setPartial((p) => ({ ...p, [e.segmentId || e.speaker]: e }));
       if (e.type === 'segment')
         setPartial((p) => {
           const n = { ...p };
-          delete n[e.speaker];
+          delete n[e.segmentId || e.speaker];
           return n;
         });
       if (e.type === 'stopped') setPartial({});
@@ -359,10 +378,28 @@ function App() {
     await guard(async () => {
       await flushAll();
       setElapsed(0);
+      setAudioLevels({});
+      setCaptureSources({});
       const r = await call('record', selected);
       setData((d) => ({ ...d, recording: r, starting: true }));
       setTab('notes');
     });
+  }
+  async function retryRecording(recordingId) {
+    if (retryingRecording) return;
+    const meetingId = selected;
+    setRetryingRecording(recordingId);
+    try {
+      await guard(async () => {
+        await flushAll();
+        const result = await call('transcribe-recording', meetingId, recordingId);
+        const updated = result?.meeting ?? result;
+        if (updated?.id) updateMeeting(updated);
+        setNotice('Transcription finished. Review the transcript before enhancing your notes.');
+      });
+    } finally {
+      setRetryingRecording(null);
+    }
   }
   async function calendar() {
     setCalendarBusy(true);
@@ -546,10 +583,17 @@ function App() {
             {data.recording && (
               <div className="global-recording" role="status">
                 <span className="record-dot" />
-                <span>{data.starting ? 'Connecting…' : `Listening · ${duration(elapsed)}`}</span>
+                <span>
+                  {data.recording.stopping
+                    ? 'Finishing recording…'
+                    : data.starting
+                      ? 'Connecting…'
+                      : `Listening · ${duration(elapsed)}`}
+                </span>
                 <button
                   onClick={() => guard(() => call('stop'))}
                   aria-label="Finish active recording"
+                  disabled={data.recording.stopping}
                 >
                   <Square size={11} fill="currentColor" />
                   Finish
@@ -757,12 +801,29 @@ function App() {
                     </button>
                   </div>
                 )}
+                {activeRecord ? (
+                  <CaptureDiagnostics
+                    levels={audioLevels}
+                    sources={{ ...data.recording.sources, ...captureSources }}
+                    systemAudioRequested={data.settings.systemAudio ?? true}
+                    starting={data.starting}
+                  />
+                ) : (
+                  <CoverageWarning
+                    meeting={meeting}
+                    onListen={() => setTab('recordings')}
+                    onRetry={retryRecording}
+                    retrying={retryingRecording}
+                    disabled={!!data.recording || !!meeting.deletedAt || !!busy}
+                  />
+                )}
                 <div className="tabs">
                   <div role="tablist">
                     {[
                       ['notes', 'My notes'],
                       ['summary', 'Enhanced'],
                       ['transcript', 'Transcript'],
+                      ['recordings', 'Recordings'],
                     ].map(([key, label]) => (
                       <button
                         key={key}
@@ -778,10 +839,12 @@ function App() {
                       </button>
                     ))}
                   </div>
-                  {tab !== 'transcript' && (
+                  {!['transcript', 'recordings'].includes(tab) && (
                     <button
                       className="enhance-button"
-                      disabled={!!busy || activeRecord || !!meeting.deletedAt}
+                      disabled={
+                        !!busy || !!retryingRecording || activeRecord || !!meeting.deletedAt
+                      }
                       onClick={enhance}
                     >
                       {busy === 'enhance' ? (
@@ -875,7 +938,7 @@ function App() {
                           </p>
                           <button
                             className="primary"
-                            disabled={!!busy || activeRecord}
+                            disabled={!!busy || !!retryingRecording || activeRecord}
                             onClick={enhance}
                           >
                             <Sparkles size={16} />
@@ -885,6 +948,15 @@ function App() {
                         </div>
                       )}
                     </>
+                  ) : tab === 'recordings' ? (
+                    <RecordingAudio
+                      meeting={meeting}
+                      call={call}
+                      onRetry={retryRecording}
+                      retrying={retryingRecording}
+                      locale={data.settings.locale ?? 'en-US'}
+                      disabled={!!data.recording || !!meeting.deletedAt || !!busy}
+                    />
                   ) : (
                     <>
                       <div className="transcript-top">
@@ -939,7 +1011,7 @@ function App() {
                       ))}
                       {activeRecord &&
                         Object.values(partial).map((s) => (
-                          <div className="transcript-segment live" key={s.speaker}>
+                          <div className="transcript-segment live" key={s.segmentId || s.speaker}>
                             <div>
                               <strong>{s.speaker}</strong>
                               <span className="live-label">LIVE</span>
@@ -972,9 +1044,11 @@ function App() {
               {activeRecord && (
                 <div className="recording-status">
                   <span className="record-dot" />
-                  {data.starting
-                    ? 'Waiting for permissions…'
-                    : `${duration(elapsed)} · ${data.recording.systemAudio ? 'Mic + meeting audio' : 'Microphone'}`}
+                  {data.recording.stopping
+                    ? 'Saving audio and finishing transcript…'
+                    : data.starting
+                      ? 'Waiting for permissions…'
+                      : `${duration(elapsed)} · ${data.recording.systemAudio ? 'Mic + meeting audio' : 'Microphone'}`}
                   <button onClick={() => guard(() => call('stop'))}>
                     <Square size={11} fill="currentColor" />
                     Finish meeting
@@ -987,7 +1061,7 @@ function App() {
                     className={'record-orb ' + (activeRecord ? 'recording' : '')}
                     aria-label={activeRecord ? 'Stop recording' : 'Start recording'}
                     title={activeRecord ? 'Stop recording' : 'Start recording on this Mac'}
-                    disabled={!activeRecord && !!data.recording}
+                    disabled={!activeRecord && (!!data.recording || !!retryingRecording)}
                     onClick={() => (activeRecord ? guard(() => call('stop')) : record())}
                   >
                     {activeRecord ? (
@@ -1252,8 +1326,9 @@ function App() {
                   )}
                 </div>
                 <p className="muted small">
-                  Selected notes and transcripts are sent to OpenAI when you use AI. Audio stays on
-                  your Mac. Eligibility and your ChatGPT plan limits apply.
+                  Selected notes and transcripts are sent to OpenAI when you use AI. Raw audio is
+                  retained locally for playback and is never sent to OpenAI. Eligibility and your
+                  ChatGPT plan limits apply.
                 </p>
                 {data.account.profiles.length > 0 && (
                   <div className="setting-row">
@@ -1347,7 +1422,7 @@ function App() {
                 <div className="setting-row">
                   <div>
                     <label htmlFor="systemAudio">Capture meeting audio</label>
-                    <small>Transcribe other apps alongside your microphone.</small>
+                    <small>Record and transcribe other apps alongside your microphone.</small>
                   </div>
                   <input
                     id="systemAudio"
@@ -1370,7 +1445,8 @@ function App() {
                 </div>
                 <p className="muted small">
                   Microphone and meeting audio receive separate labels. Individual remote speakers
-                  are not automatically identified. Let participants know when you transcribe.
+                  are not automatically identified. Saved audio is available in each note’s
+                  Recordings tab. Let participants know when you record and transcribe.
                 </p>
               </section>
               <section>
@@ -1405,9 +1481,9 @@ function App() {
                   </button>
                 </div>
                 <p className="muted small">
-                  SQLite storage. Backups include your meetings, transcripts and chat history.
-                  Account credentials are excluded. Import merges new meetings without replacing
-                  existing ones.
+                  SQLite storage. Backups include your meetings, transcripts and chat history. Raw
+                  audio files and account credentials are excluded. Import merges new meetings
+                  without replacing existing ones.
                 </p>
               </section>
             </div>

@@ -11,14 +11,18 @@ Last checked: October 20, 2026, on an Apple Silicon Mac. This record distinguish
 | Backup and restore | Passed round-trip meeting/message/source/template restore, duplicate prevention, and invalid-import rejection before mutation. |
 | AI context and streaming | Passed bounded-context rejection, fragmented/CRLF SSE decoding, and rejection of failed, empty, or incomplete responses. |
 | OAuth | Passed synthetic PKCE callback flow, invalid state/nonce/audience/subject rejection, issued-client reuse after exchange failure, plan-scope enforcement, and serialized/checkpointed refresh. No real account was used. |
-| Unit suite | `npm test`: 13 tests passed. |
+| Unit suite | `npm test`: 26 tests passed. |
 | Real desktop UI | `npm run test:ui`: creation, editing/autosave, transcript entry, folder assignment, star, search, Trash/restore, Markdown export, settings/Escape, disconnected-account recovery, immediate-close saving, and compact layout passed. No renderer errors were observed. |
 | Visual inspection | Rendered and inspected Home, editor, chat, settings, and a 1024×768 layout. Documentation images show fictional fixtures at 1280×860. The Home screenshot's calendar events are test fixtures, not a connected user calendar. |
+| Recording media | Passed canonical WAV validation, stale-header recovery, safe track resolution, byte-range/HEAD behavior, cancellation, sparse coverage, session-specific retry preservation, and backup/model-context exclusion. |
+| Reusable E2E | Four suites passed: notebook, capture/playback, AI failure/retry, and interrupted-session recovery. Real renderer/IPC/SQLite/media paths; device/provider transports use synthetic fixtures. |
+| Native audio writer | Actual 22.024-second and 66.502-second synthesized speech inputs were preserved as non-silent 16 kHz mono PCM WAV files with matching durations and sample counts. A separate 48 kHz stereo case also passed downmix/resampling with matching duration. These writer checks validate normalization/storage, not speech accuracy. |
+| Native recognition | The direct CLI attempt hit macOS TCC usage-description attribution. The runner now uses a dedicated test app. Its first bundled attempt timed out while Speech authorization was undetermined. After user approval, actual on-device file recognition passed a 66.502-second/159-word synthetic fixture across three chunks: 165 output words, 20/21 keyword recall. The production live streaming recognizer also passed the 66.502-second fixture across the 40-second window boundary: 164 words for 159 reference words, 20/21 keyword recall, and 11 token edits (6.9% WER). This is a synthetic acceptance result, not a real-meeting accuracy estimate. |
 | Native helper | Swift compilation succeeded. `--self-test` returned ready and enumerated 63 recognizer locales. Locale enumeration does not establish that all of them are installed for on-device recognition. |
 | App bundle | macOS arm64 packaging and ad-hoc signature verification succeeded. `npm run test:package` launched the packaged app, saved a note through its real preload/IPC/store path, and started the bundled helper in self-test mode. |
 | Runtime dependencies | `npm audit --omit=dev` reported zero vulnerabilities at the time checked. This is a package audit result, not a security certification. |
 
-Desktop tests use separate `.test-data-*` directories. The export test stubs the native save-file picker while exercising the real export handler and verifying the written Markdown. Documentation screenshots populate an isolated presentation fixture. Neither is a production demo mode.
+Desktop tests use separate `.test-data-*` directories. The import/export tests stub the native file pickers while exercising the real export handler and verifying the written Markdown. Documentation screenshots populate an isolated presentation fixture. Neither is a production demo mode.
 
 ## Still requires an acceptance test
 

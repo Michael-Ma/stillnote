@@ -1,0 +1,1 @@
+Today we reviewed the Stillnote recording project. Sarah will prepare the design proposal by Friday. Michael will check the audio pipeline and share the results on Monday. Our next meeting will focus on customer feedback, calendar integration, and reliable transcription. Please remember the three priorities: clear notes, accurate timestamps, and private local storage.

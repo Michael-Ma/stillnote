@@ -18,3 +18,11 @@ accounts.enc.tmp
 .env
 .env.*
 !.env.example
+
+# Local recordings and unselected generated drafts are never published.
+*.wav
+*.aiff
+*.aif
+*.caf
+*.m4a
+assets/icon-options/drafts/

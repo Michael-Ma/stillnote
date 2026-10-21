@@ -52,3 +52,7 @@ The application has no production demo mode. Test screenshots may populate calen
 ## Application icon
 
 A folded ivory paper ribbon forms an S on a forest-green macOS tile. The same mark appears in the Dock and workspace switcher. This replaces the initial generic notebook drawing. The canonical generated master, production exports, and complete built-in image-generation prompt are documented in [ICON.md](ICON.md).
+
+## Recording review
+
+The Recordings tab exposes separate microphone and system-audio controls with seeking and no autoplay, duration, recognition language, and retry. Input meters indicate signal only. Sparse-transcript notices offer a concrete listen/retry path, and legacy notes explain when no audio was saved. The raw notes remain optional and separate from all generated content. Recordings are retained on the Mac and excluded from model context and JSON backups.

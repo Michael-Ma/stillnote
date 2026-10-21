@@ -21,6 +21,8 @@ try {
     .getByRole('textbox', { name: 'My notes', exact: true })
     .fill('The packaged renderer and persistence bridge are available.');
   await page.getByRole('button', { name: 'Back to Home' }).click();
+  // Back navigation waits for the in-flight draft write; observe the resulting view.
+  await page.locator('.note-row').filter({ hasText: 'Packaged application check' }).waitFor();
   assert.equal(await page.locator('.note-row').count(), 1);
   const data = await page.evaluate(() => window.stillnote.call('state'));
   assert.equal(

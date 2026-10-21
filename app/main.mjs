@@ -8,14 +8,30 @@ import {
   Menu,
   Notification,
   powerSaveBlocker,
+  protocol,
 } from 'electron';
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { Store, templates, recipes, markdown, context } from './store.mjs';
 import { ChatGPT } from './auth.mjs';
+import {
+  recordingDirectory,
+  inspectRecordingTracks,
+  repairRecordingTracks,
+  resolveRecordingTrack,
+  audioResponse,
+  assessCoverage,
+} from './recordings.mjs';
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'stillnote-audio',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+  },
+]);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 app.setName('Stillnote');
 app.setPath(
@@ -31,6 +47,8 @@ if (!app.requestSingleInstanceLock()) {
     auth,
     native,
     activeAI,
+    testAdapter,
+    transcriptionWait,
     recording = null,
     starting = false,
     stopping = false,
@@ -54,111 +72,211 @@ if (!app.requestSingleInstanceLock()) {
     calendar: calendarEvents,
     dataDir: app.getPath('userData'),
   });
+  function releaseCapture() {
+    recording = null;
+    starting = false;
+    stopping = false;
+    pendingPartials.clear();
+    if (powerId !== undefined) {
+      powerSaveBlocker.stop(powerId);
+      powerId = undefined;
+    }
+  }
+  function finishCapture(status, event = {}) {
+    if (!recording) return null;
+    const active = recording;
+    for (const segment of pendingPartials.values())
+      if (segment.text.trim()) store.append(active.id, segment);
+    const dir = recordingDirectory(app.getPath('userData'), active.id, active.recordingId);
+    if (status === 'interrupted') repairRecordingTracks(dir);
+    const tracks = inspectRecordingTracks(dir, event.audio?.tracks);
+    const trackDuration = Math.max(
+      0,
+      ...tracks.map((track) => track.duration + (track.startOffset ?? 0)),
+    );
+    const seconds = Number.isFinite(event.duration) ? Math.max(0, event.duration) : trackDuration;
+    const m = store.get(active.id);
+    const segments = m.transcript.filter((segment) => segment.recordingId === active.recordingId);
+    const nativeDiagnostics = event.audio?.diagnostics ?? {};
+    const diagnostics = {
+      ...nativeDiagnostics,
+      ...assessCoverage(
+        segments,
+        Math.max(seconds, trackDuration),
+        nativeDiagnostics.sourceStats ?? {},
+      ),
+    };
+    const updated = store.finishRecording(active.id, active.recordingId, {
+      status,
+      duration: Math.max(seconds, trackDuration),
+      tracks,
+      diagnostics,
+      sources: active.sources,
+    });
+    releaseCapture();
+    emit({ type: 'meeting', meeting: updated });
+    return updated;
+  }
   function helper() {
     if (native) return native;
     const binary = app.isPackaged
       ? join(process.resourcesPath, 'StillnoteCapture')
       : join(root, 'native/bin/StillnoteCapture');
-    if (!existsSync(binary))
+    if (!testAdapter && !existsSync(binary))
       throw new Error('Native helper is missing. Run npm run build on macOS.');
-    const child = spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = testAdapter
+      ? testAdapter.createNative()
+      : spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'] });
     native = child;
     createInterface({ input: child.stdout }).on('line', (line) => {
       try {
         const e = JSON.parse(line);
-        if (e.type === 'segment' && recording) {
-          store.append(recording.id, { ...e, timestamp: e.timestamp + recording.baseDuration });
-          pendingPartials.delete(e.speaker);
-          emit({ type: 'meeting', meeting: store.get(recording.id) });
+        if (
+          e.recordingId &&
+          e.recordingId !== recording?.recordingId &&
+          e.recordingId !== transcriptionWait?.recordingId
+        )
+          return;
+        if (e.type === 'retranscription-completed') {
+          if (transcriptionWait?.recordingId === e.recordingId)
+            transcriptionWait.resolve(e.segments ?? []);
+          return;
         }
-        if (e.type === 'partial' && recording)
-          pendingPartials.set(e.speaker, { ...e, timestamp: e.timestamp + recording.baseDuration });
-        if (e.type === 'started') {
+        if (e.type === 'retranscription-error') {
+          if (transcriptionWait?.recordingId === e.recordingId)
+            transcriptionWait.reject(
+              new Error(
+                e.message ?? 'Transcription failed. The existing transcript was preserved.',
+              ),
+            );
+          return;
+        }
+        if (e.type === 'transcription-progress') {
+          emit(e);
+          return;
+        }
+        if (
+          ['segment', 'partial'].includes(e.type) &&
+          recording &&
+          (!e.recordingId || e.recordingId === recording.recordingId)
+        ) {
+          const segment = {
+            ...e,
+            recordingId: recording.recordingId,
+            timestamp: Math.max(0, Number(e.timestamp) || 0) + recording.baseDuration,
+          };
+          const key = e.segmentId || e.source || e.speaker;
+          if (e.type === 'segment') {
+            store.append(recording.id, segment);
+            pendingPartials.delete(key);
+            emit({ type: 'meeting', meeting: store.get(recording.id) });
+          } else pendingPartials.set(key, segment);
+        }
+        if (e.type === 'started' && recording) {
           starting = false;
-          if (recording) recording = { ...recording, systemAudio: e.systemAudio };
+          recording = {
+            ...recording,
+            systemAudio: e.systemAudio,
+            startedAt: Number.isFinite(e.startedAt) ? e.startedAt : recording.startedAt,
+            sources: { ...recording.sources, ...e.sources },
+          };
+          store.finishRecording(recording.id, recording.recordingId, {
+            status: 'recording',
+            sources: recording.sources,
+          });
         }
-        if (e.type === 'stopped') {
-          if (recording) {
-            for (const s of pendingPartials.values())
-              if (s.text.trim()) store.append(recording.id, s);
-            const m = store.get(recording.id);
-            store.update(m.id, { duration: m.duration + (e.duration || 0) });
-            e.meetingId = m.id;
-            emit({ type: 'meeting', meeting: store.get(m.id) });
-          }
-          pendingPartials.clear();
-          recording = null;
-          starting = false;
-          stopping = false;
-          if (powerId !== undefined) {
-            powerSaveBlocker.stop(powerId);
-            powerId = undefined;
-          }
+        if (e.type === 'recording-status' && recording) {
+          recording = {
+            ...recording,
+            sources: {
+              ...recording.sources,
+              ...e.sources,
+              ...(e.source ? { [e.source]: { status: e.status, message: e.message } } : {}),
+            },
+          };
         }
+        let completed;
+        if (e.type === 'stopped')
+          completed = finishCapture(e.status === 'failed' ? 'failed' : 'completed', e);
         if (e.type === 'calendar') {
           calendarEvents = e.events;
           calendarWait?.resolve(e.events);
           calendarWait = undefined;
         }
         if (e.type === 'error') {
-          calendarWait?.reject(new Error(e.message));
-          calendarWait = undefined;
-          if (starting) {
-            recording = null;
-            starting = false;
-            if (powerId !== undefined) {
-              powerSaveBlocker.stop(powerId);
-              powerId = undefined;
-            }
+          if (!e.op || e.op === 'calendar') {
+            calendarWait?.reject(new Error(e.message));
+            calendarWait = undefined;
           }
+          if (
+            transcriptionWait &&
+            (!e.op || e.op === 'transcribe') &&
+            (!e.recordingId || e.recordingId === transcriptionWait.recordingId)
+          )
+            transcriptionWait.reject(new Error(e.message));
+          if (
+            starting &&
+            (!e.op || e.op === 'start') &&
+            (!e.recordingId || e.recordingId === recording?.recordingId)
+          )
+            finishCapture('startfailed', e);
         }
         emit({ ...e, recording });
         if (
-          e.type === 'stopped' &&
-          e.meetingId &&
+          completed &&
+          e.status !== 'failed' &&
           store.settings().autoEnhance !== false &&
           auth.status().sharing &&
           !activeAI
         ) {
-          const m = store.get(e.meetingId);
-          if (m.notes.trim() || m.transcript.length) {
-            emit({ type: 'auto-enhance-start', id: m.id });
-            void ai({ kind: 'enhance', id: m.id }).catch((error) =>
+          const sparse = completed.recordings.at(-1)?.diagnostics?.lowCoverage;
+          if (sparse && completed.notes.replace(/\s/g, '').length < 40) {
+            emit({
+              type: 'warning',
+              message:
+                'Very little transcript text was captured. Listen to the saved audio and review the transcript before enhancing notes.',
+            });
+          } else if (completed.notes.trim() || completed.transcript.length) {
+            emit({ type: 'auto-enhance-start', id: completed.id });
+            void ai({ kind: 'enhance', id: completed.id }).catch((error) =>
               emit({ type: 'error', message: error.message }),
             );
           }
         }
-      } catch (e) {
-        emit({ type: 'error', message: 'Could not process native capture output: ' + e.message });
+      } catch (error) {
+        emit({
+          type: 'error',
+          message: 'Could not process native capture output: ' + error.message,
+        });
       }
     });
-    child.stderr.on('data', () => {}); // Never forward OS diagnostics or audio data to the renderer.
-    child.on('error', (e) =>
-      emit({ type: 'error', message: 'Native helper could not start: ' + e.message }),
-    );
+    child.stderr.on('data', () => {});
+    child.on('error', (error) => {
+      if (starting) finishCapture('startfailed');
+      transcriptionWait?.reject(new Error('Native transcription helper could not start.'));
+      emit({
+        type: 'error',
+        message: 'Native helper could not start: ' + error.message,
+        recording,
+      });
+    });
     child.on('close', () => {
+      if (native !== child) return;
       native = undefined;
       calendarWait?.reject(new Error('Calendar helper stopped.'));
       calendarWait = undefined;
+      transcriptionWait?.reject(
+        new Error('Transcription stopped unexpectedly. The existing transcript was preserved.'),
+      );
       if (recording) {
-        for (const s of pendingPartials.values()) if (s.text.trim()) store.append(recording.id, s);
-        const m = store.get(recording.id);
-        store.update(m.id, { duration: m.duration + (Date.now() - recording.startedAt) / 1000 });
-        emit({ type: 'meeting', meeting: store.get(m.id) });
+        finishCapture('interrupted');
         emit({
           type: 'error',
           message:
-            'Audio capture stopped unexpectedly. Saved transcript is available; start a new recording to continue.',
+            'Audio capture stopped unexpectedly. Review the saved audio and transcript, then start a new recording to continue.',
         });
       }
-      recording = null;
-      starting = false;
-      stopping = false;
-      pendingPartials.clear();
-      if (powerId !== undefined) {
-        powerSaveBlocker.stop(powerId);
-        powerId = undefined;
-      }
+      releaseCapture();
       emit({ type: 'stopped', recording: null });
     });
     return child;
@@ -216,7 +334,7 @@ if (!app.requestSingleInstanceLock()) {
         const t =
           [...templates, ...(settings.templates ?? [])].find((t) => t.id === m.templateId) ??
           templates[0];
-        prompt = `Enhance my rough notes using the transcript. Keep the topics I emphasized. ${t.prompt}\n\nMEETING SOURCES:\n${source}`;
+        prompt = `Create useful meeting notes from the full transcript and any rough notes. Rough notes are optional; when they are empty, use the full transcript without treating the absence of rough notes as a capture failure. When rough notes are present, keep the topics I emphasized. ${t.prompt}\n\nMEETING SOURCES:\n${source}`;
         input = [{ role: 'user', content: prompt }];
       } else {
         if (typeof question !== 'string' || !question.trim() || question.length > 20000)
@@ -276,9 +394,61 @@ if (!app.requestSingleInstanceLock()) {
     .whenReady()
     .then(async () => {
       store = new Store(app.getPath('userData'));
-      auth = new ChatGPT(join(app.getPath('userData'), 'chatgpt'), safeStorage, (url) =>
-        shell.openExternal(url),
-      );
+      if (
+        !app.isPackaged &&
+        process.env.NODE_ENV === 'test' &&
+        process.env.STILLNOTE_DATA_DIR &&
+        process.env.STILLNOTE_TEST_ADAPTER
+      ) {
+        const adapterModule = await import(
+          pathToFileURL(resolve(process.env.STILLNOTE_TEST_ADAPTER)).href
+        );
+        testAdapter = await adapterModule.createTestAdapter({ dataDir: app.getPath('userData') });
+      }
+      for (const meeting of store.all(true)) {
+        for (const session of meeting.recordings) {
+          if (!['starting', 'recording', 'stopping'].includes(session.status)) continue;
+          const dir = recordingDirectory(app.getPath('userData'), meeting.id, session.id);
+          repairRecordingTracks(dir);
+          const tracks = inspectRecordingTracks(dir, session.tracks);
+          const seconds = Math.max(
+            session.duration ?? 0,
+            ...tracks.map((track) => track.duration + (track.startOffset ?? 0)),
+          );
+          const segments = meeting.transcript.filter(
+            (segment) => segment.recordingId === session.id,
+          );
+          store.finishRecording(meeting.id, session.id, {
+            status: 'interrupted',
+            tracks,
+            duration: seconds,
+            diagnostics: assessCoverage(segments, seconds),
+          });
+        }
+      }
+      protocol.handle('stillnote-audio', async (request) => {
+        try {
+          const url = new URL(request.url),
+            parts = url.pathname.split('/').filter(Boolean);
+          if (url.hostname !== 'recording' || url.search || url.hash || parts.length !== 3)
+            throw new Error('Invalid recording URL.');
+          const [meetingId, recordingId, source] = parts.map(decodeURIComponent);
+          const meeting = store.get(meetingId),
+            session = meeting.recordings.find((item) => item.id === recordingId);
+          if (!session) throw new Error('Recording not found.');
+          return await audioResponse(
+            resolveRecordingTrack(app.getPath('userData'), meetingId, session, source),
+            request,
+          );
+        } catch {
+          return new Response(null, { status: 404 });
+        }
+      });
+      auth = testAdapter
+        ? testAdapter.createAuth()
+        : new ChatGPT(join(app.getPath('userData'), 'chatgpt'), safeStorage, (url) =>
+            shell.openExternal(url),
+          );
       let startupError;
       try {
         auth.load();
@@ -351,31 +521,119 @@ if (!app.requestSingleInstanceLock()) {
       register('messages', (scope) => store.messages(scope));
       register('record', (id) => {
         if (recording || starting) throw new Error('A meeting is already recording.');
+        if (transcriptionWait)
+          throw new Error('Wait for transcription to finish before recording.');
         const m = store.get(id);
         if (m.deletedAt) throw new Error('Restore this meeting before recording.');
+        const recordingId = randomUUID(),
+          startedAt = Date.now(),
+          locale = store.settings().locale ?? 'en-US';
+        const audioDir = recordingDirectory(app.getPath('userData'), id, recordingId);
+        mkdirSync(audioDir, { recursive: true, mode: 0o700 });
+        store.beginRecording(id, {
+          id: recordingId,
+          startedAt: new Date(startedAt).toISOString(),
+          locale,
+        });
+        emit({ type: 'meeting', meeting: store.get(id) });
         starting = true;
-        recording = { id, startedAt: Date.now(), baseDuration: m.duration, systemAudio: false };
+        recording = {
+          id,
+          recordingId,
+          locale,
+          startedAt,
+          baseDuration: m.duration,
+          systemAudio: false,
+          sources: {
+            microphone: { status: 'starting' },
+            system: { status: store.settings().systemAudio === false ? 'disabled' : 'starting' },
+          },
+        };
         pendingPartials.clear();
         try {
           send({
             op: 'start',
-            locale: store.settings().locale ?? 'en-US',
+            locale,
             systemAudio: store.settings().systemAudio ?? true,
+            audioDir,
+            recordingId,
           });
           powerId = powerSaveBlocker.start('prevent-app-suspension');
           return recording;
-        } catch (e) {
-          starting = false;
-          recording = null;
-          throw e;
+        } catch (error) {
+          finishCapture('startfailed');
+          throw error;
         }
       });
       register('stop', () => {
         if (recording && !stopping) {
           stopping = true;
+          recording = { ...recording, stopping: true };
+          store.finishRecording(recording.id, recording.recordingId, { status: 'stopping' });
+          emit({ type: 'recording-status', recording });
           send({ op: 'stop' });
         }
         return true;
+      });
+      register('recording-url', (meetingId, recordingId, source) => {
+        const meeting = store.get(meetingId),
+          session = meeting.recordings.find((item) => item.id === recordingId);
+        if (!session) throw new Error('Recording not found.');
+        resolveRecordingTrack(app.getPath('userData'), meetingId, session, source);
+        return `stillnote-audio://recording/${meetingId}/${recordingId}/${source}`;
+      });
+      register('transcribe-recording', async (meetingId, recordingId) => {
+        if (recording || starting || stopping)
+          throw new Error('Finish recording before retrying transcription.');
+        if (transcriptionWait) throw new Error('Another recording is already being transcribed.');
+        const meeting = store.get(meetingId),
+          session = meeting.recordings.find((item) => item.id === recordingId);
+        if (meeting.deletedAt) throw new Error('Restore this note before transcribing.');
+        if (!session) throw new Error('Recording not found.');
+        const tracks = session.tracks.map((track) => ({
+          source: track.source,
+          path: resolveRecordingTrack(app.getPath('userData'), meetingId, session, track.source),
+          startOffset: track.startOffset ?? 0,
+        }));
+        if (!tracks.length) throw new Error('No saved audio is available for this recording.');
+        const segments = await new Promise((resolve, reject) => {
+          const timer = setTimeout(
+            () =>
+              transcriptionWait?.reject(
+                new Error('Transcription timed out. The existing transcript was preserved.'),
+              ),
+            Math.max(90_000, session.duration * 3000),
+          );
+          const settle = (fn) => (value) => {
+            clearTimeout(timer);
+            transcriptionWait = undefined;
+            fn(value);
+          };
+          transcriptionWait = { recordingId, resolve: settle(resolve), reject: settle(reject) };
+          try {
+            send({
+              op: 'transcribe',
+              recordingId,
+              locale: store.settings().locale ?? 'en-US',
+              tracks,
+            });
+          } catch (error) {
+            transcriptionWait.reject(error);
+          }
+        });
+        const diagnostics = assessCoverage(
+          segments,
+          session.duration,
+          session.diagnostics?.sourceStats,
+        );
+        const updated = store.replaceRecordingTranscript(
+          meetingId,
+          recordingId,
+          segments,
+          diagnostics,
+        );
+        emit({ type: 'meeting', meeting: updated });
+        return updated;
       });
       register('calendar', () => {
         if (calendarWait) throw new Error('Calendar is already loading.');
@@ -455,15 +713,20 @@ if (!app.requestSingleInstanceLock()) {
       });
       register('reveal', () => shell.openPath(app.getPath('userData')));
       register('finish-close', () => {
-        if (recording || starting) return;
+        if (recording || starting || transcriptionWait) return;
         closing = true;
         win.close();
       });
       win.on('close', (event) => {
-        if (recording || starting) {
+        if (recording || starting || transcriptionWait) {
           event.preventDefault();
           win.show();
-          emit({ type: 'error', message: 'Stop the recording before closing Stillnote.' });
+          emit({
+            type: 'error',
+            message: transcriptionWait
+              ? 'Wait for transcription to finish before closing Stillnote.'
+              : 'Stop the recording before closing Stillnote.',
+          });
           return;
         }
         if (!closing) {
@@ -476,10 +739,15 @@ if (!app.requestSingleInstanceLock()) {
         win?.focus();
       });
       app.on('before-quit', (event) => {
-        if (recording || starting) {
+        if (recording || starting || transcriptionWait) {
           event.preventDefault();
           win?.show();
-          emit({ type: 'error', message: 'Stop the recording before quitting Stillnote.' });
+          emit({
+            type: 'error',
+            message: transcriptionWait
+              ? 'Wait for transcription to finish before quitting Stillnote.'
+              : 'Stop the recording before quitting Stillnote.',
+          });
           return;
         }
         activeAI?.abort();

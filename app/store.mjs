@@ -79,14 +79,14 @@ export class Store {
     return this.db
       .prepare('SELECT data FROM meetings')
       .all()
-      .map((x) => JSON.parse(x.data))
+      .map((x) => ({ recordings: [], transcriptVersions: [], ...JSON.parse(x.data) }))
       .filter((m) => includeTrash || !m.deletedAt)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
   get(id) {
     const r = this.db.prepare('SELECT data FROM meetings WHERE id=?').get(id);
     if (!r) throw new Error('Meeting not found.');
-    return JSON.parse(r.data);
+    return { recordings: [], transcriptVersions: [], ...JSON.parse(r.data) };
   }
   create(input = {}) {
     const now = new Date().toISOString();
@@ -105,6 +105,8 @@ export class Store {
       deletedAt: null,
       duration: 0,
       versions: [],
+      recordings: [],
+      transcriptVersions: [],
       ...Object.fromEntries(
         ['notes', 'participants']
           .filter((k) => typeof input[k] === 'string')
@@ -154,13 +156,87 @@ export class Store {
   }
   append(id, segment) {
     const m = this.get(id);
+    if (segment.segmentId && segment.recordingId) {
+      const existing = m.transcript.findIndex(
+        (s) => s.segmentId === segment.segmentId && s.recordingId === segment.recordingId,
+      );
+      if (existing >= 0) m.transcript.splice(existing, 1);
+    }
     const s = {
       id: randomUUID(),
       text: text(segment.text),
       speaker: text(segment.speaker ?? 'Speaker', 100),
       timestamp: Number(segment.timestamp) || 0,
+      ...(segment.recordingId ? { recordingId: text(segment.recordingId, 100) } : {}),
+      ...(segment.segmentId ? { segmentId: text(segment.segmentId, 200) } : {}),
+      ...(['microphone', 'system'].includes(segment.source) ? { source: segment.source } : {}),
     };
     m.transcript.push(s);
+    m.transcript.sort((a, b) => a.timestamp - b.timestamp);
+    m.updatedAt = new Date().toISOString();
+    return this.write(m);
+  }
+  beginRecording(id, input = {}) {
+    const m = this.get(id);
+    m.recordings.push({
+      id: input.id ?? randomUUID(),
+      startedAt: input.startedAt ?? new Date().toISOString(),
+      locale: input.locale ?? 'en-US',
+      baseDuration: m.duration,
+      duration: 0,
+      status: 'starting',
+      tracks: [],
+      diagnostics: {},
+    });
+    m.updatedAt = new Date().toISOString();
+    return this.write(m);
+  }
+  finishRecording(id, recordingId, patch) {
+    const m = this.get(id);
+    const session = m.recordings.find((r) => r.id === recordingId);
+    if (!session) throw new Error('Recording not found.');
+    for (const key of ['status', 'tracks', 'diagnostics', 'sources'])
+      if (key in patch) session[key] = patch[key];
+    if ('duration' in patch) {
+      if (!Number.isFinite(patch.duration) || patch.duration < 0)
+        throw new Error('Invalid recording duration.');
+      session.duration = patch.duration;
+      m.duration = Math.max(m.duration, session.baseDuration + patch.duration);
+    }
+    m.updatedAt = new Date().toISOString();
+    return this.write(m);
+  }
+  replaceRecordingTranscript(id, recordingId, segments, diagnostics) {
+    const m = this.get(id),
+      session = m.recordings.find((r) => r.id === recordingId);
+    if (!session) throw new Error('Recording not found.');
+    const replacement = segments
+      .filter((segment) => typeof segment.text === 'string' && segment.text.trim())
+      .map((segment) => ({
+        id: randomUUID(),
+        recordingId,
+        ...(segment.segmentId ? { segmentId: text(segment.segmentId, 200) } : {}),
+        ...(['microphone', 'system'].includes(segment.source) ? { source: segment.source } : {}),
+        text: text(segment.text),
+        speaker: text(segment.speaker ?? 'Speaker', 100),
+        timestamp: session.baseDuration + Math.max(0, Number(segment.timestamp) || 0),
+      }));
+    if (!replacement.length)
+      throw new Error('No transcript text was recovered. The existing transcript was preserved.');
+    m.transcriptVersions = [
+      {
+        recordingId,
+        at: new Date().toISOString(),
+        segments: m.transcript.filter((segment) => segment.recordingId === recordingId),
+      },
+      ...m.transcriptVersions,
+    ].slice(0, 20);
+    m.transcript = [
+      ...m.transcript.filter((segment) => segment.recordingId !== recordingId),
+      ...replacement,
+    ].sort((a, b) => a.timestamp - b.timestamp);
+    session.diagnostics = diagnostics;
+    session.lastTranscribedAt = new Date().toISOString();
     m.updatedAt = new Date().toISOString();
     return this.write(m);
   }
@@ -234,7 +310,17 @@ export class Store {
     return {
       version: 1,
       exportedAt: new Date().toISOString(),
-      meetings: this.all(true),
+      audioIncluded: false,
+      meetings: this.all(true).map((m) => ({
+        ...m,
+        recordings: m.recordings.map(({ id, startedAt, duration, status }) => ({
+          id,
+          startedAt,
+          duration,
+          status,
+          audioIncluded: false,
+        })),
+      })),
       folders: this.folders(),
       settings: this.settings(),
       messages: this.db
@@ -275,7 +361,34 @@ export class Store {
         text(s.speaker, 100);
         if (!Number.isFinite(s.timestamp)) throw new Error('Invalid timestamp.');
       }
-      return m;
+      // Imported metadata must never grant access to recordings already on this Mac.
+      return {
+        ...Object.fromEntries(
+          [
+            'id',
+            'title',
+            'notes',
+            'summary',
+            'participants',
+            'templateId',
+            'createdAt',
+            'updatedAt',
+            'duration',
+            'starred',
+            'folderId',
+            'deletedAt',
+            'versions',
+          ].map((key) => [key, m[key]]),
+        ),
+        transcript: m.transcript.map(({ id, text, speaker, timestamp }) => ({
+          id,
+          text,
+          speaker,
+          timestamp,
+        })),
+        recordings: [],
+        transcriptVersions: [],
+      };
     });
     const folders = (input.folders ?? []).map((f) => ({
       id: text(f.id, 100),

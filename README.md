@@ -9,7 +9,8 @@ Stillnote keeps the core loop small: **open a note → capture a conversation �
 ## Core capabilities
 
 - **Meeting capture:** microphone plus optional system audio, without a meeting bot.
-- **On-device transcription:** Apple's Speech framework, with separate microphone and meeting-audio labels. No transcription API key and no persisted audio recordings.
+- **On-device transcription:** Apple's Speech framework, with separate microphone and meeting-audio labels. No transcription API key. Original microphone and system-audio tracks are retained locally for playback and transcription retry.
+- **Replay and diagnose:** separate source players with seeking, live input meters, recognition language, sparse-transcript warnings, and retry from the saved audio. Earlier app versions did not retain audio, so historical audio cannot be recovered.
 - **A simple notebook:** autosaved rough notes, editable transcripts, folders, stars, search, and recoverable Trash.
 - **Enhanced notes:** combine your notes and transcript using a selected template. Previous summaries remain available. Optionally enhance automatically when recording ends.
 - **Meeting chat:** ask about one meeting, a folder, or your notebook. Source citations open the corresponding transcript. Apply a chat answer to your enhanced notes explicitly.
@@ -54,9 +55,9 @@ The subscription route supports text inference but **does not include the transc
 2. Press the waveform button at the bottom to start recording.
 3. Grant **Microphone**, **Speech Recognition**, and, for meeting audio, **Screen & System Audio Recording** access in macOS.
 4. Write a few notes while the transcript accumulates.
-5. Choose **Finish meeting**. If ChatGPT is connected and automatic enhancement is enabled, Stillnote generates enhanced notes. Otherwise, choose **Enhance notes** later.
+5. Choose **Finish meeting**. Open **Recordings** to listen to the saved sources or retry transcription. If ChatGPT is connected and automatic enhancement is enabled, Stillnote enhances notes unless transcript coverage looks sparse. You can also choose **Enhance notes** later. Rough notes are optional.
 
-If on-device recognition is unavailable, enable Dictation and install the meeting language in macOS Settings, then restart Stillnote. It will not silently switch to a cloud transcription service. English, Chinese, and other language choices depend on the recognizer installed on your Mac.
+If on-device recognition is unavailable, enable Dictation and install the meeting language in macOS Settings, then restart Stillnote. Audio capture can continue even when recognition is unavailable. It will not silently switch to a cloud transcription service. English, Chinese, and other language choices depend on the recognizer installed on your Mac.
 
 **Shortcuts:** `⌘N` new note, `⌘K` search from Home, `⌘J` toggle chat.
 
@@ -70,19 +71,24 @@ If on-device recognition is unavailable, enable Dictation and install the meetin
 
 Notes, transcripts, and chat history are stored locally in `notebook.sqlite`. This notebook database is not application-encrypted; macOS account access and FileVault are the disk protection boundary. ChatGPT credentials are separately encrypted with Electron's macOS `safeStorage` mechanism and are never included in notebook backups or renderer state.
 
-**AI is online:** selected notes, transcripts, and recent chat context go to OpenAI when you enhance or chat. Automatic enhancement is enabled by default after you connect ChatGPT; it can be disabled in Settings. Audio remains in memory on the Mac and is not saved by the app.
+**AI is online:** selected notes, transcripts, and recent chat context go to OpenAI when you enhance or chat. Automatic enhancement is enabled by default after you connect ChatGPT; it can be disabled in Settings. Audio is saved as separate 16 kHz mono PCM WAV files under `recordings/<meeting-id>/<session-id>/`, and is never sent to OpenAI. It remains until you remove the local files; moving a note to Trash does not remove audio. Storage is approximately 110 MiB per hour per source. JSON notebook backups explicitly exclude these audio files; copy the data folder separately to preserve audio.
 
 ## Development and verification
 
 ```sh
 npm test                 # storage, search, imports, streaming, and synthetic OAuth tests
-npm run test:ui          # real Electron workflows with isolated fictional test data
+npm run test:ui          # original notebook smoke checks
+npm run test:e2e         # reusable notebook/capture/playback/AI/crash-recovery suites
+npm run test:native      # real native audio writer with synthetic speech
+npm run test:native -- --long # 60+ second native audio regression
+npm run test:native:recognize # opt-in on-device recognition; macOS permission may be needed
+npm run test:native -- --long --recognize --streamed # live recognition path, synthetic audio
 npm run format:check     # source formatting
 npm run build            # Swift helper, Electron main/preload, and renderer
 npm run package          # standalone macOS app
 ```
 
-The desktop test exercises real persistence, transcript editing, folder assignment, stars, search, Trash/restore, Markdown export, immediate-close draft saving, and sign-in error recovery. Native file dialogs are stubbed only in the export test. No test records a real meeting or accesses a real ChatGPT account.
+The desktop test exercises real persistence, transcript editing, folder assignment, stars, search, Trash/restore, Markdown export, immediate-close draft saving, and sign-in error recovery. The deterministic E2E suite replaces device and ChatGPT transports, but exercises the real renderer, IPC, SQLite, media protocol, seeking, decoded playback, and restart recovery. Native file dialogs are stubbed for import/export. The separate native tests use synthesized speech and the real audio writer; recognition is opt-in. No automatic test records a real meeting or accesses a real ChatGPT account.
 
 See [validation results and remaining checks](docs/VALIDATION.md) for the evidence boundary. Live account inference and actual microphone/system-audio transcription still require a user-authorized acceptance test.
 
@@ -91,6 +97,9 @@ See [validation results and remaining checks](docs/VALIDATION.md) for the eviden
 - [How it was built, architecture, and core components](docs/ARCHITECTURE.md)
 - [UI/UX decisions and reference mapping](docs/DESIGN.md)
 - [Icon design, source assets, and generation prompt](docs/ICON.md)
+- [Three additional icon options](docs/ICON-OPTIONS.md)
+- [Reusable E2E testing design and commands](docs/TESTING.md)
+- [Recording and transcription diagnostics](docs/CAPTURE-DIAGNOSTICS.md)
 - [Validation and limitations](docs/VALIDATION.md)
 - [Optional local MCP integration](docs/MCP.md)
 
