@@ -109,6 +109,7 @@ export class ChatGPT {
     if (!t.id_token) throw new Error('Missing account identity. Please reconnect.');
     const { payload } = await jwtVerify(t.id_token, this.jwks, {
       issuer: ISSUER,
+      algorithms: ['RS256'],
       audience: clientId,
     });
     if (nonce && !same(payload.nonce, nonce))
@@ -293,12 +294,35 @@ export class ChatGPT {
       throw new Error('ChatGPT plan usage was disabled.');
     return p.tokens.access_token;
   }
+  async request(path, options = {}) {
+    const profile = this.current();
+    let token = await this.access();
+    const request = () =>
+      fetch(RESOURCE + path, {
+        ...options,
+        headers: { ...options.headers, Authorization: `Bearer ${token}` },
+      });
+    let response = await request();
+    if (response.status === 401) {
+      await response.body?.cancel();
+      options.signal?.throwIfAborted();
+      if (this.current() !== profile) throw new Error('ChatGPT account changed. Please retry.');
+      // Another request may already have refreshed this rejected token.
+      if (profile.tokens.access_token === token) profile.expiresAt = 0;
+      token = await this.access();
+      options.signal?.throwIfAborted();
+      response = await request();
+    }
+    if (response.status === 401) {
+      await response.body?.cancel();
+      throw new Error(
+        'ChatGPT authorization failed (401) after refreshing. Reconnect your account in Settings.',
+      );
+    }
+    return response;
+  }
   async models() {
-    const token = await this.access();
-    const r = await fetch(RESOURCE + '/models', {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(30000),
-    });
+    const r = await this.request('/models', { signal: AbortSignal.timeout(30000) });
     if (!r.ok) throw new Error(`Could not load ChatGPT models (${r.status}).`);
     const d = await r.json();
     return (d.models ?? [])
@@ -306,10 +330,9 @@ export class ChatGPT {
       .map((m) => ({ id: m.slug, name: m.display_name ?? m.slug }));
   }
   async respond({ model, input, instructions, onDelta, signal }) {
-    const token = await this.access();
-    const r = await fetch(RESOURCE + '/responses', {
+    const r = await this.request('/responses', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, input, instructions, store: false, stream: true }),
       signal,
     });

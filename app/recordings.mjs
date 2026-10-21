@@ -285,3 +285,94 @@ export function assessCoverage(segments, duration, sourceStats = {}) {
     sourceStats,
   };
 }
+
+export function contextHints(meeting, folderName = '') {
+  const terms =
+    (meeting.notes ?? '').match(
+      /\p{Lu}[\p{L}\p{M}]{2,}|[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]{2,8}/gu,
+    ) ?? [];
+  const hints = [
+    ...(meeting.title ?? '').split(/\s+/),
+    ...(meeting.participants ?? '').split(/,|&| and /i),
+    folderName,
+    ...[...new Set(terms)].slice(0, 50),
+  ];
+  const seen = new Set();
+  return hints
+    .map((hint) => hint.trim().slice(0, 100))
+    .filter((hint) => {
+      const key = hint.toLowerCase();
+      if (!hint || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 100);
+}
+
+// Persist every phrase, but send the latest complete meeting at most once per 250 ms.
+export function meetingEvents(get, emit) {
+  const pending = new Map();
+  return {
+    schedule(id) {
+      if (pending.has(id)) return;
+      pending.set(
+        id,
+        setTimeout(() => {
+          pending.delete(id);
+          emit({ type: 'meeting', meeting: get(id) });
+        }, 250),
+      );
+    },
+    flush(id, meeting = get(id)) {
+      clearTimeout(pending.get(id));
+      pending.delete(id);
+      emit({ type: 'meeting', meeting });
+    },
+  };
+}
+
+export function helperRequests(send) {
+  const pending = new Map();
+  const replies = {
+    devices: 'devices',
+    languages: 'languages',
+    'language-installed': 'install-language',
+  };
+  return {
+    request(op, fields = {}, timeout = 10000) {
+      if (pending.has(op)) return Promise.reject(new Error(`${op} is already in progress.`));
+      return new Promise((resolve, reject) => {
+        const settle = (fn) => (value) => {
+          clearTimeout(timer);
+          pending.delete(op);
+          fn(value);
+        };
+        const timer = setTimeout(
+          () => pending.get(op)?.reject(new Error(`${op} timed out. Please try again.`)),
+          timeout,
+        );
+        pending.set(op, {
+          resolve: settle(resolve),
+          reject: settle(reject),
+          locale: fields.locale,
+        });
+        try {
+          send({ op, ...fields });
+        } catch (error) {
+          pending.get(op)?.reject(error);
+        }
+      });
+    },
+    receive(event) {
+      const op = event.type === 'error' ? event.op : replies[event.type];
+      const wait = pending.get(op);
+      if (!wait || (wait.locale && event.locale !== wait.locale)) return false;
+      if (event.type === 'error') wait.reject(new Error(event.message));
+      else wait.resolve(event);
+      return true;
+    },
+    reject(error) {
+      for (const wait of pending.values()) wait.reject(error);
+    },
+  };
+}

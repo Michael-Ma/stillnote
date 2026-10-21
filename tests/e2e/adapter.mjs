@@ -173,6 +173,7 @@ export function createTestAdapter({ dataDir }) {
         child.stdout.write(JSON.stringify(value) + '\n');
       };
       let active;
+      let installed = ['en-US'];
       let input = '';
       child.stdin = new Writable({
         write(chunk, _encoding, callback) {
@@ -208,8 +209,13 @@ export function createTestAdapter({ dataDir }) {
           emit({
             type: 'started',
             systemAudio: active.systemAudio,
+            engine: 'speechTranscriber',
+            echoCancellation: command.echoCancellation !== 'off',
             sources: {
-              microphone: { status: 'recording' },
+              microphone: {
+                status: 'recording',
+                device: { uid: command.inputDevice ?? 'fixture-mic', name: 'Fixture microphone' },
+              },
               system: {
                 status: active.systemAudio
                   ? 'recording'
@@ -257,6 +263,9 @@ export function createTestAdapter({ dataDir }) {
               message: 'Fixture meeting audio unavailable. Microphone capture continues.',
             });
         }
+        if (command.op === 'start' && active)
+          for (const event of active.fixture.events ?? [])
+            emit({ ...event, recordingId: command.recordingId });
         if (command.op === 'stop') {
           if (!active) {
             emit({ type: 'stopped', duration: 0 });
@@ -292,6 +301,39 @@ export function createTestAdapter({ dataDir }) {
             },
           ];
           emit({ type: 'retranscription-completed', recordingId: command.recordingId, segments });
+        }
+        if (command.op === 'devices')
+          emit({
+            type: 'devices',
+            inputs: [
+              {
+                uid: 'fixture-mic',
+                name: 'Fixture microphone',
+                isDefault: true,
+                transport: 'built-in',
+              },
+            ],
+          });
+        if (command.op === 'languages')
+          emit({
+            type: 'languages',
+            engine: 'speechTranscriber',
+            supported: ['en-US', 'zh-CN', 'yue-CN'],
+            installed,
+          });
+        if (command.op === 'install-language') {
+          if (!['en-US', 'zh-CN', 'yue-CN'].includes(command.locale))
+            emit({
+              type: 'error',
+              op: 'install-language',
+              locale: command.locale,
+              message: 'Unsupported fixture language.',
+            });
+          else {
+            installed = [...new Set([...installed, command.locale])];
+            emit({ type: 'language-progress', locale: command.locale, fraction: 1 });
+            emit({ type: 'language-installed', locale: command.locale, installed });
+          }
         }
         if (command.op === 'calendar') emit({ type: 'calendar', events: [] });
       }

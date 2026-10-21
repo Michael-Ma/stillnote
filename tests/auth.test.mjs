@@ -156,3 +156,88 @@ test('token rotation is serialized and checkpointed before validation', async (t
   assert.equal(profile.tokens.refresh_token, 'rotated');
   assert.equal(profile.pendingRotation, undefined);
 });
+
+test('ID token verification pins RS256', async (t) => {
+  const { auth } = await fixture(t);
+  const { publicKey, privateKey } = await generateKeyPair('PS256');
+  auth.metadata = async () => {
+    auth.jwks = publicKey;
+  };
+  const token = await new SignJWT({})
+    .setProtectedHeader({ alg: 'PS256' })
+    .setIssuer('https://auth.openai.com')
+    .setSubject('user-test')
+    .setAudience('test')
+    .setExpirationTime('1h')
+    .sign(privateKey);
+  await assert.rejects(auth.validate({ id_token: token }, 'test'), /alg.*not allowed/);
+});
+for (const operation of ['models', 'respond']) {
+  test(`ChatGPT ${operation} refreshes on 401 once and retries with the new token`, async (t) => {
+    const { auth } = await fixture(t);
+    auth.profiles = [
+      {
+        id: 'test',
+        clientId: 'test',
+        tokens: { access_token: 'old', refresh_token: 'refresh' },
+        scopes: ['chatgpt.tokens.use.direct'],
+        expiresAt: Date.now() + 3600000,
+      },
+    ];
+    auth.active = 'test';
+    let refreshes = 0;
+    auth.token = async () => {
+      refreshes++;
+      return { access_token: 'new', refresh_token: 'rotated', expires_in: 3600 };
+    };
+    const headers = [];
+    t.mock.method(globalThis, 'fetch', async (_url, options) => {
+      headers.push(options.headers.Authorization);
+      if (headers.length === 1) return new Response('', { status: 401 });
+      return operation === 'models'
+        ? Response.json({ models: [{ slug: 'test-model', visibility: 'list' }] })
+        : new Response(
+            'data: {"type":"response.output_text.delta","delta":"Answer"}\n\ndata: {"type":"response.completed"}\n\n',
+          );
+    });
+    const result =
+      operation === 'models'
+        ? await auth.models()
+        : await auth.respond({ model: 'test-model', input: 'Question' });
+    assert.deepEqual(headers, ['Bearer old', 'Bearer new']);
+    assert.equal(refreshes, 1);
+    assert.equal(
+      operation === 'models' ? result[0].id : result,
+      operation === 'models' ? 'test-model' : 'Answer',
+    );
+  });
+  test(`ChatGPT ${operation} reports repeated 401 accurately without looping`, async (t) => {
+    const { auth } = await fixture(t);
+    auth.profiles = [
+      {
+        id: 'test',
+        clientId: 'test',
+        tokens: { access_token: 'old', refresh_token: 'refresh' },
+        scopes: ['chatgpt.tokens.use.direct'],
+        expiresAt: Date.now() + 3600000,
+      },
+    ];
+    auth.active = 'test';
+    let requests = 0,
+      refreshes = 0;
+    auth.token = async () => {
+      refreshes++;
+      return { access_token: 'new', expires_in: 3600 };
+    };
+    t.mock.method(globalThis, 'fetch', async () => {
+      requests++;
+      return new Response('', { status: 401 });
+    });
+    await assert.rejects(
+      operation === 'models' ? auth.models() : auth.respond({ input: 'Question' }),
+      /401.*after refreshing.*Reconnect/,
+    );
+    assert.equal(requests, 2);
+    assert.equal(refreshes, 1);
+  });
+}

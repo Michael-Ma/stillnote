@@ -230,3 +230,62 @@ test('Terminal setup scripts only run the official installer and CLI login', () 
   assert.ok(install.includes('"$HOME/.local/bin/claude" auth login --claudeai'));
   assert.throws(() => terminalScript('rm -rf'), /Unknown/);
 });
+
+test('abort during authentication never starts inference', async (t) => {
+  const { claude, calls } = fixture(t, { FAKE_CLAUDE_STATUS_DELAY: '80' });
+  const controller = new AbortController();
+  const request = ask(claude, { signal: controller.signal }).promise;
+  while (!calls().some((call) => call.args[1] === 'status'))
+    await new Promise((r) => setTimeout(r, 5));
+  controller.abort();
+  await assert.rejects(request, (error) => error.name === 'AbortError');
+  assert.equal(calls().filter((call) => call.args[0] === '-p').length, 0);
+});
+test('abort during locate never starts inference', async (t) => {
+  const { claude, calls } = fixture(t);
+  await claude.refresh();
+  const controller = new AbortController();
+  const locate = claude.locate.bind(claude);
+  claude.locate = async () => {
+    controller.abort();
+    return locate();
+  };
+  await assert.rejects(
+    ask(claude, { signal: controller.signal }).promise,
+    (error) => error.name === 'AbortError',
+  );
+  assert.equal(calls().filter((call) => call.args[0] === '-p').length, 0);
+});
+test('abort in the spawn/listener gap kills the child immediately', async (t) => {
+  const { claude } = fixture(t, { FAKE_CLAUDE_MODE: 'slow' });
+  await claude.refresh();
+  const controller = new AbortController();
+  const spawnCLI = claude.spawn;
+  let child;
+  claude.spawn = (...args) => {
+    child = spawnCLI(...args);
+    controller.abort();
+    return child;
+  };
+  await assert.rejects(
+    ask(claude, { signal: controller.signal }).promise,
+    (error) => error.name === 'AbortError',
+  );
+  assert.equal(child.killed, true);
+});
+test('missing Claude discovery backs off for at least sixty seconds', async (t) => {
+  const { claude } = fixture(t, {}, { candidates: [], shell: '/fixture/zsh' });
+  let calls = 0;
+  claude.run = async () => {
+    calls++;
+    return { stdout: '' };
+  };
+  assert.equal(await claude.locate(), null);
+  assert.equal(await claude.locate(), null);
+  await claude.refresh();
+  assert.equal(calls, 1);
+  assert.ok(claude.missingUntil >= Date.now() + 59000);
+  claude.missingUntil = Date.now() - 1;
+  assert.equal(await claude.locate(), null);
+  assert.equal(calls, 2);
+});

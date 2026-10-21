@@ -168,12 +168,14 @@ export class ClaudeCode {
   setPath(path) {
     this.override = path || undefined;
     this.found = undefined;
+    this.missingUntil = 0;
     this.state.version = null;
     return this.refresh();
   }
   async locate() {
     if (this.override) return this.executable(this.override) ? this.override : null;
     if (this.found && this.executable(this.found)) return this.found;
+    if (Date.now() < (this.missingUntil ?? 0)) return null;
     this.found = this.candidates.find((path) => this.executable(path));
     if (!this.found && this.shell) {
       // Last resort for custom installs: ask the user's login shell.
@@ -183,6 +185,7 @@ export class ClaudeCode {
       const path = stdout.trim().split('\n').at(-1);
       if (path?.startsWith('/') && this.executable(path)) this.found = path;
     }
+    if (!this.found) this.missingUntil = Date.now() + 60000;
     return this.found ?? null;
   }
   options(binary) {
@@ -342,7 +345,9 @@ export class ClaudeCode {
       '1',
     ];
     if (instructions) args.push('--system-prompt', instructions);
-    const child = this.spawn(path, args, this.options(path));
+    const options = this.options(path);
+    signal?.throwIfAborted();
+    const child = this.spawn(path, args, options);
     let buffer = '',
       streamed = '',
       stderr = '',
@@ -372,6 +377,7 @@ export class ClaudeCode {
     };
     const abort = () => child.kill();
     signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
     try {
       const code = await new Promise((resolve, reject) => {
         child.stdout.setEncoding('utf8').on('data', (d) => {

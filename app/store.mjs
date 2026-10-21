@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 export const templates = [
@@ -64,6 +64,16 @@ const text = (value, max = 2_000_000) => {
   if (typeof value !== 'string' || value.length > max) throw new Error('Invalid text value.');
   return value;
 };
+const portableSettings = new Set([
+  'model',
+  'claudeModel',
+  'locale',
+  'echoCancellation',
+  'systemAudio',
+  'autoEnhance',
+  'templates',
+  'recipes',
+]);
 export class Store {
   constructor(dir) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -74,6 +84,18 @@ export class Store {
       CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY, scope TEXT NOT NULL, data TEXT NOT NULL);
       CREATE VIRTUAL TABLE IF NOT EXISTS meeting_search USING fts5(id UNINDEXED, title, content, tokenize='unicode61');`);
+    // Old indexes used unrelated FTS rowids. Rebuild once, atomically, from durable meetings.
+    if (this.db.prepare('PRAGMA user_version').get().user_version < 1) {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        this.db.exec('DELETE FROM meeting_search');
+        for (const m of this.all(true)) this.index(m);
+        this.db.exec('PRAGMA user_version=1; COMMIT');
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
+    }
   }
   all(includeTrash = false) {
     return this.db
@@ -88,7 +110,7 @@ export class Store {
     if (!r) throw new Error('Meeting not found.');
     return { recordings: [], transcriptVersions: [], ...JSON.parse(r.data) };
   }
-  create(input = {}) {
+  create(input = {}, transcript = []) {
     const now = new Date().toISOString();
     const m = {
       id: randomUUID(),
@@ -97,7 +119,7 @@ export class Store {
       updatedAt: now,
       notes: '',
       summary: '',
-      transcript: [],
+      transcript,
       folderId: null,
       templateId: 'general',
       participants: '',
@@ -115,15 +137,28 @@ export class Store {
     };
     return this.write(m);
   }
+  index(m) {
+    const { rowid } = this.db.prepare('SELECT rowid FROM meetings WHERE id=?').get(m.id);
+    this.db.prepare('DELETE FROM meeting_search WHERE rowid=?').run(rowid);
+    if (!m.deletedAt)
+      this.db
+        .prepare('INSERT INTO meeting_search(rowid,id,title,content) VALUES(?,?,?,?)')
+        .run(
+          rowid,
+          m.id,
+          m.title,
+          [m.notes, m.summary, ...m.transcript.map((s) => s.text)].join('\n'),
+        );
+  }
   write(m) {
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.db.prepare('INSERT OR REPLACE INTO meetings VALUES(?,?)').run(m.id, JSON.stringify(m));
-      this.db.prepare('DELETE FROM meeting_search WHERE id=?').run(m.id);
-      if (!m.deletedAt)
-        this.db
-          .prepare('INSERT INTO meeting_search(id,title,content) VALUES(?,?,?)')
-          .run(m.id, m.title, [m.notes, m.summary, ...m.transcript.map((s) => s.text)].join('\n'));
+      this.db
+        .prepare(
+          'INSERT INTO meetings VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data',
+        )
+        .run(m.id, JSON.stringify(m));
+      this.index(m);
       this.db.exec('COMMIT');
       return m;
     } catch (e) {
@@ -131,8 +166,13 @@ export class Store {
       throw e;
     }
   }
-  update(id, patch) {
+  update(id, patch, { summarySource = 'edited' } = {}) {
     const m = this.get(id);
+    const previous = {
+      text: m.summary,
+      at: m.summaryAt ?? m.updatedAt,
+      source: m.summarySource ?? 'ai',
+    };
     for (const k of ['title', 'notes', 'summary', 'participants', 'templateId'])
       if (k in patch) m[k] = text(patch[k], k === 'title' ? 300 : 2_000_000);
     if ('folderId' in patch) {
@@ -147,12 +187,30 @@ export class Store {
       m.duration = patch.duration;
     }
     if ('deletedAt' in patch) m.deletedAt = patch.deletedAt ? new Date().toISOString() : null;
-    if ('summary' in patch && m.summary !== this.get(id).summary) {
-      const old = this.get(id).summary;
-      if (old) m.versions = [{ text: old, at: m.updatedAt }, ...m.versions].slice(0, 20);
+    if (
+      'summary' in patch &&
+      (m.summary !== previous.text || patch.snapshotSummary === true || summarySource === 'ai')
+    ) {
+      if (
+        previous.text &&
+        (summarySource === 'ai' || patch.snapshotSummary === true || previous.source === 'ai')
+      )
+        m.versions = [{ text: previous.text, at: previous.at }, ...m.versions].slice(0, 20);
+      m.summarySource = summarySource;
+      m.summaryAt = new Date().toISOString();
     }
     m.updatedAt = new Date().toISOString();
     return this.write(m);
+  }
+  importFile(path, raw) {
+    if (typeof raw !== 'string' || raw.length > 30_000_000)
+      throw new Error('File exceeds the 30 MB import limit.');
+    if (extname(path).toLowerCase() === '.json') return { restored: this.restore(JSON.parse(raw)) };
+    if (raw.length > 2_000_000)
+      throw new Error('Transcript exceeds the 2,000,000-character import limit.');
+    const title = text(basename(path, extname(path)), 300);
+    const segment = { id: randomUUID(), text: raw, speaker: 'Imported transcript', timestamp: 0 };
+    return { meeting: this.create({ title }, [segment]) };
   }
   append(id, segment) {
     const m = this.get(id);
@@ -283,12 +341,17 @@ export class Store {
     return f;
   }
   settings() {
-    return Object.fromEntries(
-      this.db
-        .prepare('SELECT * FROM settings')
-        .all()
-        .map((r) => [r.key, JSON.parse(r.data)]),
-    );
+    return {
+      inputDevice: null,
+      echoCancellation: 'auto',
+      locale: 'en-US',
+      ...Object.fromEntries(
+        this.db
+          .prepare('SELECT * FROM settings')
+          .all()
+          .map((r) => [r.key, JSON.parse(r.data)]),
+      ),
+    };
   }
   setting(key, value) {
     validateSetting(key, value);
@@ -322,7 +385,9 @@ export class Store {
         })),
       })),
       folders: this.folders(),
-      settings: this.settings(),
+      settings: Object.fromEntries(
+        Object.entries(this.settings()).filter(([key]) => portableSettings.has(key)),
+      ),
       messages: this.db
         .prepare('SELECT scope,data FROM messages')
         .all()
@@ -380,6 +445,8 @@ export class Store {
             'versions',
           ].map((key) => [key, m[key]]),
         ),
+        summarySource: m.summarySource === 'edited' ? 'edited' : 'ai',
+        summaryAt: Number.isFinite(Date.parse(m.summaryAt)) ? m.summaryAt : m.updatedAt,
         transcript: m.transcript.map(({ id, text, speaker, timestamp }) => ({
           id,
           text,
@@ -408,10 +475,12 @@ export class Store {
       }
       return m;
     });
-    const settings = Object.entries(input.settings ?? {}).map(([key, value]) => {
-      validateSetting(key, value);
-      return [key, value];
-    });
+    const settings = Object.entries(input.settings ?? {})
+      .filter(([key]) => portableSettings.has(key))
+      .map(([key, value]) => {
+        validateSetting(key, value);
+        return [key, value];
+      });
     const additions = meetings.filter(
       (m) => !this.db.prepare('SELECT id FROM meetings WHERE id=?').get(m.id),
     );
@@ -421,14 +490,7 @@ export class Store {
         this.db.prepare('INSERT OR IGNORE INTO folders VALUES(?,?)').run(f.id, f.name);
       for (const m of additions) {
         this.db.prepare('INSERT INTO meetings VALUES(?,?)').run(m.id, JSON.stringify(m));
-        if (!m.deletedAt)
-          this.db
-            .prepare('INSERT INTO meeting_search VALUES(?,?,?)')
-            .run(
-              m.id,
-              m.title,
-              [m.notes, m.summary, ...m.transcript.map((s) => s.text)].join('\n'),
-            );
+        this.index(m);
       }
       for (const m of messages) {
         const { scope, ...data } = m;
@@ -451,9 +513,24 @@ export class Store {
     this.db.close();
   }
 }
-function validateSetting(key, value) {
-  if (['model', 'claudeModel', 'locale'].includes(key)) text(value, 300);
-  else if (key === 'provider') {
+export function validateSetting(key, value) {
+  if (['model', 'claudeModel'].includes(key)) text(value, 300);
+  else if (key === 'locale') {
+    if (typeof value !== 'string' || !/^[a-z]{2,3}(-[A-Za-z0-9]{2,8}){0,2}$/.test(value))
+      throw new Error('Invalid recognition language.');
+  } else if (key === 'inputDevice') {
+    if (
+      value !== null &&
+      (typeof value !== 'string' ||
+        !value.trim() ||
+        value.length > 1000 ||
+        /[\x00-\x1f]/.test(value))
+    )
+      throw new Error('Invalid input device.');
+  } else if (key === 'echoCancellation') {
+    if (!['auto', 'on', 'off'].includes(value))
+      throw new Error('Invalid echo cancellation preference.');
+  } else if (key === 'provider') {
     if (!['chatgpt', 'claude'].includes(value)) throw new Error('Invalid AI provider.');
   } else if (key === 'claudePath') {
     if (value !== null && !(typeof value === 'string' && /^\/.{1,999}$/s.test(value)))
@@ -473,25 +550,92 @@ function validateSetting(key, value) {
 export function markdown(m) {
   return `# ${m.title}\n\n${m.createdAt}\n${m.participants ? `\nParticipants: ${m.participants}\n` : ''}\n## My notes\n\n${m.notes}\n\n## Enhanced notes\n\n${m.summary}\n\n## Transcript\n\n${m.transcript.map((s) => `[${Math.floor(s.timestamp / 60)}:${String(Math.floor(s.timestamp % 60)).padStart(2, '0')}] ${s.speaker}: ${s.text}`).join('\n\n')}\n`;
 }
+function sourceBlock(m, number, transcript = true) {
+  return `SOURCE [${number}] meeting_id=${m.id}\n${JSON.stringify({
+    title: m.title,
+    date: m.createdAt,
+    notes: m.notes,
+    summary: m.summary,
+    ...(transcript
+      ? {
+          transcript: m.transcript.map((s) => ({
+            speaker: s.speaker,
+            time: s.timestamp,
+            text: s.text,
+          })),
+        }
+      : { transcriptOmitted: true }),
+  })}`;
+}
 export function context(meetings) {
+  const blocks = meetings.map((m, i) => sourceBlock(m, i + 1));
+  if (blocks.join('\n\n').length > 350000)
+    throw new Error(
+      `Meeting “${meetings.find((m, i) => blocks[i].length > 350000)?.title ?? meetings[0]?.title}” is too large for AI context (350,000 characters). Shorten its notes or transcript before trying again.`,
+    );
+  return blocks.join('\n\n');
+}
+export function chatContext(meetings, matches = [], { single = false, budget = 350000 } = {}) {
+  if (single) {
+    const source = context(meetings);
+    return {
+      source,
+      sources: meetings.map((m, i) => ({ id: m.id, title: m.title, number: i + 1 })),
+      context: { included: meetings.length, total: meetings.length },
+    };
+  }
+  const rank = new Map(matches.map((m, i) => [m.id, i]));
+  const ranked = [...meetings].sort(
+    (a, b) =>
+      (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity) ||
+      b.createdAt.localeCompare(a.createdAt) ||
+      a.id.localeCompare(b.id),
+  );
+  const included = new Map();
   let used = 0;
-  return meetings
-    .map((m, i) => {
-      const body = JSON.stringify({
-        title: m.title,
-        date: m.createdAt,
-        notes: m.notes,
-        summary: m.summary,
-        transcript: m.transcript.map((s) => ({
-          speaker: s.speaker,
-          time: s.timestamp,
-          text: s.text,
-        })),
-      });
-      used += body.length;
-      if (used > 350000)
-        throw new Error('This selection is too large. Choose fewer meetings or a smaller folder.');
-      return `SOURCE [${i + 1}] meeting_id=${m.id}\n${body}`;
-    })
-    .join('\n\n');
+  // Reserve summaries and notes before spending space on any full transcript.
+  for (const [i, m] of ranked.entries()) {
+    if (!(m.notes.trim() || m.summary.trim())) continue;
+    const block = sourceBlock(m, i + 1, false);
+    const cost = block.length + (included.size ? 2 : 0);
+    if (used + cost > budget) continue;
+    included.set(m.id, { m, block, full: false });
+    used += cost;
+  }
+  for (const [i, m] of ranked.entries()) {
+    const item = included.get(m.id);
+    if (!item && (m.notes.trim() || m.summary.trim())) continue;
+    const block = sourceBlock(m, i + 1);
+    const cost = item ? block.length - item.block.length : block.length + (included.size ? 2 : 0);
+    if (used + cost > budget) continue;
+    used += cost;
+    included.set(m.id, { m, block, full: true });
+  }
+  const selected = ranked.filter((m) => included.has(m.id));
+  return {
+    // Final numbering can only shorten the reserved blocks, never exceed the budget.
+    source: selected.map((m, i) => sourceBlock(m, i + 1, included.get(m.id).full)).join('\n\n'),
+    sources: selected.map((m, i) => ({ id: m.id, title: m.title, number: i + 1 })),
+    context: { included: selected.length, total: meetings.length },
+  };
+}
+
+export function chatHistory(messages, budget = 60000) {
+  const history = [];
+  let used = 0;
+  for (const m of messages.slice(-12).reverse()) {
+    const content =
+      m.role === 'assistant'
+        ? m.content.replace(/\[(\d+)\]/g, (match, number) => {
+            const previous = m.sources?.find((source) => source.number === Number(number));
+            return previous
+              ? `(previous source: ${previous.title}; meeting_id=${previous.id})`
+              : match;
+          })
+        : m.content;
+    if (used + content.length > budget) break;
+    used += content.length;
+    history.unshift({ role: m.role, content });
+  }
+  return history;
 }

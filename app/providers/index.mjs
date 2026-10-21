@@ -46,3 +46,24 @@ export function terminalScript(step, binary) {
     '',
   ].join('\n');
 }
+
+export function modelCache(ttl = 180000) {
+  const entries = new Map();
+  return {
+    clear() {
+      entries.clear();
+    },
+    async get(provider, key, savedModel) {
+      const cached = entries.get(key);
+      if (cached && cached.expires > Date.now()) return cached.value;
+      try {
+        const value = await provider.models();
+        entries.set(key, { value, expires: Date.now() + ttl });
+        return value;
+      } catch (error) {
+        if (savedModel) return [{ id: savedModel, name: savedModel }];
+        throw error;
+      }
+    },
+  };
+}

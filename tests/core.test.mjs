@@ -38,7 +38,7 @@ test('summary revisions and transcript corrections preserve source notes', (t) =
   const { s } = fixture(t);
   const m = s.create({ notes: 'Original rough notes' });
   s.update(m.id, { summary: 'First summary' });
-  s.update(m.id, { summary: 'Second summary' });
+  s.update(m.id, { summary: 'Second summary', snapshotSummary: true });
   assert.equal(s.get(m.id).versions[0].text, 'First summary');
   assert.equal(s.get(m.id).notes, 'Original rough notes');
   s.append(m.id, { text: 'wrong', speaker: 'Speaker', timestamp: 0 });

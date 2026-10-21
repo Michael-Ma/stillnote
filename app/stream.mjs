@@ -11,7 +11,7 @@ export async function consumeResponse(body, onDelta = () => {}) {
       .join('\n');
     if (!data || data === '[DONE]') return;
     const e = JSON.parse(data);
-    if (e.type === 'response.output_text.delta') {
+    if (e.type === 'response.output_text.delta' && typeof e.delta === 'string') {
       text += e.delta;
       onDelta(e.delta);
     }
