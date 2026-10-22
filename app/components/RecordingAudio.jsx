@@ -235,31 +235,65 @@ function Player({ meeting, recording, tracks, call }) {
       element.currentTime = Math.max(0, Math.min(element.duration || Infinity, t - offset));
     setPosition(t);
   };
+  // Each source starts a little after the recording (its startOffset). A source whose audio
+  // begins later than the play position starts on cue, while a clock keeps the scrubber moving.
+  const cues = useRef([]),
+    clock = useRef({ at: 0, from: 0 });
+  const clearCues = () => {
+    cues.current.forEach(clearTimeout);
+    cues.current = [];
+  };
+  const startAll = (from) => {
+    clearCues();
+    clock.current = { at: performance.now(), from };
+    for (const { element, offset } of all()) {
+      if (from >= offset) element.play().catch(() => {});
+      else {
+        const cue = setTimeout(
+          () => {
+            cues.current = cues.current.filter((id) => id !== cue);
+            element.play().catch(() => {});
+          },
+          (offset - from) * 1000,
+        );
+        cues.current.push(cue);
+      }
+    }
+  };
+  const pauseAll = () => {
+    clearCues();
+    all().forEach(({ element }) => element.pause());
+  };
   useEffect(() => {
     if (!playing) return;
     let frame;
     const tick = () => {
       const lead = all().find(({ element }) => !element.paused);
       if (lead) setPosition(lead.element.currentTime + lead.offset);
-      else setPlaying(false);
+      else if (cues.current.length)
+        setPosition(clock.current.from + (performance.now() - clock.current.at) / 1000);
+      else return setPlaying(false);
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [playing]);
-  useEffect(() => () => all().forEach(({ element }) => element.pause()), []);
-  const toggle = async () => {
+  useEffect(() => pauseAll, []);
+  const toggle = () => {
     if (playing) {
-      all().forEach(({ element }) => element.pause());
+      pauseAll();
       setPlaying(false);
       return;
     }
     const start = position >= total - 0.2 ? 0 : position;
     seek(start);
-    await Promise.allSettled(
-      all().map(({ element, offset }) => (start >= offset ? element.play() : null)),
-    );
+    startAll(start);
     setPlaying(true);
+  };
+  const scrub = (t) => {
+    if (playing) pauseAll();
+    seek(t);
+    if (playing) startAll(t);
   };
   return (
     <div className="player">
@@ -284,7 +318,7 @@ function Player({ meeting, recording, tracks, call }) {
           max={Math.max(total, 0.1)}
           step={0.1}
           value={Math.min(position, total)}
-          onChange={(e) => seek(Number(e.target.value))}
+          onChange={(e) => scrub(Number(e.target.value))}
           style={{ '--progress': `${total ? (position / total) * 100 : 0}%` }}
         />
         <span className="player-time">{duration(total)}</span>

@@ -291,6 +291,10 @@ export function createTestAdapter({ dataDir }) {
                 sampleRate: 16000,
                 channels: 1,
                 bytes: statSync(path).size,
+                // Real sources start a fraction of a second after the recording does.
+                ...(active.fixture.startOffsets?.[source] !== undefined
+                  ? { startOffset: active.fixture.startOffsets[source] }
+                  : {}),
               };
             },
           );

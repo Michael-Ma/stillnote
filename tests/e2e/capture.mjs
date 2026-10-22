@@ -11,6 +11,7 @@ export const captureScenario = {
     { mode: 'start-error' },
     { mode: 'normal', text: 'A second session appends without overwriting the first.' },
     { mode: 'system-unavailable' },
+    { mode: 'normal', startOffsets: { microphone: 0.6, system: 1 } },
   ],
 };
 
@@ -252,5 +253,28 @@ export async function capture(h) {
   await h.sheet('Recordings');
   await h.page.locator('audio[aria-label="Microphone recording"]').waitFor({ state: 'attached' });
   assert.equal(await h.page.locator('audio[aria-label="Meeting audio recording"]').count(), 0);
+
+  // Every source starts after 0:00, as on real hardware; Play from the start must still play.
+  const offset = await h.create('E2E offset playback');
+  await start(h);
+  const offsetSaved = await stop(h, offset.id, 1);
+  assert.deepEqual(
+    offsetSaved.recordings[0].tracks.map((track) => track.startOffset),
+    [0.6, 1],
+  );
+  await h.sheet('Recordings');
+  await h.page.waitForFunction(
+    () =>
+      document.querySelectorAll('audio').length === 2 &&
+      [...document.querySelectorAll('audio')].every((a) => a.readyState >= 1),
+  );
+  await h.page.evaluate(() => document.querySelectorAll('audio').forEach((a) => (a.muted = true)));
+  await h.page.getByRole('button', { name: 'Play recording', exact: true }).click();
+  await h.page.waitForFunction(
+    () => [...document.querySelectorAll('audio')].some((a) => !a.paused && a.currentTime > 0.05),
+    null,
+    { timeout: 4000 },
+  );
+  await h.page.getByRole('button', { name: 'Pause recording', exact: true }).click();
   h.assertNoRendererErrors();
 }
