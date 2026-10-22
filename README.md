@@ -14,7 +14,8 @@ Stillnote keeps the core loop small: **open a note → capture a conversation �
 - **A simple notebook:** autosaved rough notes, editable transcripts, folders, stars, search, and recoverable Trash.
 - **Enhanced notes:** combine your notes and transcript using a selected template. Previous summaries remain available. Optionally enhance automatically when recording ends.
 - **Meeting chat:** ask about one meeting, a folder, or your notebook. Source citations open the corresponding transcript. Apply a chat answer to your enhanced notes explicitly.
-- **Your calendar:** read meetings from accounts configured in Apple Calendar, including Google or Outlook accounts. Create a note from an event.
+- **Your calendar:** read meetings from accounts configured in Apple Calendar, including Google or Outlook accounts. Create a note from an event; each occurrence keeps one note.
+- **Meeting reminders:** once the calendar is connected, Stillnote refreshes it in the background and notifies you a minute before each timed meeting. Clicking the notification opens that meeting's note and starts recording (both switchable in **Settings › Recording**). Reminders appear while Stillnote is running.
 - **Local ownership:** SQLite storage, Markdown export, JSON backup/restore, and an optional read-only local MCP server.
 
 Team workspaces, cloud synchronization, public sharing links, mobile apps, CRM integrations, and automatic identification of every remote speaker are intentionally outside this version's scope.

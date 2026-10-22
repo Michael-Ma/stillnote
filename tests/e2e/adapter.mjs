@@ -69,7 +69,13 @@ export function createTestAdapter({ dataDir }) {
     writeFileSync(counterPath, JSON.stringify(counters));
     return value;
   };
+  // Reminders are recorded instead of shown; E2E clicks one through this main-process hook.
+  const reminders = (globalThis.__stillnoteReminders = []);
   return {
+    notify(reminder) {
+      log({ type: 'reminder', title: reminder.event.title, body: reminder.body });
+      reminders.push(reminder);
+    },
     createAuth() {
       writeFileSync(join(dataDir, 'adapter-auth-ready.json'), JSON.stringify({ synthetic: true }));
       let connected = scenario.connected !== false;
@@ -335,7 +341,16 @@ export function createTestAdapter({ dataDir }) {
             emit({ type: 'language-installed', locale: command.locale, installed });
           }
         }
-        if (command.op === 'calendar') emit({ type: 'calendar', events: [] });
+        if (command.op === 'calendar')
+          emit({
+            type: 'calendar',
+            // Fixture events start relative to the request, so reminders fall due during the test.
+            events: (scenario.calendar ?? []).map(({ startIn, minutes = 30, ...event }) => ({
+              ...event,
+              start: new Date(Date.now() + startIn).toISOString(),
+              end: new Date(Date.now() + startIn + minutes * 60_000).toISOString(),
+            })),
+          });
       }
       return child;
     },

@@ -52,6 +52,10 @@ All colors, type sizes and radii are CSS custom properties in `app/style.css`, w
 7. Chat → explicit scope and model → streamed answer → persisted message with source chips.
 8. Quota, network failure or cancellation → visible recovery message. Notes and the previous summary stay intact.
 
+## Meeting reminders
+
+Like Granola, a connected calendar produces a notification about a minute before each timed meeting (all-day events are skipped). Clicking it brings Stillnote forward, opens the note for that occurrence — creating it from the event's title and attendees the first time — and starts recording unless that is turned off in Settings › Recording. Each occurrence of a recurring meeting gets its own reminder and note; Coming up reopens the same note.
+
 ## AI providers in the UI
 
 The provider in use is always named: in the sidebar pill, the chat footer and Settings. A Claude Code installation that is detected but never chosen can answer when the user clicks Enhance or sends a chat message, and that first use records the choice. Automatic enhancement after a recording runs only for a provider the user has chosen or signed in to.

@@ -288,6 +288,32 @@ export function SettingsDialog({
                 onChange={(v) => guard(() => setting('systemAudio', v))}
               />
             </div>
+            <div className="setting-row">
+              <div>
+                <label htmlFor="meetingReminders">Meeting reminders</label>
+                <small>
+                  {data.settings.calendarConnected
+                    ? 'Notify me a minute before calendar meetings while Stillnote is open.'
+                    : 'Connect your calendar on Home to get a reminder before each meeting.'}
+                </small>
+              </div>
+              <Toggle
+                id="meetingReminders"
+                checked={data.settings.meetingReminders ?? true}
+                onChange={(v) => guard(() => setting('meetingReminders', v))}
+              />
+            </div>
+            <div className="setting-row">
+              <div>
+                <label htmlFor="reminderAutoRecord">Start recording from a reminder</label>
+                <small>Clicking a reminder opens the meeting’s note and starts recording.</small>
+              </div>
+              <Toggle
+                id="reminderAutoRecord"
+                checked={data.settings.reminderAutoRecord ?? true}
+                onChange={(v) => guard(() => setting('reminderAutoRecord', v))}
+              />
+            </div>
             <p className="settings-foot">
               Your microphone is labeled “You” and other apps “Meeting audio”. Individual remote
               speakers are not identified. Let participants know when you record.

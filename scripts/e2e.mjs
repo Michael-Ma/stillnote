@@ -7,6 +7,7 @@ import { notebook } from '../tests/e2e/notebook.mjs';
 import { capture, captureScenario } from '../tests/e2e/capture.mjs';
 import { ai, aiScenario } from '../tests/e2e/ai.mjs';
 import { recovery } from '../tests/e2e/recovery.mjs';
+import { reminders, remindersScenario } from '../tests/e2e/reminders.mjs';
 
 const args = process.argv.slice(2);
 const option = (name) => {
@@ -18,7 +19,7 @@ const option = (name) => {
 };
 if (args.includes('--help')) {
   console.log(
-    'Usage: node scripts/e2e.mjs [--suite notebook|capture|ai|recovery|all] [--no-build] [--output path]\nRuns deterministic Electron E2E tests with synthetic audio and AI. No real account or device is used.',
+    'Usage: node scripts/e2e.mjs [--suite notebook|capture|ai|recovery|reminders|all] [--no-build] [--output path]\nRuns deterministic Electron E2E tests with synthetic audio and AI. No real account or device is used.',
   );
   process.exit(0);
 }
@@ -26,6 +27,18 @@ const runId = new Date().toISOString().replace(/[:.]/g, '-');
 const output = resolve(option('--output') ?? join(root, 'output/e2e', runId));
 mkdirSync(output, { recursive: true });
 const suites = {
+  reminders: {
+    run: reminders,
+    scenario: remindersScenario,
+    checks: [
+      'calendar connection persisted',
+      'only timed, starting meetings announced',
+      'reminder opens a linked note and records',
+      'no duplicate reminder',
+      'Coming up reuses the linked note',
+      'auto-record can be turned off',
+    ],
+  },
   recovery: {
     run: recovery,
     scenario: {},

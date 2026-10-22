@@ -26,6 +26,7 @@ import {
   validateSetting,
 } from './store.mjs';
 import { ChatGPT } from './auth.mjs';
+import { dueReminders, eventKey, meetingForEvent, reminderBody } from './reminders.mjs';
 import { ClaudeCode } from './providers/claude-code.mjs';
 import {
   aiState,
@@ -285,11 +286,14 @@ if (!app.requestSingleInstanceLock()) {
             },
           };
         }
+        // Background refreshes must not surface calendar errors in the UI.
+        const muted = e.type === 'error' && e.op === 'calendar' && calendarWait?.quiet;
         let completed;
         if (e.type === 'stopped')
           completed = finishCapture(e.status === 'failed' ? 'failed' : 'completed', e);
         if (e.type === 'calendar') {
           calendarEvents = e.events;
+          if (!store.settings().calendarConnected) store.setting('calendarConnected', true);
           calendarWait?.resolve(e.events);
           calendarWait = undefined;
         }
@@ -311,7 +315,7 @@ if (!app.requestSingleInstanceLock()) {
           )
             finishCapture('startfailed', e);
         }
-        emit({ ...e, recording });
+        if (!muted) emit({ ...e, recording });
         if (
           completed &&
           e.status !== 'failed' &&
@@ -375,6 +379,27 @@ if (!app.requestSingleInstanceLock()) {
     return child;
   }
   const send = (obj) => helper().stdin.write(JSON.stringify(obj) + '\n');
+  function loadCalendar({ quiet = false } = {}) {
+    if (calendarWait) return Promise.reject(new Error('Calendar is already loading.'));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        calendarWait = undefined;
+        reject(new Error('Calendar access timed out. Check macOS permissions.'));
+      }, 60000);
+      calendarWait = {
+        quiet,
+        resolve: (r) => {
+          clearTimeout(timer);
+          resolve(r);
+        },
+        reject: (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      };
+      send({ op: 'calendar' });
+    });
+  }
   function register(name, fn) {
     ipcMain.handle('stillnote:' + name, async (event, ...args) => {
       if (
@@ -780,26 +805,7 @@ if (!app.requestSingleInstanceLock()) {
         emit({ type: 'meeting', meeting: updated });
         return updated;
       });
-      register('calendar', () => {
-        if (calendarWait) throw new Error('Calendar is already loading.');
-        return new Promise((resolve, reject) => {
-          const timer = setTimeout(() => {
-            calendarWait = undefined;
-            reject(new Error('Calendar access timed out. Check macOS permissions.'));
-          }, 60000);
-          calendarWait = {
-            resolve: (r) => {
-              clearTimeout(timer);
-              resolve(r);
-            },
-            reject: (e) => {
-              clearTimeout(timer);
-              reject(e);
-            },
-          };
-          send({ op: 'calendar' });
-        });
-      });
+      register('calendar', () => loadCalendar());
       register('account', async (action, id) => {
         if (activeAI) throw new Error('Stop the current AI response before changing accounts.');
         if (action !== 'models') models.clear();
@@ -970,20 +976,66 @@ if (!app.requestSingleInstanceLock()) {
       });
       app.on('window-all-closed', () => app.quit());
       await win.loadFile(join(root, 'dist/index.html'));
-      const reminded = new Set();
-      setInterval(() => {
-        const now = Date.now();
-        for (const e of calendarEvents) {
-          const diff = Date.parse(e.start) - now;
-          if (diff > 0 && diff <= 60000 && !reminded.has(e.id) && Notification.isSupported()) {
-            reminded.add(e.id);
-            new Notification({
-              title: e.title,
-              body: 'Your meeting starts in one minute. Open Stillnote to take notes.',
-            }).show();
+      // Granola-style reminders: refresh a connected calendar in the background, announce each
+      // occurrence shortly before it starts, and open (or create) its note on click.
+      const announced = new Set(),
+        shown = new Set();
+      const openFromReminder = (event) => {
+        if (!win || win.isDestroyed()) return;
+        if (win.isMinimized()) win.restore();
+        win.show();
+        app.focus({ steal: true });
+        const key = eventKey(event);
+        const meeting =
+          meetingForEvent(store.all(), key) ??
+          store.create({
+            title: event.title,
+            participants: event.participants ?? '',
+            notes: event.notes ? `Meeting context\n${event.notes}` : '',
+            eventKey: key,
+          });
+        emit({ type: 'meeting', meeting });
+        emit({
+          type: 'open-meeting',
+          id: meeting.id,
+          record:
+            store.settings().reminderAutoRecord !== false &&
+            !recording &&
+            !starting &&
+            !stopping &&
+            !transcriptionWait,
+        });
+      };
+      const remind = () => {
+        const settings = store.settings();
+        if (settings.meetingReminders === false) return;
+        for (const event of dueReminders(calendarEvents, Date.now(), announced)) {
+          announced.add(eventKey(event));
+          const body = reminderBody(event, Date.now(), settings.reminderAutoRecord !== false);
+          if (testAdapter) {
+            testAdapter.notify?.({ event, body, open: () => openFromReminder(event) });
+            continue;
           }
+          if (!Notification.isSupported()) continue;
+          // Keep a reference so the click handler survives garbage collection.
+          const notification = new Notification({ title: event.title, body });
+          shown.add(notification);
+          notification.on('click', () => {
+            shown.delete(notification);
+            openFromReminder(event);
+          });
+          notification.on('close', () => shown.delete(notification));
+          notification.show();
         }
-      }, 30000).unref();
+      };
+      const refreshCalendar = () => {
+        const settings = store.settings();
+        if (settings.calendarConnected && settings.meetingReminders !== false && !calendarWait)
+          loadCalendar({ quiet: true }).catch(() => {});
+      };
+      refreshCalendar();
+      setInterval(refreshCalendar, 5 * 60_000).unref();
+      setInterval(remind, testAdapter ? 250 : 15_000).unref();
     })
     .catch((error) => {
       dialog.showErrorBox('Stillnote could not start', error.message);

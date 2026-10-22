@@ -1,6 +1,7 @@
 import React from 'react';
 import { CalendarDays, FileText, LoaderCircle, Plus, RefreshCw, Star } from 'lucide-react';
 import { dayLabel, time } from '../format.mjs';
+import { eventKey } from '../reminders.mjs';
 import { IconButton } from './Content.jsx';
 
 // "11:30 AM" with a quieter meridiem, as in Granola's lists.
@@ -100,6 +101,7 @@ export function HomeFeed({
                               title: e.title,
                               participants: e.participants,
                               notes: e.notes ? `Meeting context\n${e.notes}` : '',
+                              eventKey: eventKey(e),
                             })
                           }
                         >

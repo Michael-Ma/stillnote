@@ -1832,7 +1832,7 @@ func calendar() async throws {
       "start": ISO8601DateFormatter().string(from: e.startDate),
       "end": ISO8601DateFormatter().string(from: e.endDate),
       "participants": (e.attendees ?? []).compactMap { $0.name }.joined(separator: ", "),
-      "location": e.location ?? "", "notes": e.notes ?? "",
+      "location": e.location ?? "", "notes": e.notes ?? "", "allDay": e.isAllDay,
     ]
   }
   emit(["type": "calendar", "events": rows])

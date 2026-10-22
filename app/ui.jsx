@@ -10,6 +10,7 @@ import { TranscriptSheet } from './components/TranscriptSheet.jsx';
 import { ChatPanel } from './components/ChatPanel.jsx';
 import { SettingsDialog } from './components/SettingsDialog.jsx';
 import { aiView, claudeModels, modelKey } from './ai-view.mjs';
+import { meetingForEvent } from './reminders.mjs';
 import { cleanError, date, time, duration, silentState } from './format.mjs';
 import './style.css';
 import stillnoteIcon from '../assets/icon-small.png';
@@ -123,6 +124,20 @@ function App() {
       }
       if (e.type === 'ai') setData((d) => (d ? { ...d, ai: e.ai } : d));
       if (e.type === 'meeting') updateMeeting(e.meeting);
+      if (e.type === 'calendar') setData((d) => (d ? { ...d, calendar: e.events } : d));
+      // A clicked meeting reminder: open its note and, if enabled, start recording.
+      if (e.type === 'open-meeting')
+        guard(async () => {
+          await flushAll();
+          setSelected(e.id);
+          setView('all');
+          setQuery('');
+          setTab('notes');
+          setSheet(null);
+          setChatOpen(false);
+          setEditingSummary(false);
+          if (e.record) await record(e.id);
+        });
       if (e.type === 'audio-level')
         setAudioLevels((levels) => ({ ...levels, [e.source]: { ...e, receivedAt: Date.now() } }));
       if (e.type === 'recording-status') {
@@ -290,6 +305,9 @@ function App() {
     });
   }
   async function newNote(input = {}) {
+    // A calendar occurrence keeps one note: opening it again returns to that note.
+    const existing = input.eventKey && meetingForEvent(data?.meetings, input.eventKey);
+    if (existing) return openNote(existing);
     await guard(async () => {
       await flushAll();
       const m = await call('create', input);
@@ -446,13 +464,13 @@ function App() {
       } else setNotice(`Imported ${r.restored} new meetings. Existing meetings were preserved.`);
     });
   }
-  async function record() {
+  async function record(meetingId = selected) {
     await guard(async () => {
       await flushAll();
       setElapsed(0);
       setAudioLevels({});
       setCaptureSources({});
-      const r = await call('record', selected);
+      const r = await call('record', meetingId);
       setData((d) => ({ ...d, recording: r, starting: true }));
       setTab('notes');
     });
@@ -869,7 +887,7 @@ function App() {
                       level={level}
                       sheetOpen={!!sheet}
                       disabled={!!data.recording || !!retryingRecording}
-                      onStart={record}
+                      onStart={() => record()}
                       onStop={() => guard(() => call('stop'))}
                       onToggleSheet={() => setSheet((s) => (s ? null : 'transcript'))}
                     />

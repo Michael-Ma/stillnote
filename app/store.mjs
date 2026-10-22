@@ -71,6 +71,8 @@ const portableSettings = new Set([
   'echoCancellation',
   'systemAudio',
   'autoEnhance',
+  'meetingReminders',
+  'reminderAutoRecord',
   'templates',
   'recipes',
 ]);
@@ -134,6 +136,8 @@ export class Store {
           .filter((k) => typeof input[k] === 'string')
           .map((k) => [k, text(input[k])]),
       ),
+      // The calendar occurrence this note belongs to (see app/reminders.mjs eventKey).
+      ...(typeof input.eventKey === 'string' ? { eventKey: text(input.eventKey, 1100) } : {}),
     };
     return this.write(m);
   }
@@ -535,7 +539,15 @@ export function validateSetting(key, value) {
   } else if (key === 'claudePath') {
     if (value !== null && !(typeof value === 'string' && /^\/.{1,999}$/s.test(value)))
       throw new Error('Invalid Claude Code path.');
-  } else if (['systemAudio', 'autoEnhance'].includes(key)) {
+  } else if (
+    [
+      'systemAudio',
+      'autoEnhance',
+      'meetingReminders',
+      'reminderAutoRecord',
+      'calendarConnected',
+    ].includes(key)
+  ) {
     if (typeof value !== 'boolean') throw new Error('Invalid preference.');
   } else if (['templates', 'recipes'].includes(key)) {
     if (!Array.isArray(value)) throw new Error('Invalid templates or recipes.');
