@@ -4,7 +4,9 @@ A local macOS meeting notebook inspired by Granola, powered by your ChatGPT or C
 
 Stillnote keeps the core loop small: **open a note → capture a conversation → jot down what matters → enhance the notes → ask follow-up questions**. Its home feed, focused document view, and bottom recording/chat dock follow Granola's interaction patterns. It is an independent project, not an official Granola client.
 
-![Stillnote home screen with fictional demonstration meetings](docs/images/home.png)
+![Stillnote demo: rough notes during a recording, enhanced notes when it stops, then a cited answer from meeting chat](docs/images/demo.gif)
+
+<sub>Real app, fictional meeting: the demo and screenshots below run on test fixtures, so no account, microphone or notebook of anyone's is involved. Regenerate them with `npm run screenshots -- --demo`.</sub>
 
 ## Core capabilities
 
@@ -17,6 +19,19 @@ Stillnote keeps the core loop small: **open a note → capture a conversation �
 - **Your calendar:** read meetings from accounts configured in Apple Calendar, including Google or Outlook accounts. Create a note from an event; each occurrence keeps one note.
 - **Meeting reminders:** once the calendar is connected, Stillnote refreshes it in the background and notifies you a minute before each timed meeting. Clicking the notification opens that meeting's note and starts recording (both switchable in **Settings › Recording**). Reminders appear while Stillnote is running.
 - **Local ownership:** SQLite storage, Markdown export, JSON backup/restore, and an optional read-only local MCP server.
+
+## Screenshots
+
+| | |
+| --- | --- |
+| ![Home: upcoming calendar meetings above recent notes](docs/images/home.png) | ![Live transcript while recording, with microphone and meeting audio labeled separately](docs/images/recording.png) |
+| **Home.** Upcoming meetings from your calendar, then recent notes by day. | **Recording.** Write rough notes while the on-device transcript fills in. |
+| ![Enhanced notes: the user's own points in dark text, AI additions in lighter text, each with a transcript citation](docs/images/note.png) | ![Meeting chat answering "What did we decide?" with a source citation](docs/images/chat.png) |
+| **Enhanced notes.** Your own points stay dark; additions are lighter and cite the transcript. | **Chat.** Ask a meeting, a folder or the notebook; answers link back to sources. |
+| ![Recordings tab with separate microphone and meeting-audio players](docs/images/recordings.png) | ![Settings showing Claude in use with plan usage, and ChatGPT connected](docs/images/settings-ai.png) |
+| **Recordings.** Replay each source, or retry transcription from the saved audio. | **AI provider.** Use your Claude or ChatGPT plan; usage shows next to it. |
+| ![Recording settings: microphone, echo cancellation, language, meeting audio and reminders](docs/images/settings-recording.png) | ![Home in dark mode](docs/images/home-dark.png) |
+| **Recording settings.** Microphone, meeting language, meeting audio and reminders. | **Dark mode.** Follows macOS appearance. |
 
 Team workspaces, cloud synchronization, public sharing links, mobile apps, CRM integrations, and automatic identification of every remote speaker are intentionally outside this version's scope.
 
@@ -67,11 +82,11 @@ Stillnote runs your own, unmodified `claude` program in print mode with tools, M
 
 ## Take your first note
 
-1. Choose **Quick note**, or connect your Mac calendars and select a meeting.
-2. Press the waveform button at the bottom to start recording.
+1. Choose **New note**, or connect your Mac calendars and select a meeting under **Coming up**.
+2. Press **Record** in the dock at the bottom.
 3. Grant **Microphone**, **Speech Recognition**, and, for meeting audio, **Screen & System Audio Recording** access in macOS.
 4. Write a few notes while the transcript accumulates.
-5. Choose **Finish meeting**. Open **Recordings** to listen to the saved sources or retry transcription. If ChatGPT or Claude is connected and automatic enhancement is enabled, Stillnote enhances notes unless transcript coverage looks sparse. You can also choose **Enhance notes** later. Rough notes are optional.
+5. Press the stop button in the dock. Open the transcript sheet's **Recordings** tab to listen to the saved sources or retry transcription. If ChatGPT or Claude is connected and automatic enhancement is enabled, Stillnote enhances notes unless transcript coverage looks sparse. You can also choose **Enhance notes** later. Rough notes are optional.
 
 Choose the microphone and meeting language in **Settings › Recording**. On macOS 26 and later, languages such as Chinese (Mandarin, Taiwan, Hong Kong), Cantonese, Japanese and Korean download inside Stillnote; on earlier versions, install the language for Dictation in macOS Settings. If a source stays silent during a recording, the dock says so and links to the microphone setting. Plugging or unplugging a headset mid-meeting restarts the input automatically. Audio capture continues even when recognition is unavailable, and Stillnote never switches to a cloud transcription service.
 
@@ -104,6 +119,7 @@ npm run test:native -- --long --recognize --streamed --dual-source # both source
 npm run format:check     # source formatting
 npm run build            # Swift helper, Electron main/preload, and renderer
 npm run package          # standalone macOS app
+npm run screenshots      # README screenshots from fictional fixtures; add `-- --demo` for the GIF
 ```
 
 The desktop test exercises real persistence, transcript editing, folder assignment, stars, search, Trash/restore, Markdown export, immediate-close draft saving, and sign-in error recovery. The deterministic E2E suite replaces device, ChatGPT and Claude transports, but exercises the real renderer, IPC, SQLite, media protocol, seeking, decoded playback, and restart recovery. Native file dialogs are stubbed for import/export. The separate native tests use synthesized speech and the real audio writer; recognition is opt-in. No automatic test records a real meeting or accesses a real ChatGPT or Claude account; Claude provider tests drive a fake `claude` program.
@@ -121,5 +137,3 @@ See [validation results and remaining checks](docs/VALIDATION.md) for the eviden
 - [Follow-up code review and reproduced failure](docs/CODE-REVIEW.md)
 - [Validation and limitations](docs/VALIDATION.md)
 - [Optional local MCP integration](docs/MCP.md)
-
-![Stillnote meeting editor](docs/images/editor.png)

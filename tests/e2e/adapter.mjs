@@ -38,6 +38,22 @@ export function wav(seconds = 2, frequency = 440) {
   return buffer;
 }
 
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+
+// Demo pacing: a few words per delta, so streamed text appears the way a real model's does.
+function pacedChunks(text) {
+  const words = text.match(/\S+\s*/g) ?? [];
+  const deltas = [];
+  for (let i = 0; i < words.length; i += 3)
+    deltas.push(
+      `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: words.slice(i, i + 3).join('') })}\n\n`,
+    );
+  return [
+    ...deltas,
+    'data: {"type":"response.completed","response":{"status":"completed"}}\n\n',
+  ].map((chunk) => Buffer.from(chunk));
+}
+
 function responseChunks(mode, text) {
   const delta = `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: text })}\r\n\r\n`;
   const complete = 'data: {"type":"response.completed","response":{"status":"completed"}}\n\n';
@@ -69,6 +85,9 @@ export function createTestAdapter({ dataDir }) {
     writeFileSync(counterPath, JSON.stringify(counters));
     return value;
   };
+  const devices = scenario.devices ?? [
+    { uid: 'fixture-mic', name: 'Fixture microphone', isDefault: true, transport: 'built-in' },
+  ];
   // Reminders are recorded instead of shown; E2E clicks one through this main-process hook.
   const reminders = (globalThis.__stillnoteReminders = []);
   return {
@@ -107,256 +126,298 @@ export function createTestAdapter({ dataDir }) {
           if (!connected) throw new Error('Connect your ChatGPT account in Settings to use AI.');
           return [{ id: 'fixture-model', name: 'Fixture model' }];
         },
-        async respond({ input, onDelta, signal }) {
-          const item = scenario.responses?.[next('response')] ?? { mode: 'success' };
-          log({ type: 'ai-request', mode: item.mode, input });
-          if (item.mode === 'wait-for-cancel') {
-            onDelta('Unfinished fixture response');
-            await new Promise((_, reject) => {
-              if (signal.aborted) reject(signal.reason);
-              else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-            });
-          }
-          const chunks = responseChunks(
-            item.mode,
-            item.text ?? 'Alex will ship the revised onboarding flow on Friday. [1]',
-          );
-          const body = (async function* () {
-            for (const chunk of chunks) {
-              signal.throwIfAborted();
-              yield chunk;
-            }
-          })();
-          return consumeResponse(body, onDelta);
-        },
+        respond: (request) => respondFixture(request),
       };
     },
-    // Never runs the developer's own Claude Code. scenario.claude overrides the status.
+    // Never runs the developer's own Claude Code. scenario.claude overrides the status; a ready
+    // fixture answers from scenario.responses like the ChatGPT fixture.
     createClaude() {
-      const fixture = {
-        id: 'claude',
-        label: 'Claude',
-        installed: false,
-        checking: false,
-        path: null,
-        version: null,
-        loggedIn: false,
-        authMethod: null,
-        subscriptionType: null,
-        email: null,
-        ready: false,
-        billing: null,
-        usage: null,
-        signingIn: false,
-        loginUrl: null,
-        error: null,
-        ...scenario.claude,
-      };
-      const status = () => ({ ...fixture });
-      return {
-        load() {},
-        refresh: async () => status(),
-        setPath: async () => status(),
-        status,
-        cancel() {},
-        disconnect: status,
-        async signIn() {
-          throw new Error('Fixture Claude sign-in is unavailable.');
-        },
-        models: async () => claudeModels,
-        async respond() {
-          log({ type: 'claude-request' });
-          throw new Error('Fixture Claude responses are not configured.');
-        },
-      };
+      return createClaudeFixture();
     },
-    createNative() {
-      const child = new EventEmitter();
-      child.stdout = new PassThrough();
-      child.stderr = new PassThrough();
-      const emit = (value) => {
-        log(value);
-        child.stdout.write(JSON.stringify(value) + '\n');
-      };
-      let active;
-      let installed = ['en-US'];
-      let input = '';
-      child.stdin = new Writable({
-        write(chunk, _encoding, callback) {
-          input += chunk.toString();
-          let newline;
-          while ((newline = input.indexOf('\n')) !== -1) {
-            const command = JSON.parse(input.slice(0, newline));
-            input = input.slice(newline + 1);
-            log({ type: 'native-command', ...command });
-            // Real helper output arrives asynchronously after record IPC returns.
-            setImmediate(() => handle(command));
-          }
-          callback();
-        },
-        final(callback) {
-          setImmediate(() => child.emit('close', 0));
-          callback();
-        },
+    createNative,
+  };
+  async function respondFixture({ input, onDelta, signal }) {
+    const item = scenario.responses?.[next('response')] ?? { mode: 'success' };
+    log({ type: 'ai-request', mode: item.mode, input });
+    if (item.mode === 'wait-for-cancel') {
+      onDelta('Unfinished fixture response');
+      await new Promise((_, reject) => {
+        if (signal.aborted) reject(signal.reason);
+        else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
       });
-      child.kill = () => child.emit('close', 0);
-      function handle(command) {
-        if (command.op === 'start') {
-          const fixture = scenario.sessions?.[next('session')] ?? { mode: 'normal' };
-          if (fixture.mode === 'start-error') {
-            emit({ type: 'error', message: 'Fixture microphone permission denied.' });
-            return;
-          }
-          active = {
-            ...command,
-            fixture,
-            systemAudio: command.systemAudio && fixture.mode !== 'system-unavailable',
-          };
-          emit({
-            type: 'started',
-            systemAudio: active.systemAudio,
-            engine: 'speechTranscriber',
-            echoCancellation: command.echoCancellation !== 'off',
-            sources: {
-              microphone: {
-                status: 'recording',
-                device: { uid: command.inputDevice ?? 'fixture-mic', name: 'Fixture microphone' },
-              },
-              system: {
-                status: active.systemAudio
-                  ? 'recording'
-                  : command.systemAudio
-                    ? 'unavailable'
-                    : 'disabled',
+    }
+    const text = item.text ?? 'Alex will ship the revised onboarding flow on Friday. [1]';
+    const chunks = item.paceMs ? pacedChunks(text) : responseChunks(item.mode, text);
+    const body = (async function* () {
+      for (const chunk of chunks) {
+        signal.throwIfAborted();
+        if (item.paceMs) await sleep(item.paceMs);
+        yield chunk;
+      }
+    })();
+    return consumeResponse(body, onDelta);
+  }
+  function createClaudeFixture() {
+    const fixture = {
+      id: 'claude',
+      label: 'Claude',
+      installed: false,
+      checking: false,
+      path: null,
+      version: null,
+      loggedIn: false,
+      authMethod: null,
+      subscriptionType: null,
+      email: null,
+      ready: false,
+      billing: null,
+      usage: null,
+      signingIn: false,
+      loginUrl: null,
+      error: null,
+      ...scenario.claude,
+    };
+    const status = () => ({ ...fixture });
+    return {
+      load() {},
+      refresh: async () => status(),
+      setPath: async () => status(),
+      status,
+      cancel() {},
+      disconnect: status,
+      async signIn() {
+        throw new Error('Fixture Claude sign-in is unavailable.');
+      },
+      models: async () => claudeModels,
+      async respond(request) {
+        log({ type: 'claude-request' });
+        if (!fixture.ready) throw new Error('Fixture Claude responses are not configured.');
+        return respondFixture(request);
+      },
+    };
+  }
+  function createNative() {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    const emit = (value) => {
+      log(value);
+      child.stdout.write(JSON.stringify(value) + '\n');
+    };
+    let active;
+    let installed = ['en-US'];
+    let input = '';
+    child.stdin = new Writable({
+      write(chunk, _encoding, callback) {
+        input += chunk.toString();
+        let newline;
+        while ((newline = input.indexOf('\n')) !== -1) {
+          const command = JSON.parse(input.slice(0, newline));
+          input = input.slice(newline + 1);
+          log({ type: 'native-command', ...command });
+          // Real helper output arrives asynchronously after record IPC returns.
+          setImmediate(() => handle(command));
+        }
+        callback();
+      },
+      final(callback) {
+        setImmediate(() => child.emit('close', 0));
+        callback();
+      },
+    });
+    child.kill = () => child.emit('close', 0);
+    function handle(command) {
+      if (command.op === 'start') {
+        const fixture = scenario.sessions?.[next('session')] ?? { mode: 'normal' };
+        if (fixture.mode === 'start-error') {
+          emit({ type: 'error', message: 'Fixture microphone permission denied.' });
+          return;
+        }
+        active = {
+          ...command,
+          fixture,
+          systemAudio: command.systemAudio && fixture.mode !== 'system-unavailable',
+        };
+        emit({
+          type: 'started',
+          systemAudio: active.systemAudio,
+          engine: 'speechTranscriber',
+          echoCancellation: command.echoCancellation !== 'off',
+          sources: {
+            microphone: {
+              status: 'recording',
+              device: {
+                uid: command.inputDevice ?? devices[0].uid,
+                name: (devices.find((d) => d.uid === command.inputDevice) ?? devices[0]).name,
               },
             },
+            system: {
+              status: active.systemAudio
+                ? 'recording'
+                : command.systemAudio
+                  ? 'unavailable'
+                  : 'disabled',
+            },
+          },
+        });
+        emit({ type: 'audio-level', source: 'microphone', rms: 0.1, peak: 0.2, seconds: 2 });
+        // Demo pacing: scripted lines arrive over time and the level meters keep moving.
+        if (fixture.script) {
+          const timers = (active.timers = []);
+          const { recordingId } = command;
+          let tick = 0;
+          timers.push(
+            setInterval(() => {
+              tick++;
+              const rms = 0.03 + 0.12 * Math.abs(Math.sin(tick * 0.9) * Math.sin(tick * 0.31));
+              for (const source of active.systemAudio ? ['microphone', 'system'] : ['microphone'])
+                emit({ type: 'audio-level', recordingId, source, rms, peak: rms * 2 });
+            }, 150),
+          );
+          fixture.script.forEach((line, index) => {
+            const event = {
+              recordingId,
+              segmentId: `script-${index}`,
+              source: line.source ?? 'microphone',
+              speaker: line.speaker ?? 'You',
+              timestamp: line.at ?? index * 4,
+            };
+            const words = line.text.split(' ');
+            const half = words.slice(0, Math.ceil(words.length / 2)).join(' ');
+            timers.push(
+              setTimeout(
+                () => emit({ type: 'partial', ...event, text: half }),
+                Math.max(0, line.afterMs - 700),
+              ),
+              setTimeout(() => emit({ type: 'segment', ...event, text: line.text }), line.afterMs),
+            );
           });
-          emit({ type: 'audio-level', source: 'microphone', rms: 0.1, peak: 0.2, seconds: 2 });
-          if (fixture.mode === 'normal') {
+        }
+        if (fixture.mode === 'normal') {
+          emit({
+            type: 'segment',
+            speaker: 'You',
+            source: 'microphone',
+            text: fixture.text ?? 'Alex will ship the revised onboarding flow on Friday.',
+            timestamp: 0,
+          });
+          if (command.systemAudio)
             emit({
               type: 'segment',
-              speaker: 'You',
-              source: 'microphone',
-              text: fixture.text ?? 'Alex will ship the revised onboarding flow on Friday.',
-              timestamp: 0,
-            });
-            if (command.systemAudio)
-              emit({
-                type: 'segment',
-                speaker: 'Meeting audio',
-                source: 'system',
-                text: 'Sam confirms the acceptance criteria.',
-                timestamp: 0.5,
-              });
-          }
-          if (fixture.mode === 'partial') {
-            emit({ type: 'partial', speaker: 'You', text: 'A partially recognized', timestamp: 0 });
-            emit({
-              type: 'partial',
-              speaker: 'You',
-              text: 'A partially recognized sentence survives stop.',
-              timestamp: 0,
-            });
-          }
-          if (fixture.mode === 'recognition-error')
-            emit({
-              type: 'warning',
-              message: 'Fixture speech recognition unavailable. Raw audio continues recording.',
-            });
-          if (fixture.mode === 'system-unavailable')
-            emit({
-              type: 'warning',
-              message: 'Fixture meeting audio unavailable. Microphone capture continues.',
+              speaker: 'Meeting audio',
+              source: 'system',
+              text: 'Sam confirms the acceptance criteria.',
+              timestamp: 0.5,
             });
         }
-        if (command.op === 'start' && active)
-          for (const event of active.fixture.events ?? [])
-            emit({ ...event, recordingId: command.recordingId });
-        if (command.op === 'stop') {
-          if (!active) {
-            emit({ type: 'stopped', duration: 0 });
-            return;
-          }
-          const duration = active.fixture.duration ?? 2;
-          mkdirSync(active.audioDir, { recursive: true });
-          const tracks = (active.systemAudio ? ['microphone', 'system'] : ['microphone']).map(
-            (source) => {
-              const fileName = source + '.wav';
-              const path = join(active.audioDir, fileName);
-              writeFileSync(path, wav(duration, source === 'system' ? 660 : 440));
-              return {
-                source,
-                fileName,
-                duration,
-                sampleRate: 16000,
-                channels: 1,
-                bytes: statSync(path).size,
-                // Real sources start a fraction of a second after the recording does.
-                ...(active.fixture.startOffsets?.[source] !== undefined
-                  ? { startOffset: active.fixture.startOffsets[source] }
-                  : {}),
-              };
-            },
-          );
-          active = undefined;
-          emit({ type: 'stopped', duration, audio: { tracks, diagnostics: { fixture: true } } });
-        }
-        if (command.op === 'transcribe') {
-          const segments = [
-            {
-              source: 'microphone',
-              speaker: 'You',
-              text: 'Recovered complete fixture sentence from saved audio.',
-              timestamp: 0,
-            },
-          ];
-          emit({ type: 'retranscription-completed', recordingId: command.recordingId, segments });
-        }
-        if (command.op === 'devices')
+        if (fixture.mode === 'partial') {
+          emit({ type: 'partial', speaker: 'You', text: 'A partially recognized', timestamp: 0 });
           emit({
-            type: 'devices',
-            inputs: [
-              {
-                uid: 'fixture-mic',
-                name: 'Fixture microphone',
-                isDefault: true,
-                transport: 'built-in',
-              },
-            ],
+            type: 'partial',
+            speaker: 'You',
+            text: 'A partially recognized sentence survives stop.',
+            timestamp: 0,
           });
-        if (command.op === 'languages')
-          emit({
-            type: 'languages',
-            engine: 'speechTranscriber',
-            supported: ['en-US', 'zh-CN', 'yue-CN'],
-            installed,
-          });
-        if (command.op === 'install-language') {
-          if (!['en-US', 'zh-CN', 'yue-CN'].includes(command.locale))
-            emit({
-              type: 'error',
-              op: 'install-language',
-              locale: command.locale,
-              message: 'Unsupported fixture language.',
-            });
-          else {
-            installed = [...new Set([...installed, command.locale])];
-            emit({ type: 'language-progress', locale: command.locale, fraction: 1 });
-            emit({ type: 'language-installed', locale: command.locale, installed });
-          }
         }
-        if (command.op === 'calendar')
+        if (fixture.mode === 'recognition-error')
           emit({
-            type: 'calendar',
-            // Fixture events start relative to the request, so reminders fall due during the test.
-            events: (scenario.calendar ?? []).map(({ startIn, minutes = 30, ...event }) => ({
-              ...event,
-              start: new Date(Date.now() + startIn).toISOString(),
-              end: new Date(Date.now() + startIn + minutes * 60_000).toISOString(),
-            })),
+            type: 'warning',
+            message: 'Fixture speech recognition unavailable. Raw audio continues recording.',
+          });
+        if (fixture.mode === 'system-unavailable')
+          emit({
+            type: 'warning',
+            message: 'Fixture meeting audio unavailable. Microphone capture continues.',
           });
       }
-      return child;
-    },
-  };
+      if (command.op === 'start' && active)
+        for (const event of active.fixture.events ?? [])
+          emit({ ...event, recordingId: command.recordingId });
+      if (command.op === 'stop') {
+        if (!active) {
+          emit({ type: 'stopped', duration: 0 });
+          return;
+        }
+        for (const timer of active.timers ?? []) {
+          clearTimeout(timer);
+          clearInterval(timer);
+        }
+        const duration = active.fixture.duration ?? 2;
+        mkdirSync(active.audioDir, { recursive: true });
+        const tracks = (active.systemAudio ? ['microphone', 'system'] : ['microphone']).map(
+          (source) => {
+            const fileName = source + '.wav';
+            const path = join(active.audioDir, fileName);
+            writeFileSync(path, wav(duration, source === 'system' ? 660 : 440));
+            return {
+              source,
+              fileName,
+              duration,
+              sampleRate: 16000,
+              channels: 1,
+              bytes: statSync(path).size,
+              // Real sources start a fraction of a second after the recording does.
+              ...(active.fixture.startOffsets?.[source] !== undefined
+                ? { startOffset: active.fixture.startOffsets[source] }
+                : {}),
+            };
+          },
+        );
+        active = undefined;
+        emit({ type: 'stopped', duration, audio: { tracks, diagnostics: { fixture: true } } });
+      }
+      if (command.op === 'transcribe') {
+        const segments = [
+          {
+            source: 'microphone',
+            speaker: 'You',
+            text: 'Recovered complete fixture sentence from saved audio.',
+            timestamp: 0,
+          },
+        ];
+        emit({ type: 'retranscription-completed', recordingId: command.recordingId, segments });
+      }
+      if (command.op === 'devices')
+        emit({
+          type: 'devices',
+          inputs: devices,
+        });
+      if (command.op === 'languages')
+        emit({
+          type: 'languages',
+          engine: 'speechTranscriber',
+          supported: ['en-US', 'zh-CN', 'yue-CN'],
+          installed,
+        });
+      if (command.op === 'install-language') {
+        if (!['en-US', 'zh-CN', 'yue-CN'].includes(command.locale))
+          emit({
+            type: 'error',
+            op: 'install-language',
+            locale: command.locale,
+            message: 'Unsupported fixture language.',
+          });
+        else {
+          installed = [...new Set([...installed, command.locale])];
+          emit({ type: 'language-progress', locale: command.locale, fraction: 1 });
+          emit({ type: 'language-installed', locale: command.locale, installed });
+        }
+      }
+      if (command.op === 'calendar')
+        emit({
+          type: 'calendar',
+          // Fixture events start relative to the request, so reminders fall due during the test;
+          // an absolute `start` keeps README screenshots on round times.
+          events: (scenario.calendar ?? []).map(({ startIn, start, minutes = 30, ...event }) => {
+            const at = start ? Date.parse(start) : Date.now() + startIn;
+            return {
+              ...event,
+              start: new Date(at).toISOString(),
+              end: new Date(at + minutes * 60_000).toISOString(),
+            };
+          }),
+        });
+    }
+    return child;
+  }
 }
