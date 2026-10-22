@@ -36,11 +36,12 @@ To create a standalone app:
 ```sh
 npm run signing:setup   # once per Mac
 npm run package
+npm run install:app     # optional: replace /Applications/Stillnote.app
 ```
 
 The app is written under `release.noindex/mac-arm64/Stillnote.app` on Apple Silicon, or `release.noindex/mac/Stillnote.app` on Intel. The `.noindex` suffix keeps Spotlight and Launchpad from listing this build next to the copy you install in `/Applications`. Use the packaged app for macOS permission testing; development runs may identify the host process as Electron.
 
-`signing:setup` adds a self-signed “Stillnote Local Signing” certificate to your login keychain. Every build is signed with it, so macOS keeps trusting rebuilt copies: after you choose **Always Allow** for the “Stillnote Safe Storage” keychain item and grant recording permissions once, later builds do not ask again. Without it, builds are signed ad hoc and macOS treats every rebuild as a new app. Either way this is a local development build, not an Apple-notarized distribution. Scripted test launches use Chromium's mock keychain and never touch the real keychain item.
+`signing:setup` adds a self-signed “Stillnote Local Signing” certificate to your login keychain. Every build is signed with it, so macOS keeps trusting rebuilt copies: after you choose **Always Allow** for the “Stillnote Safe Storage” keychain item and grant recording permissions once, later builds do not ask again. Without it, builds are signed ad hoc and macOS treats every rebuild as a new app. Either way this is a local development build, not an Apple-notarized distribution. Scripted test launches use Chromium's mock keychain and never touch the real keychain item. `install:app` quits a running Stillnote normally, stages the new copy beside the old one and swaps it in with a rename, so a launch during an update never sees a half-copied app.
 
 ## Connect your ChatGPT plan
 

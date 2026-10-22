@@ -975,7 +975,14 @@ if (!app.requestSingleInstanceLock()) {
         native?.stdin.end();
       });
       app.on('window-all-closed', () => app.quit());
-      await win.loadFile(join(root, 'dist/index.html'));
+      // One retry absorbs a transient load failure (for example a launch racing an update that
+      // is still copying the bundle) before Stillnote reports that it could not start.
+      const page = join(root, 'dist/index.html');
+      await win.loadFile(page).catch(async (error) => {
+        if (win.isDestroyed()) throw error;
+        await new Promise((done) => setTimeout(done, 750));
+        return win.loadFile(page);
+      });
       // Granola-style reminders: refresh a connected calendar in the background, announce each
       // occurrence shortly before it starts, and open (or create) its note on click.
       const announced = new Set(),
