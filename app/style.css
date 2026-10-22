@@ -703,11 +703,7 @@ kbd {
 .upcoming-event {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 8px 6px 14px;
   border-radius: var(--radius);
-  text-align: left;
   position: relative;
 }
 .upcoming-event::before {
@@ -723,7 +719,17 @@ kbd {
 .upcoming-event:hover {
   background: var(--hover);
 }
-.upcoming-event > span:first-child {
+.upcoming-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px 6px 14px;
+  text-align: left;
+}
+.upcoming-open > span:first-child {
   display: grid;
   gap: 2px;
   min-width: 0;
@@ -758,10 +764,12 @@ kbd {
   transition: opacity 0.12s ease;
 }
 .upcoming-event:hover .start-event,
-.upcoming-event:focus-visible .start-event {
+.upcoming-open:focus-visible .start-event {
   opacity: 1;
 }
 .upcoming-event.soon .start-event {
+  flex-shrink: 0;
+  margin-right: 8px;
   opacity: 1;
   background: var(--btn);
   color: var(--btn-ink);

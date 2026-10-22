@@ -307,8 +307,11 @@ function App() {
   async function newNote(input = {}) {
     // A calendar occurrence keeps one note: opening it again returns to that note.
     const existing = input.eventKey && meetingForEvent(data?.meetings, input.eventKey);
-    if (existing) return openNote(existing);
-    await guard(async () => {
+    if (existing) {
+      await openNote(existing);
+      return existing.id;
+    }
+    return guard(async () => {
       await flushAll();
       const m = await call('create', input);
       updateMeeting(m);
@@ -318,7 +321,13 @@ function App() {
       setTab('notes');
       setSheet(null);
       setChatOpen(false);
+      return m.id;
     });
+  }
+  // "Start now" on a calendar meeting: open (or create) its note and record right away.
+  async function startMeeting(input) {
+    const id = await newNote(input);
+    if (id && current.current.recording?.id !== id) await record(id);
   }
   async function openNote(m, panel = null) {
     await guard(async () => {
@@ -816,6 +825,7 @@ function App() {
                 calendarBusy={calendarBusy}
                 calendar={calendar}
                 newNote={newNote}
+                startMeeting={startMeeting}
                 openNote={openNote}
                 importFile={importFile}
                 setQuery={setQuery}

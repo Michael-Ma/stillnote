@@ -47,12 +47,19 @@ export async function reminders(h) {
   await h.page.waitForTimeout(800);
   assert.deepEqual(await announced(h), ['E2E standup']);
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click();
-  await page.locator('.upcoming-event').filter({ hasText: 'E2E standup' }).click();
+  const standup = page.locator('.upcoming-event').filter({ hasText: 'E2E standup' });
+  await standup.getByRole('button', { name: /^E2E standup/ }).click();
   await page.getByRole('textbox', { name: 'Meeting title', exact: true }).waitFor();
   assert.equal(
     (await h.state()).meetings.filter((m) => m.eventKey?.startsWith('fixture-standup@')).length,
     1,
     'Coming up reuses the reminder note',
+  );
+  await page.waitForTimeout(300);
+  assert.equal(
+    await page.getByRole('button', { name: 'Stop recording', exact: true }).count(),
+    0,
+    'the row itself only opens the note',
   );
 
   // With auto-record off, a reminder only opens the note.
@@ -62,4 +69,29 @@ export async function reminders(h) {
   await page.getByRole('textbox', { name: 'Meeting title', exact: true }).waitFor();
   await page.waitForTimeout(500);
   assert.equal(await page.getByRole('button', { name: 'Stop recording', exact: true }).count(), 0);
+
+  // "Start now" records right away, whatever the reminder setting, in the occurrence's note.
+  await page.getByRole('button', { name: 'Back to Home', exact: true }).click();
+  assert.equal(
+    await page
+      .locator('.upcoming-event')
+      .filter({ hasText: 'E2E later today' })
+      .getByRole('button', { name: 'Start now' })
+      .count(),
+    0,
+    'only a meeting about to start offers Start now',
+  );
+  await standup.getByRole('button', { name: 'Start now', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop recording', exact: true }).waitFor();
+  assert.equal(
+    await page.getByRole('textbox', { name: 'Meeting title', exact: true }).inputValue(),
+    'E2E standup',
+  );
+  await page.getByRole('button', { name: 'Stop recording', exact: true }).click();
+  await page.getByRole('button', { name: 'Start recording', exact: true }).waitFor();
+  const started = (await h.state()).meetings.filter((m) =>
+    m.eventKey?.startsWith('fixture-standup@'),
+  );
+  assert.equal(started.length, 1);
+  assert.equal(started[0].recordings.length, 2);
 }

@@ -44,6 +44,7 @@ export function HomeFeed({
   calendarBusy,
   calendar,
   newNote,
+  startMeeting,
   openNote,
   importFile,
   setQuery,
@@ -92,27 +93,34 @@ export function HomeFeed({
                     {events.map((e) => {
                       const soon =
                         Date.parse(e.start) - Date.now() < 600000 && Date.parse(e.end) > Date.now();
+                      const note = {
+                        title: e.title,
+                        participants: e.participants,
+                        notes: e.notes ? `Meeting context\n${e.notes}` : '',
+                        eventKey: eventKey(e),
+                      };
+                      // The row opens the meeting's note; "Start now" also starts recording.
                       return (
-                        <button
-                          className={'upcoming-event' + (soon ? ' soon' : '')}
-                          key={e.id}
-                          onClick={() =>
-                            newNote({
-                              title: e.title,
-                              participants: e.participants,
-                              notes: e.notes ? `Meeting context\n${e.notes}` : '',
-                              eventKey: eventKey(e),
-                            })
-                          }
-                        >
-                          <span>
-                            <strong>{e.title}</strong>
-                            <small>
-                              <Clock value={e.start} /> – <Clock value={e.end} />
-                            </small>
-                          </span>
-                          <span className="start-event">{soon ? 'Start now' : 'Take notes'}</span>
-                        </button>
+                        <div className={'upcoming-event' + (soon ? ' soon' : '')} key={e.id}>
+                          <button className="upcoming-open" onClick={() => newNote(note)}>
+                            <span>
+                              <strong>{e.title}</strong>
+                              <small>
+                                <Clock value={e.start} /> – <Clock value={e.end} />
+                              </small>
+                            </span>
+                            {!soon && <span className="start-event">Take notes</span>}
+                          </button>
+                          {soon && (
+                            <button
+                              className="start-event"
+                              title="Open the note and start recording"
+                              onClick={() => startMeeting(note)}
+                            >
+                              Start now
+                            </button>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
