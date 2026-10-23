@@ -42,17 +42,22 @@ const transcript = [
   at: Math.round(1.4 + i * 2.3),
   afterMs: 1400 + i * 2300,
 }));
+// Written the way the enhance prompt asks: my rough-note lines stay as bullets, with what the
+// transcript adds nested under them, and no citations.
 const enhanced = [
   '## Onboarding',
-  '- Onboarding: one decision at a time, so new users finish setup without getting stuck. [1]',
-  '- Five people tested the new flow; three missed the record button. [1]',
+  '- Onboarding: one decision at a time',
+  '  - New users should finish setup without getting stuck',
+  '- Tested the new flow with five people; three missed the record button',
   '',
-  '## Decisions',
-  '- Record button moves to the dock, where people already look. [1]',
+  '## Record button',
+  '- Record button moves to the dock',
+  '  - Next to chat, where people already look',
+  '- Permission prompts need a check before the revised flow ships',
   '',
   '## Next steps',
-  '- **Alex** sends the revised flow on Friday. [1]',
-  '- **Sam** reviews the permission prompts on Thursday. [1]',
+  '- **Alex**: send the revised flow, by Friday',
+  '- **Sam**: review the permission prompts, by Thursday',
 ].join('\n');
 const answer =
   'You decided to **move the record button into the dock** after three of five testers missed it [1]. Alex sends the revised flow on Friday, and Sam reviews the permission prompts on Thursday [1].';

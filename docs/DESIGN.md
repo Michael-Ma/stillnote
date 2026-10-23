@@ -48,7 +48,7 @@ All colors, type sizes and radii are CSS custom properties in `app/style.css`, w
 3. Missing permissions or on-device language → visible recovery guidance. There is no silent cloud fallback.
 4. Sparse transcript → one dismissible line under the title, with Listen and Retry.
 5. No AI connected → an inline card with the shortest path: Use Claude (when Claude Code is signed in), Sign in to Claude, or Sign in with ChatGPT.
-6. Enhanced note → citation opens the transcript sheet → edit, regenerate, or restore an earlier version.
+6. Enhanced note → own points in dark text, transcript additions lighter → transcript sheet from the dock → edit, regenerate, or restore an earlier version.
 7. Chat → explicit scope and model → streamed answer → persisted message with source chips.
 8. Quota, network failure or cancellation → visible recovery message. Notes and the previous summary stay intact.
 

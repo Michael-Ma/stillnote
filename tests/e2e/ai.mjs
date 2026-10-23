@@ -7,7 +7,10 @@ export const aiScenario = {
     { mode: 'empty' },
     { mode: 'partial', text: 'Incomplete answer must not overwrite the old summary.' },
     { mode: 'wait-for-cancel' },
-    { mode: 'success', text: 'Alex will ship the revised onboarding flow on Friday. [1]' },
+    {
+      mode: 'success',
+      text: '- Alex will ship the revised onboarding flow on Friday.\n  - Two days of work, including the shortcut.',
+    },
     { mode: 'success', text: 'The deadline is Friday. [1]' },
   ],
 };
@@ -44,6 +47,16 @@ export async function ai(h) {
   const enhanced = success.meetings.find((m) => m.id === meeting.id);
   assert.equal(enhanced.versions[0].text, prior);
   assert.equal(enhanced.notes, meeting.notes);
+  // My own line stays dark; the detail nested under it keeps the AI color.
+  await page.locator('.prose.enhanced li.own').waitFor();
+  const colors = await page.locator('.prose.enhanced').evaluate((el) => {
+    const own = el.querySelector('li.own');
+    const color = (node) => node && getComputedStyle(node).color;
+    return { own: color(own), nested: color(own.querySelector('li')), ai: color(el) };
+  });
+  assert.ok(colors.nested, 'the fixture nests a detail under my own line');
+  assert.notEqual(colors.own, colors.ai);
+  assert.equal(colors.nested, colors.ai, 'nested additions are not shown as my own');
   await page.getByRole('button', { name: /^Chat with this meeting/ }).click();
   await page
     .getByRole('textbox', { name: 'Ask a question', exact: true })

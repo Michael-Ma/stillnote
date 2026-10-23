@@ -3,36 +3,38 @@ import { mkdirSync } from 'node:fs';
 import { join, basename, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
+// Each template states the meeting's purpose, then its sections, as Granola's template guide
+// suggests; enhance.mjs supplies the shared writing rules.
 export const templates = [
   {
     id: 'general',
     name: 'Meeting notes',
     prompt:
-      'Create a concise overview, key discussion points, decisions, action items with owners and dates only when stated, and open questions.',
+      'Any meeting. Use topic sections in the order they came up, then Next steps. Pull decisions out as their own bullets so they are easy to find.',
   },
   {
     id: 'one-on-one',
     name: '1:1',
     prompt:
-      'Organize into check-in, progress, feedback, blockers, career development, and commitments. Preserve nuance and attribution.',
+      'A recurring one-on-one. Sections: How things are going (only what was shared); Updates; Feedback, in both directions, keeping nuance and who gave it; Blockers and support needed; Growth (only if discussed); Next steps. Keep personal matters brief and neutral.',
   },
   {
     id: 'customer',
     name: 'Customer discovery',
     prompt:
-      'Organize customer context, existing workflow, pain points, direct quotes, objections, buying signals, and next steps. Separate facts from hypotheses.',
+      'A conversation to learn about a customer’s problem; focus on what they said, not on what I said. Sections: About them (company, role, team, current tools); Current workflow; Pain points, with impact, frequency, numbers and short exact quotes; What they have tried; Reactions to our product, including objections; Buying process (budget, decision makers, timeline) only as stated; Next steps. Mark my own interpretations “Hypothesis:” so they stay apart from what the customer said.',
   },
   {
     id: 'standup',
     name: 'Team standup',
     prompt:
-      'Group updates by speaker where known, completed work, next steps, blockers, and decisions.',
+      'A team standup. One section per person when names are clear, each with done, next and blocked bullets; otherwise one section per work item. Then Blockers that need help and Decisions. Be extremely brief.',
   },
   {
     id: 'interview',
     name: 'Interview',
     prompt:
-      'Summarize the questions, candidate evidence, strengths, concerns, and unanswered questions. Do not infer protected characteristics or invent evaluations.',
+      'A job interview where I am the interviewer. Sections: Background; Questions and answers, each question as a bullet with the evidence from the answer nested under it; Strengths; Concerns; Follow-up questions. Record evidence, not verdicts: no recommendation or score unless my notes give one. Never infer or mention age, gender, ethnicity, religion, health, family status or other protected characteristics.',
   },
 ];
 export const recipes = [

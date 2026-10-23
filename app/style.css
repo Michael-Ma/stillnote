@@ -1176,6 +1176,10 @@ kbd {
 .prose.enhanced .own {
   color: var(--ink);
 }
+/* Details nested under one of my own bullets are still the model's additions. */
+.prose.enhanced .own li:not(.own) {
+  color: var(--ai-text);
+}
 .prose.enhanced li.own::marker {
   color: var(--ink-2);
 }
