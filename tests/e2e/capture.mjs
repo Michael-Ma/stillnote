@@ -10,7 +10,7 @@ export const captureScenario = {
     { mode: 'recognition-error' },
     { mode: 'start-error' },
     { mode: 'normal', text: 'A second session appends without overwriting the first.' },
-    { mode: 'system-unavailable' },
+    { mode: 'system-unavailable', declined: true },
     { mode: 'normal', startOffsets: { microphone: 0.6, system: 1 } },
   ],
 };
@@ -96,16 +96,14 @@ export async function capture(h) {
     'Rough notes stay separate from recognition.',
   );
   await start(h);
-  const beforeClose = await h.state();
-  await h.desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
-  await h.page.getByRole('alert').filter({ hasText: 'Stop the recording' }).waitFor();
-  assert.equal(
-    (await h.state()).recording.id,
-    beforeClose.recording.id,
-    'Closing must not discard an active capture',
+  // Closing the window mid-recording stops it, saves the audio, then quits.
+  await h.exitDuring(() =>
+    h.desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close()),
   );
-  await h.page.getByRole('button', { name: 'Dismiss error', exact: true }).click();
-  let saved = await stop(h, first.id, 1);
+  await h.launch();
+  let saved = (await h.state()).meetings.find((m) => m.id === first.id);
+  assert.equal(saved.recordings[0].status, 'completed', 'Closing must save the active capture');
+  await h.open(first.title);
   assert.deepEqual(
     saved.transcript.map((s) => s.text),
     [
@@ -243,7 +241,17 @@ export async function capture(h) {
   const microphoneOnly = await h.create('E2E unavailable system audio');
   await start(h);
   assert.equal((await h.state()).recording.systemAudio, false);
-  await h.page.getByRole('alert').filter({ hasText: 'Microphone capture continues' }).waitFor();
+  // A permission denial says what to change and links to the right Settings pane.
+  const denied = h.page.getByRole('alert').filter({ hasText: 'microphone is still recording' });
+  await denied.waitFor();
+  await h.desktop.evaluate(({ shell }) => {
+    globalThis.__opened = [];
+    shell.openExternal = async (url) => globalThis.__opened.push(url);
+  });
+  await denied.getByRole('button', { name: 'Open Settings', exact: true }).click();
+  assert.deepEqual(await h.desktop.evaluate(() => globalThis.__opened), [
+    'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+  ]);
   const microphoneSaved = await stop(h, microphoneOnly.id, 1);
   assert.deepEqual(
     microphoneSaved.recordings[0].tracks.map((track) => track.source),

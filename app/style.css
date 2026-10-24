@@ -595,6 +595,17 @@ kbd {
   color: var(--danger);
   border: 1px solid color-mix(in srgb, var(--danger) 20%, transparent);
 }
+.banner-action {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--btn);
+  color: var(--btn-ink);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+}
 .notice {
   background: var(--surface);
   border: 1px solid var(--line);

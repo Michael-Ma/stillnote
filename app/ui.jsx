@@ -58,8 +58,8 @@ function App() {
     answerContexts = useRef(new Map()),
     messagesRequest = useRef(0);
   const error = errorState?.message ?? '';
-  const setError = (message) =>
-    setErrorState(message ? { message: cleanError(message), owner: 'external' } : null);
+  const setError = (message, permission) =>
+    setErrorState(message ? { message: cleanError(message), owner: 'external', permission } : null);
   current.current = { selected, view, recording: data?.recording };
   const call = async (name, ...args) => api.call(name, ...args);
   const updateMeeting = (m) =>
@@ -174,7 +174,7 @@ function App() {
         const message = cleanError(e.message);
         if (message === 'Stopped.' || message.startsWith('Timed out after 5 minutes.'))
           setNotice(cleanError(e.message, busyRef.current ? aiErrorOptions() : {}));
-        else setError(message);
+        else setError(message, e.permission);
       }
       if (e.type === 'ai-delta') setStream((s) => s + e.delta);
     });
@@ -758,6 +758,14 @@ function App() {
         {error && (
           <div className="error-banner" role="alert">
             <span>{error}</span>
+            {errorState.permission === 'screen-recording' && (
+              <button
+                className="banner-action"
+                onClick={() => guard(() => call('open-privacy', 'screen-recording'))}
+              >
+                Open Settings
+              </button>
+            )}
             <IconButton label="Dismiss error" className="small" onClick={() => setError('')}>
               <X size={14} />
             </IconButton>

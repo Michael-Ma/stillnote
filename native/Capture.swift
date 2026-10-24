@@ -1160,11 +1160,23 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
           try? await failedStream.stopCapture()
         }
         sources["system"] = ["status": "unavailable", "message": error.localizedDescription]
-        emit([
-          "type": "warning", "recordingId": id,
-          "message":
-            "Microphone capture continues, but system audio is unavailable: \(error.localizedDescription). Check Screen & System Audio Recording permission.",
-        ])
+        // A denial needs the user, not a retry: say what to change and let the app link to it.
+        let nsError = error as NSError
+        if nsError.domain == SCStreamErrorDomain,
+          nsError.code == SCStreamError.Code.userDeclined.rawValue
+        {
+          emit([
+            "type": "warning", "recordingId": id, "permission": "screen-recording",
+            "message":
+              "Meeting audio isn’t being recorded because macOS hasn’t allowed Stillnote to capture it; your microphone is still recording. Turn on Stillnote in Screen & System Audio Recording, then quit and reopen Stillnote. If it’s already on, remove it with − and allow it again.",
+          ])
+        } else {
+          emit([
+            "type": "warning", "recordingId": id,
+            "message":
+              "Microphone capture continues, but system audio is unavailable: \(error.localizedDescription). Check Screen & System Audio Recording permission.",
+          ])
+        }
       }
     }
     guard generation == operation else { throw CancellationError() }

@@ -49,6 +49,7 @@ const suites = {
       'preserved notes/transcript',
       'recovered audio playback',
       'idempotent restart',
+      'quit during recording saves it',
     ],
   },
   notebook: {
@@ -74,7 +75,7 @@ const suites = {
     scenario: captureScenario,
     checks: [
       'capture state',
-      'active-close guard',
+      'closing during recording saves it',
       'two-source WAV artifacts',
       'persisted transcript',
       'audio decoding/playback',
@@ -87,6 +88,7 @@ const suites = {
       'permission failure recovery',
       'multiple sessions',
       'unavailable system audio preserves microphone track',
+      'screen-recording denial links to Settings',
     ],
   },
   ai: {

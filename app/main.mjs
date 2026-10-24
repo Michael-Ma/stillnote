@@ -7,6 +7,7 @@ import {
   dialog,
   Menu,
   Notification,
+  powerMonitor,
   powerSaveBlocker,
   protocol,
 } from 'electron';
@@ -82,7 +83,9 @@ if (!app.requestSingleInstanceLock()) {
     powerId,
     closing = false,
     rendererGone = false,
-    closeTimer;
+    closeTimer,
+    // Set while a quit waits for the active recording to save; runs once capture has ended.
+    afterCapture;
   const pendingPartials = new Map();
   let calendarWait;
   const emit = (event) => {
@@ -171,6 +174,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     releaseCapture();
     meetingUpdates.flush(active.id, updated);
+    afterCapture?.();
     return updated;
   }
   function helper() {
@@ -320,6 +324,7 @@ if (!app.requestSingleInstanceLock()) {
         if (
           completed &&
           e.status !== 'failed' &&
+          !afterCapture &&
           store.settings().autoEnhance !== false &&
           aiReady() &&
           backgroundAllowed() &&
@@ -735,7 +740,7 @@ if (!app.requestSingleInstanceLock()) {
           throw error;
         }
       });
-      register('stop', () => {
+      const stopCapture = () => {
         if (recording && !stopping) {
           stopping = true;
           recording = { ...recording, stopping: true };
@@ -743,8 +748,31 @@ if (!app.requestSingleInstanceLock()) {
           emit({ type: 'recording-status', recording });
           send({ op: 'stop' });
         }
+      };
+      register('stop', () => {
+        stopCapture();
         return true;
       });
+      // Quitting mid-recording (⌘Q, closing the window, Quit & Reopen in System Settings,
+      // logging out) stops the recording and lets the helper save its audio, then quits.
+      const quitAfterSaving = () => {
+        if (afterCapture) return;
+        let done = false;
+        const quit = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(deadline);
+          setImmediate(() => app.quit());
+        };
+        // A helper that never confirms must not keep Stillnote open: keep what is on disk.
+        const deadline = setTimeout(() => {
+          if (recording) finishCapture('interrupted');
+          quit();
+        }, 15000);
+        afterCapture = quit;
+        win?.show();
+        stopCapture();
+      };
       register('recording-url', (meetingId, recordingId, source) => {
         const meeting = store.get(meetingId),
           session = meeting.recordings.find((item) => item.id === recordingId);
@@ -908,6 +936,15 @@ if (!app.requestSingleInstanceLock()) {
         return store.importFile(r.filePaths[0], raw);
       });
       register('reveal', () => shell.openPath(app.getPath('userData')));
+      // Only the privacy panes Stillnote's own messages point to.
+      register('open-privacy', (pane) => {
+        const url = {
+          'screen-recording':
+            'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+        }[pane];
+        if (!url) throw new Error('Unknown settings pane.');
+        return shell.openExternal(url);
+      });
       register('finish-close', () => {
         if (recording || starting || transcriptionWait) return;
         clearTimeout(closeTimer);
@@ -933,15 +970,10 @@ if (!app.requestSingleInstanceLock()) {
       });
       win.on('closed', () => clearTimeout(closeTimer));
       win.on('close', (event) => {
+        // Closing the window quits Stillnote; the quit path saves an active recording first.
         if (recording || starting || transcriptionWait) {
           event.preventDefault();
-          win.show();
-          emit({
-            type: 'error',
-            message: transcriptionWait
-              ? 'Wait for transcription to finish before closing Stillnote.'
-              : 'Stop the recording before closing Stillnote.',
-          });
+          app.quit();
           return;
         }
         if (!closing) {
@@ -959,21 +991,27 @@ if (!app.requestSingleInstanceLock()) {
         win?.focus();
       });
       app.on('before-quit', (event) => {
-        if (recording || starting || transcriptionWait) {
+        if (recording || starting) {
           event.preventDefault();
-          win?.show();
-          emit({
-            type: 'error',
-            message: transcriptionWait
-              ? 'Wait for transcription to finish before quitting Stillnote.'
-              : 'Stop the recording before quitting Stillnote.',
-          });
+          quitAfterSaving();
           return;
         }
+        // A retry only replaces the transcript when it finishes, so stopping it loses nothing.
+        transcriptionWait?.reject(
+          new Error(
+            'Stillnote quit before transcription finished. The existing transcript was preserved.',
+          ),
+        );
         activeAI?.abort();
         auth.cancel();
         claude.cancel();
         native?.stdin.end();
+      });
+      // Logging out or shutting down waits while the recording saves.
+      powerMonitor.on('shutdown', (event) => {
+        if (!recording && !starting) return;
+        event.preventDefault();
+        quitAfterSaving();
       });
       app.on('window-all-closed', () => app.quit());
       // One retry absorbs a transient load failure (for example a launch racing an update that

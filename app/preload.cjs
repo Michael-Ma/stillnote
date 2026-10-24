@@ -26,6 +26,7 @@ const channels = [
   'backup',
   'import',
   'reveal',
+  'open-privacy',
   'finish-close',
 ];
 contextBridge.exposeInMainWorld('stillnote', {

@@ -325,10 +325,19 @@ export function createTestAdapter({ dataDir }) {
             message: 'Fixture speech recognition unavailable. Raw audio continues recording.',
           });
         if (fixture.mode === 'system-unavailable')
-          emit({
-            type: 'warning',
-            message: 'Fixture meeting audio unavailable. Microphone capture continues.',
-          });
+          emit(
+            fixture.declined
+              ? {
+                  type: 'warning',
+                  permission: 'screen-recording',
+                  message:
+                    'Fixture: macOS has not allowed meeting audio capture; your microphone is still recording.',
+                }
+              : {
+                  type: 'warning',
+                  message: 'Fixture meeting audio unavailable. Microphone capture continues.',
+                },
+          );
       }
       if (command.op === 'start' && active)
         for (const event of active.fixture.events ?? [])

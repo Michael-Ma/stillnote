@@ -61,5 +61,15 @@ export async function recovery(h) {
   await h.screenshot('recovered-interrupted-recording');
   await h.restart();
   assert.equal((await h.state()).meetings[0].recordings[0].status, 'interrupted');
+
+  // ⌘Q, Quit & Reopen or logging out mid-recording: the recording is saved, then Stillnote quits.
+  const quitting = await h.create('E2E quit while recording');
+  await h.page.getByRole('button', { name: 'Start recording', exact: true }).click();
+  await h.waitForState((s) => !!s.recording && !s.starting);
+  await h.exitDuring(() => h.desktop.evaluate(({ app }) => app.quit()));
+  await h.launch();
+  const kept = (await h.state()).meetings.find((m) => m.id === quitting.id);
+  assert.equal(kept.recordings[0].status, 'completed', 'Quitting must save the active capture');
+  assert.ok(kept.recordings[0].tracks.length > 0, 'The audio is saved before Stillnote quits');
   h.assertNoRendererErrors();
 }

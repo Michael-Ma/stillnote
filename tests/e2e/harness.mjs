@@ -151,6 +151,26 @@ export class Harness {
     ]).finally(() => clearTimeout(timer));
     this.desktop = null;
   }
+  // Runs an action that should make Stillnote quit on its own, and waits for the process to end.
+  async exitDuring(action) {
+    const child = this.desktop.process();
+    const exited = new Promise((resolve) => {
+      if (child.exitCode !== null) resolve();
+      else child.once('exit', resolve);
+    });
+    await action().catch(() => {});
+    let timer;
+    await Promise.race([
+      exited,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Stillnote did not quit within 15 seconds')),
+          15000,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
+    this.desktop = null;
+  }
   async restart() {
     await this.close();
     return this.launch();

@@ -76,4 +76,5 @@ export const dialog = {
 export const Menu = { buildFromTemplate: (items) => items, setApplicationMenu() {} };
 export const Notification = { isSupported: () => false };
 export const powerSaveBlocker = { start: () => 1, stop() {} };
+export const powerMonitor = { on() {} };
 export const protocol = { registerSchemesAsPrivileged() {}, handle() {} };
