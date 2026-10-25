@@ -32,6 +32,8 @@ import { dueReminders, eventKey, meetingForEvent, reminderBody } from './reminde
 import { ClaudeCode } from './providers/claude-code.mjs';
 import { enhanceInstructions, enhanceRequest } from './enhance.mjs';
 import { arbitrateOffline, createLiveArbiter, recognitionPlan } from './language-arbiter.mjs';
+import { resolveLanguage, translator } from './i18n/index.mjs';
+import { helperMessage } from './helper-messages.mjs';
 import {
   aiState,
   modelSetting,
@@ -123,6 +125,17 @@ if (!app.requestSingleInstanceLock()) {
     const state = aiNow();
     return !!state.chosen || state.provider === 'chatgpt';
   };
+  // The macOS languages "Follow macOS" resolves against. STILLNOTE_UI_LANGUAGE pins one, so
+  // scripted runs with English selectors keep working on a Chinese Mac.
+  const systemLanguages = () =>
+    process.env.STILLNOTE_UI_LANGUAGE
+      ? [process.env.STILLNOTE_UI_LANGUAGE]
+      : app.getPreferredSystemLanguages();
+  // The interface language's translator, for text the main process writes itself (notifications,
+  // menus, messages with parts filled in). Plain English messages are translated by the renderer.
+  const tr = () =>
+    translator(resolveLanguage(store ? store.settings().uiLanguage : 'system', systemLanguages()));
+  const t = (key, vars) => tr()(key, vars);
   const snapshot = () => ({
     meetings: store.all(true),
     folders: store.folders(),
@@ -135,6 +148,7 @@ if (!app.requestSingleInstanceLock()) {
     starting,
     calendar: calendarEvents,
     dataDir: app.getPath('userData'),
+    systemLanguages: systemLanguages(),
   });
   function releaseCapture() {
     recording = null;
@@ -227,7 +241,11 @@ if (!app.requestSingleInstanceLock()) {
     native = child;
     createInterface({ input: child.stdout }).on('line', (line) => {
       try {
-        const e = JSON.parse(line);
+        const parsed = JSON.parse(line);
+        // The helper writes English; everything downstream sees the interface language.
+        const e = parsed.message
+          ? { ...parsed, message: helperMessage(parsed.message, tr()) }
+          : parsed;
         if (requests.receive(e)) return;
         if (e.type === 'language-progress') {
           emit(e);
@@ -275,10 +293,22 @@ if (!app.requestSingleInstanceLock()) {
           const remaining = recording.locales?.find((locale) => locale !== e.locale);
           if (!recording.languageFallback && remaining) {
             recording = { ...recording, languageFallback: true };
+            const language = new Intl.DisplayNames(tr().locale, { type: 'language' }).of(
+              remaining.split('-')[0],
+            );
             emit({
               type: 'warning',
               recordingId: recording.recordingId,
-              message: `This Mac couldn't run both Auto languages for ${e.source === 'system' ? 'meeting audio' : 'your microphone'}, so it continues in ${new Intl.DisplayNames('en', { type: 'language' }).of(remaining.split('-')[0])} only.`,
+              message:
+                e.source === 'system'
+                  ? t(
+                      "This Mac couldn't run both Auto languages for meeting audio, so it continues in {language} only.",
+                      { language },
+                    )
+                  : t(
+                      "This Mac couldn't run both Auto languages for your microphone, so it continues in {language} only.",
+                      { language },
+                    ),
             });
           }
           return;
@@ -410,18 +440,20 @@ if (!app.requestSingleInstanceLock()) {
       } catch (error) {
         emit({
           type: 'error',
-          message: 'Could not process native capture output: ' + error.message,
+          message: t('Could not process native capture output: {error}', { error: error.message }),
         });
       }
     });
     child.stderr.on('data', () => {});
     child.on('error', (error) => {
-      requests.reject(new Error('Native helper could not start: ' + error.message));
+      requests.reject(
+        new Error(t('Native helper could not start: {error}', { error: error.message })),
+      );
       if (starting) finishCapture('startfailed');
       transcriptionWait?.reject(new Error('Native transcription helper could not start.'));
       emit({
         type: 'error',
-        message: 'Native helper could not start: ' + error.message,
+        message: t('Native helper could not start: {error}', { error: error.message }),
         recording,
       });
     });
@@ -536,11 +568,11 @@ if (!app.requestSingleInstanceLock()) {
       let instructions, input, selected, sources;
       if (kind === 'enhance') {
         const m = meetings[0];
-        const t =
-          [...templates, ...(settings.templates ?? [])].find((t) => t.id === m.templateId) ??
+        const template =
+          [...templates, ...(settings.templates ?? [])].find((x) => x.id === m.templateId) ??
           templates[0];
         instructions = enhanceInstructions;
-        input = [{ role: 'user', content: enhanceRequest(m, t) }];
+        input = [{ role: 'user', content: enhanceRequest(m, template) }];
       } else {
         selected = chatContext(meetings, single ? [] : store.search(question.slice(0, 1000)), {
           single,
@@ -690,36 +722,44 @@ if (!app.requestSingleInstanceLock()) {
       win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) =>
         callback(false),
       );
-      Menu.setApplicationMenu(
-        Menu.buildFromTemplate([
-          {
-            label: 'Stillnote',
-            submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'quit' }],
-          },
-          {
-            label: 'Edit',
-            submenu: [
-              { role: 'undo' },
-              { role: 'redo' },
-              { type: 'separator' },
-              { role: 'cut' },
-              { role: 'copy' },
-              { role: 'paste' },
-              { role: 'selectAll' },
-            ],
-          },
-          {
-            label: 'View',
-            submenu: [
-              ...(!app.isPackaged ? [{ role: 'reload' }] : []),
-              { role: 'toggleDevTools' },
-              { role: 'resetZoom' },
-              { role: 'zoomIn' },
-              { role: 'zoomOut' },
-            ],
-          },
-        ]),
-      );
+      // Role items get explicit labels so the menu follows the interface language.
+      const buildMenu = () =>
+        Menu.setApplicationMenu(
+          Menu.buildFromTemplate([
+            {
+              label: 'Stillnote',
+              submenu: [
+                { role: 'about', label: t('About Stillnote') },
+                { type: 'separator' },
+                { role: 'hide', label: t('Hide Stillnote') },
+                { role: 'quit', label: t('Quit Stillnote') },
+              ],
+            },
+            {
+              label: t('Edit'),
+              submenu: [
+                { role: 'undo', label: t('Undo') },
+                { role: 'redo', label: t('Redo') },
+                { type: 'separator' },
+                { role: 'cut', label: t('Cut') },
+                { role: 'copy', label: t('Copy') },
+                { role: 'paste', label: t('Paste') },
+                { role: 'selectAll', label: t('Select All') },
+              ],
+            },
+            {
+              label: t('View'),
+              submenu: [
+                ...(!app.isPackaged ? [{ role: 'reload', label: t('Reload') }] : []),
+                { role: 'toggleDevTools', label: t('Toggle Developer Tools') },
+                { role: 'resetZoom', label: t('Actual Size') },
+                { role: 'zoomIn', label: t('Zoom In') },
+                { role: 'zoomOut', label: t('Zoom Out') },
+              ],
+            },
+          ]),
+        );
+      buildMenu();
       register('state', () => ({ ...snapshot(), startupError }));
       register('create', (input) => store.create(input));
       register('update', (id, patch) => {
@@ -729,7 +769,11 @@ if (!app.requestSingleInstanceLock()) {
       });
       register('search', (query) => store.search(query));
       register('folder', (name) => store.addFolder(name));
-      register('setting', (key, value) => store.setting(key, value));
+      register('setting', (key, value) => {
+        const settings = store.setting(key, value);
+        if (key === 'uiLanguage') buildMenu();
+        return settings;
+      });
       register('transcript', (id, segment) => store.append(id, segment));
       register('edit-segment', (id, segmentId, patch) => store.editSegment(id, segmentId, patch));
       register('messages', (scope) => store.messages(scope));
@@ -978,7 +1022,7 @@ if (!app.requestSingleInstanceLock()) {
           const file = join(dir, `claude-${value}.command`);
           writeFileSync(file, terminalScript(value, claude.status().path), { mode: 0o700 });
           const failure = await shell.openPath(file);
-          if (failure) throw new Error('Could not open Terminal: ' + failure);
+          if (failure) throw new Error(t('Could not open Terminal: {error}', { error: failure }));
           return aiNow();
         }
         if (action === 'models') return listModels(activeId());
@@ -1138,7 +1182,7 @@ if (!app.requestSingleInstanceLock()) {
         if (settings.meetingReminders === false) return;
         for (const event of dueReminders(calendarEvents, Date.now(), announced)) {
           announced.add(eventKey(event));
-          const body = reminderBody(event, Date.now(), settings.reminderAutoRecord !== false);
+          const body = reminderBody(event, Date.now(), settings.reminderAutoRecord !== false, tr());
           if (testAdapter) {
             testAdapter.notify?.({ event, body, open: () => openFromReminder(event) });
             continue;

@@ -26,6 +26,7 @@ export class Harness {
         NODE_ENV: 'test',
         STILLNOTE_DATA_DIR: this.dataDir,
         STILLNOTE_MOCK_KEYCHAIN: '1',
+        STILLNOTE_UI_LANGUAGE: this.uiLanguage ?? 'en',
         STILLNOTE_TEST_ADAPTER: join(root, 'tests/e2e/adapter.mjs'),
         STILLNOTE_E2E_SCENARIO_FILE: this.scenarioPath,
       },

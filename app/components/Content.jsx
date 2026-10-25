@@ -1,5 +1,6 @@
 import React, { useMemo, useRef } from 'react';
 import Markdown from 'react-markdown';
+import { useT } from '../i18n/react.jsx';
 export function IconButton({ label, children, className = '', ...props }) {
   return (
     <button className={'icon-button ' + className} aria-label={label} title={label} {...props}>
@@ -14,6 +15,7 @@ const ownText = (node) =>
     .map((child) => (child.type === 'text' ? child.value : ownText(child)))
     .join('');
 export function Rich({ text, onSource, isOwn }) {
+  const t = useT();
   const sourceRef = useRef(onSource);
   sourceRef.current = onSource;
   const components = useMemo(() => {
@@ -31,7 +33,7 @@ export function Rich({ text, onSource, isOwn }) {
           <button
             className="citation"
             onClick={() => sourceRef.current?.(Number(href.split('/').pop()))}
-            aria-label={`View source ${children}`}
+            aria-label={t('View source {n}', { n: children })}
           >
             {children}
           </button>
@@ -40,7 +42,7 @@ export function Rich({ text, onSource, isOwn }) {
         ),
       ...(isOwn ? { li: mark('li'), p: mark('p') } : {}),
     };
-  }, [isOwn]);
+  }, [isOwn, t]);
   const content = onSource ? text.replace(/\[(\d+)\](?!\()/g, '[$1](stillnote://source/$1)') : text;
   return (
     <div className={'prose' + (isOwn ? ' enhanced' : '')}>

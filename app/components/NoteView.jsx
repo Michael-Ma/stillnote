@@ -17,63 +17,69 @@ import { AiConnect } from './AiConnect.jsx';
 import { CoverageWarning } from './RecordingAudio.jsx';
 import { ownLineMatcher } from '../own-lines.mjs';
 import { date } from '../format.mjs';
+import { useT } from '../i18n/react.jsx';
+
+// Templates Stillnote ships, whose stored English names are shown translated; custom ones keep
+// the name the user gave them.
+const builtInTemplates = ['general', 'one-on-one', 'customer', 'standup', 'interview'];
 
 // Granola's top-right switch between the user's notes and the enhanced version.
 export function NoteToolbar({ meeting, tab, setTab, templates, patch, activeRecord, onExport }) {
+  const t = useT();
   return (
     <div className="note-toolbar">
-      <div className="view-switch" role="tablist" aria-label="Note view">
+      <div className="view-switch" role="tablist" aria-label={t('Note view')}>
         <button
           role="tab"
           aria-selected={tab === 'notes'}
           className={tab === 'notes' ? 'active' : ''}
           onClick={() => setTab('notes')}
-          title="My notes"
+          title={t('My notes')}
         >
           <NotebookPen size={14} />
-          <span>My notes</span>
+          <span>{t('My notes')}</span>
         </button>
         <button
           role="tab"
           aria-selected={tab === 'summary'}
           className={tab === 'summary' ? 'active' : ''}
           onClick={() => setTab('summary')}
-          title="Enhanced notes"
+          title={t('Enhanced notes')}
         >
           <Sparkles size={14} />
-          <span>Enhanced</span>
+          <span>{t('Enhanced')}</span>
         </button>
       </div>
       <select
         className="chip-select template-select"
-        aria-label="Summary template"
+        aria-label={t('Summary template')}
         value={meeting.templateId}
         onChange={(e) => patch({ templateId: e.target.value })}
       >
-        {templates.map((t) => (
-          <option value={t.id} key={t.id}>
-            {t.name}
+        {templates.map((template) => (
+          <option value={template.id} key={template.id}>
+            {builtInTemplates.includes(template.id) ? t(template.name) : template.name}
           </option>
         ))}
       </select>
       <span className="toolbar-divider" />
       <IconButton
-        label={meeting.starred ? 'Unstar note' : 'Star note'}
+        label={meeting.starred ? t('Unstar note') : t('Star note')}
         onClick={() => patch({ starred: !meeting.starred })}
         className={meeting.starred ? 'starred' : ''}
       >
         <Star size={15} fill={meeting.starred ? 'currentColor' : 'none'} />
       </IconButton>
-      <IconButton label="Export Markdown" onClick={onExport}>
+      <IconButton label={t('Export Markdown')} onClick={onExport}>
         <Download size={15} />
       </IconButton>
       {meeting.deletedAt ? (
-        <IconButton label="Restore note" onClick={() => patch({ deletedAt: null })}>
+        <IconButton label={t('Restore note')} onClick={() => patch({ deletedAt: null })}>
           <RotateCcw size={15} />
         </IconButton>
       ) : (
         <IconButton
-          label="Move to Trash"
+          label={t('Move to Trash')}
           disabled={activeRecord}
           onClick={() => patch({ deletedAt: true })}
         >
@@ -105,28 +111,29 @@ export function NoteView({
   ai,
   aiActions,
 }) {
+  const t = useT();
   const isOwn = useMemo(() => ownLineMatcher(meeting.notes), [meeting.notes]);
   const enhancing = busy === 'enhance';
   return (
     <article className="note">
       <input
         className="note-title"
-        aria-label="Meeting title"
+        aria-label={t('Meeting title')}
         value={meeting.title}
         onChange={(e) => draft({ title: e.target.value })}
         maxLength={300}
-        placeholder="New note"
+        placeholder={t('New note')}
       />
       <div className="meta-chips">
         <span className="chip">
           <CalendarDays size={13} />
-          {date(meeting.createdAt)}
+          {date(meeting.createdAt, t.locale)}
         </span>
         <label className="chip chip-input">
           <Users size={13} />
           <input
-            aria-label="Participants"
-            placeholder="Add people"
+            aria-label={t('Participants')}
+            placeholder={t('Add people')}
             value={meeting.participants}
             onChange={(e) => draft({ participants: e.target.value })}
           />
@@ -134,11 +141,11 @@ export function NoteView({
         <label className="chip chip-input">
           <Folder size={13} />
           <select
-            aria-label="Move note to folder"
+            aria-label={t('Move note to folder')}
             value={meeting.folderId ?? ''}
             onChange={(e) => patch({ folderId: e.target.value || null })}
           >
-            <option value="">Add to folder</option>
+            <option value="">{t('Add to folder')}</option>
             {folders.map((f) => (
               <option value={f.id} key={f.id}>
                 {f.name}
@@ -149,9 +156,9 @@ export function NoteView({
       </div>
       {meeting.deletedAt && (
         <div className="inline-note">
-          This note is in Trash.{' '}
+          {t('This note is in Trash.')}{' '}
           <button className="text-button" onClick={() => patch({ deletedAt: null })}>
-            Restore it
+            {t('Restore it')}
           </button>
         </div>
       )}
@@ -160,8 +167,8 @@ export function NoteView({
         {tab === 'notes' ? (
           <textarea
             className="note-editor"
-            aria-label="My notes"
-            placeholder="Write notes…"
+            aria-label={t('My notes')}
+            placeholder={t('Write notes…')}
             value={meeting.notes}
             onChange={(e) => draft({ notes: e.target.value })}
           />
@@ -169,10 +176,10 @@ export function NoteView({
           <>
             <div className="analyzing" role="status">
               <LoaderCircle size={14} className="spin" />
-              {stream ? 'Writing enhanced notes…' : 'Analyzing transcript…'}
+              {stream ? t('Writing enhanced notes…') : t('Analyzing transcript…')}
               {showCancel && (
                 <button className="text-button" onClick={onCancel}>
-                  Cancel
+                  {t('Cancel')}
                 </button>
               )}
             </div>
@@ -182,12 +189,12 @@ export function NoteView({
           <>
             <div className="summary-tools">
               <button className="text-button" onClick={() => setEditingSummary(false)}>
-                Done editing
+                {t('Done editing')}
               </button>
             </div>
             <textarea
               className="note-editor"
-              aria-label="Edit enhanced notes"
+              aria-label={t('Edit enhanced notes')}
               value={meeting.summary}
               onChange={(e) => draft({ summary: e.target.value })}
             />
@@ -196,30 +203,30 @@ export function NoteView({
           <>
             <div className="summary-tools">
               {meeting.versions.length > 0 && (
-                <IconButton label="Previous summaries" className="small" onClick={onHistory}>
+                <IconButton label={t('Previous summaries')} className="small" onClick={onHistory}>
                   <History size={14} />
                 </IconButton>
               )}
               <button className="text-button" onClick={() => setEditingSummary(true)}>
-                Edit
+                {t('Edit')}
               </button>
               <button className="text-button" disabled={enhanceDisabled} onClick={onEnhance}>
                 <Sparkles size={13} />
-                Enhance notes
+                {t('Enhance notes')}
               </button>
             </div>
             <Rich text={meeting.summary} onSource={onSource} isOwn={isOwn} />
           </>
         ) : !ai.ready ? (
-          <AiConnect ai={ai} actions={aiActions} title="Connect an AI to enhance notes" />
+          <AiConnect ai={ai} actions={aiActions} title={t('Connect an AI to enhance notes')} />
         ) : (
           <div className="document-empty">
             <Sparkles size={20} aria-hidden="true" />
-            <h2>No enhanced notes yet</h2>
+            <h2>{t('No enhanced notes yet')}</h2>
             <p>
               {enhanceDisabled
-                ? 'Record the meeting or write a few notes first.'
-                : `Combine your notes and the transcript with ${ai.label}.`}
+                ? t('Record the meeting or write a few notes first.')
+                : t('Combine your notes and the transcript with {ai}.', { ai: ai.label })}
             </p>
           </div>
         )}

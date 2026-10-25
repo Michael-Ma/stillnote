@@ -12,6 +12,8 @@ import { SettingsDialog } from './components/SettingsDialog.jsx';
 import { aiView, claudeModels, modelKey } from './ai-view.mjs';
 import { meetingForEvent } from './reminders.mjs';
 import { cleanError, date, time, duration, silentState } from './format.mjs';
+import { resolveLanguage, translator } from './i18n/index.mjs';
+import { I18nProvider } from './i18n/react.jsx';
 import './style.css';
 import stillnoteIcon from '../assets/icon-small.png';
 const api = window.stillnote;
@@ -57,10 +59,20 @@ function App() {
     aiRequest = useRef({}),
     answerContexts = useRef(new Map()),
     messagesRequest = useRef(0);
+  // Interface language: the setting, else the first macOS language Stillnote has.
+  const language = resolveLanguage(
+    data?.settings.uiLanguage,
+    data?.systemLanguages ?? navigator.languages,
+  );
+  const t = useMemo(() => translator(language), [language]);
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
   const error = errorState?.message ?? '';
   const setError = (message, permission) =>
     setErrorState(message ? { message: cleanError(message), owner: 'external', permission } : null);
-  current.current = { selected, view, recording: data?.recording };
+  // `t` rides along so the once-registered event subscription speaks the current language.
+  current.current = { selected, view, recording: data?.recording, t };
   const call = async (name, ...args) => api.call(name, ...args);
   const updateMeeting = (m) =>
     setData((d) =>
@@ -114,7 +126,7 @@ function App() {
           setSelected(e.id);
           setTab('summary');
           setSheet(null);
-        } else setNotice({ text: 'Enhancing your recorded note.', id: e.id });
+        } else setNotice({ text: current.current.t('Enhancing your recorded note.'), id: e.id });
         setStream('');
       }
       if (e.type === 'ai-done' && busyRef.current === 'auto-enhance') {
@@ -148,7 +160,7 @@ function App() {
       const recordingId = current.current.recording?.recordingId;
       setSilent((s) => silentState(s, e, recordingId));
       if (e.type === 'device-changed' && e.recordingId === current.current.recording?.recordingId) {
-        setNotice(`Microphone changed to ${e.device.name}.`);
+        setNotice(current.current.t('Microphone changed to {device}.', { device: e.device.name }));
         setCaptureSources((sources) => ({
           ...sources,
           microphone: { ...sources.microphone, device: e.device },
@@ -180,7 +192,9 @@ function App() {
       if (e.type === 'error' || e.type === 'warning') {
         const message = cleanError(e.message);
         if (message === 'Stopped.' || message.startsWith('Timed out after 5 minutes.'))
-          setNotice(cleanError(e.message, busyRef.current ? aiErrorOptions() : {}));
+          setNotice(
+            current.current.t(cleanError(e.message, busyRef.current ? aiErrorOptions() : {})),
+          );
         else setError(message, e.permission);
       }
       if (e.type === 'ai-delta') setStream((s) => s + e.delta);
@@ -320,7 +334,8 @@ function App() {
     }
     return guard(async () => {
       await flushAll();
-      const m = await call('create', input);
+      // A new note's placeholder title is written in the interface language.
+      const m = await call('create', { title: t('Untitled meeting'), ...input });
       updateMeeting(m);
       setSelected(m.id);
       setView('all');
@@ -420,7 +435,7 @@ function App() {
       } catch (e) {
         const message = cleanError(e, aiErrorOptions());
         if (message === 'Stopped.' || message.startsWith('Timed out after 5 minutes.'))
-          setNotice(message);
+          setNotice(t(message));
         else throw e;
       } finally {
         busyRef.current = null;
@@ -477,7 +492,10 @@ function App() {
         setTab('notes');
         setSheet('transcript');
         setView('all');
-      } else setNotice(`Imported ${r.restored} new meetings. Existing meetings were preserved.`);
+      } else
+        setNotice(
+          t('Imported {n} new meetings. Existing meetings were preserved.', { n: r.restored }),
+        );
     });
   }
   async function record(meetingId = selected) {
@@ -501,7 +519,7 @@ function App() {
         const result = await call('transcribe-recording', meetingId, recordingId);
         const updated = result?.meeting ?? result;
         if (updated?.id) updateMeeting(updated);
-        setNotice('Transcription finished. Review the transcript before enhancing your notes.');
+        setNotice(t('Transcription finished. Review the transcript before enhancing your notes.'));
       });
     } finally {
       setRetryingRecording(null);
@@ -546,31 +564,33 @@ function App() {
   );
   const title =
     view === 'home'
-      ? 'Home'
+      ? t('Home')
       : view === 'chat'
-        ? 'Chat'
+        ? t('Chat')
         : view === 'all'
-          ? 'My notes'
+          ? t('My notes')
           : view === 'starred'
-            ? 'Starred'
+            ? t('Starred')
             : view === 'trash'
-              ? 'Trash'
-              : (data?.folders.find((f) => f.id === view.slice(7))?.name ?? 'Notes');
+              ? t('Trash')
+              : (data?.folders.find((f) => f.id === view.slice(7))?.name ?? t('Notes'));
   if (!data)
     return (
-      <div className="loading">
-        <Leaf size={28} />
-        {loading ? (
-          <p>Opening your notebook…</p>
-        ) : (
-          <>
-            <p role="alert">{error || 'Your notebook could not be opened.'}</p>
-            <button className="primary" onClick={() => guard(load)}>
-              Retry
-            </button>
-          </>
-        )}
-      </div>
+      <I18nProvider t={t}>
+        <div className="loading">
+          <Leaf size={28} />
+          {loading ? (
+            <p>{t('Opening your notebook…')}</p>
+          ) : (
+            <>
+              <p role="alert">{error ? t(error) : t('Your notebook could not be opened.')}</p>
+              <button className="primary" onClick={() => guard(load)}>
+                {t('Retry')}
+              </button>
+            </>
+          )}
+        </div>
+      </I18nProvider>
     );
   const templates = data.templates;
   const modelGroups = [
@@ -606,9 +626,9 @@ function App() {
       }}
       scope={chatScope}
       scopes={[
-        ...(meeting ? [['meeting', 'This meeting']] : []),
-        ...(view.startsWith('folder:') ? [['folder', 'This folder']] : []),
-        ['all', 'All my notes'],
+        ...(meeting ? [['meeting', t('This meeting')]] : []),
+        ...(view.startsWith('folder:') ? [['folder', t('This folder')]] : []),
+        ['all', t('All my notes')],
       ]}
       setScope={setChatScope}
       ai={ai}
@@ -638,537 +658,551 @@ function App() {
               guard(async () => {
                 if (!(await patch({ summary: m.content, snapshotSummary: true }))) return;
                 setTab('summary');
-                setNotice('Enhanced notes updated. The previous version is saved.');
+                setNotice(t('Enhanced notes updated. The previous version is saved.'));
               })
           : null
       }
     />
   );
   return (
-    <div
-      className={
-        'app' +
-        (chatOpen ? ' chat-open' : '') +
-        (meeting ? ' meeting-open' : '') +
-        (globalChat ? ' chat-global' : '')
-      }
-    >
-      <Sidebar
-        view={view}
-        chatOpen={chatOpen}
-        folders={data.folders}
-        query={query}
-        onQuery={(value) => {
-          setQuery(value);
-          setSelected(null);
-          setChatOpen(false);
-          if (!['home', 'all', 'trash'].includes(view) && !view.startsWith('folder:'))
-            setView('all');
-        }}
-        searchRef={searchRef}
-        searchOpen={searchOpen || !!query}
-        setSearchOpen={setSearchOpen}
-        navigate={navigate}
-        openChat={() =>
-          guard(async () => {
-            await flushAll();
-            setSelected(null);
-            setView('chat');
-            setChatScope('all');
-            setChatOpen(true);
-          })
+    <I18nProvider t={t}>
+      <div
+        className={
+          'app' +
+          (chatOpen ? ' chat-open' : '') +
+          (meeting ? ' meeting-open' : '') +
+          (globalChat ? ' chat-global' : '')
         }
-        newFolder={() => setModal({ kind: 'folder', name: '' })}
-        importFile={importFile}
-        openSettings={settings}
-        ai={ai}
-        icon={stillnoteIcon}
-      />
-      <main className="workspace">
-        <header className="topbar">
-          <div className="topbar-left">
-            {meeting ? (
-              <>
-                <button
-                  className="home-back"
-                  onClick={() => navigate('home')}
-                  aria-label="Back to Home"
-                >
-                  <ArrowLeft size={14} />
-                  <Home size={14} />
-                </button>
-                <span className="save-state" aria-live="polite">
-                  {saving ? (
-                    'Saving…'
-                  ) : Object.keys(drafts[selected] ?? {}).length ? (
-                    'Unsaved'
-                  ) : (
-                    <>
-                      <Check size={12} />
-                      Saved
-                    </>
-                  )}
-                </span>
-              </>
-            ) : (
-              <span className="workspace-label">{view === 'home' ? '' : title}</span>
-            )}
-          </div>
-          <div className="top-actions">
-            {data.recording && !activeRecord && (
-              <div className="global-recording" role="status">
-                <span className="rec-dot live" />
-                <span>
-                  {data.recording.stopping
-                    ? 'Finishing…'
-                    : data.starting
-                      ? 'Connecting…'
-                      : `Listening · ${duration(elapsed)}`}
-                </span>
-                <button
-                  onClick={() => guard(() => call('stop'))}
-                  aria-label="Finish active recording"
-                  disabled={data.recording.stopping}
-                >
-                  <Square size={10} fill="currentColor" />
-                  Finish
-                </button>
-              </div>
-            )}
-            {meeting ? (
-              <NoteToolbar
-                meeting={meeting}
-                tab={tab}
-                setTab={(t) => {
-                  setTab(t);
-                  setEditingSummary(false);
-                }}
-                templates={templates}
-                patch={patch}
-                activeRecord={activeRecord}
-                onExport={() =>
-                  guard(async () => {
-                    await flushAll();
-                    const path = await call('export', selected);
-                    if (path) setNotice(`Exported to ${path}`);
-                  })
-                }
-              />
-            ) : (
-              <button className="quick-note" onClick={() => newNote()} aria-label="New note">
-                <Plus size={14} />
-                New note
-              </button>
-            )}
-          </div>
-        </header>
-        {error && (
-          <div className="error-banner" role="alert">
-            <span>{error}</span>
-            {errorState.permission === 'screen-recording' && (
-              <button
-                className="banner-action"
-                onClick={() => guard(() => call('open-privacy', 'screen-recording'))}
-              >
-                Open Settings
-              </button>
-            )}
-            <IconButton label="Dismiss error" className="small" onClick={() => setError('')}>
-              <X size={14} />
-            </IconButton>
-          </div>
-        )}
-        {notice && (
-          <div className="notice" role="status">
-            <Check size={14} />
-            {typeof notice === 'string' ? notice : notice.text}
-            {notice.id && (
-              <button
-                className="text-button"
-                onClick={async () => {
-                  const target = data.meetings.find((m) => m.id === notice.id);
-                  if (target) {
-                    await openNote(target);
-                    setTab('summary');
-                    setNotice('');
-                  }
-                }}
-              >
-                Open
-              </button>
-            )}
-          </div>
-        )}
-        <div className="workspace-body">
-          <section className="main-content">
-            {globalChat ? (
-              chat
-            ) : meeting ? (
-              <NoteView
-                meeting={meeting}
-                folders={data.folders}
-                tab={tab}
-                draft={draft}
-                patch={patch}
-                busy={aiTarget?.id === selected ? busy : null}
-                stream={aiTarget?.id === selected ? stream : ''}
-                editingSummary={editingSummary}
-                setEditingSummary={setEditingSummary}
-                onEnhance={enhance}
-                enhanceDisabled={enhanceDisabled}
-                onCancel={cancelAi}
-                showCancel={chatOpen}
-                onHistory={() => setModal({ kind: 'history' })}
-                onSource={() => setSheet('transcript')}
-                coverage={{
-                  onListen: () => setSheet('recordings'),
-                  onRetry: retryRecording,
-                  retrying: retryingRecording,
-                  disabled: !!data.recording || !!meeting.deletedAt || !!busy,
-                }}
-                activeRecord={activeRecord}
-                ai={ai}
-                aiActions={aiActions}
-              />
-            ) : (
-              <HomeFeed
-                data={data}
-                visible={visible}
-                view={view}
-                query={query}
-                title={title}
-                calendarBusy={calendarBusy}
-                calendar={calendar}
-                newNote={newNote}
-                startMeeting={startMeeting}
-                openNote={openNote}
-                importFile={importFile}
-                setQuery={setQuery}
-              />
-            )}
-          </section>
-          <div className={'dock-wrap' + (chatOpen ? ' capture-only' : '')}>
-            {data.recording && (silent.microphone || silent.system) && (
-              <div className="capture-warnings" role="status">
-                {silent.microphone && (
-                  <div className="capture-warning">
-                    No sound from {silent.microphone}
-                    <button className="text-button" onClick={() => settings('capture')}>
-                      Change microphone
-                    </button>
-                  </div>
-                )}
-                {silent.system && <div className="capture-warning soft">No meeting audio yet</div>}
-              </div>
-            )}
-            {!chatOpen && (
-              <>
-                {meeting && sheet && (
-                  <TranscriptSheet
-                    meeting={meeting}
-                    tab={sheet}
-                    setTab={setSheet}
-                    onClose={() => setSheet(null)}
-                    activeRecord={activeRecord}
-                    partial={partial}
-                    capture={{
-                      levels: audioLevels,
-                      sources: { ...data.recording?.sources, ...captureSources },
-                      systemAudioRequested: data.settings.systemAudio ?? true,
-                      starting: data.starting,
-                      engine: data.recording?.engine,
-                    }}
-                    recordings={{
-                      call,
-                      onRetry: retryRecording,
-                      retrying: retryingRecording,
-                      locale: data.settings.locale ?? 'en-US',
-                      autoLocales: data.settings.autoLocales,
-                      disabled: !!data.recording || !!meeting.deletedAt || !!busy,
-                    }}
-                    onAddTranscript={() =>
-                      setModal({ kind: 'transcript', text: '', speaker: 'Speaker' })
-                    }
-                    onEditSegment={(s) => setModal({ kind: 'segment', ...s })}
-                  />
-                )}
-                {meeting &&
-                  !sheet &&
-                  ((busy === 'enhance' && aiTarget?.id === selected) ||
-                    (!meeting.summary && hasContent && !activeRecord && !meeting.deletedAt)) && (
-                    <EnhancePill
-                      busy={busy === 'enhance' && aiTarget?.id === selected}
-                      disabled={enhanceDisabled}
-                      onEnhance={enhance}
-                      onCancel={cancelAi}
-                    />
-                  )}
-                <div className="dock">
-                  {meeting && !meeting.deletedAt && (
-                    <RecordPill
-                      recording={{ ...data.recording, starting: data.starting }}
-                      active={activeRecord}
-                      hasAudio={meeting.recordings?.length > 0 || meeting.transcript.length > 0}
-                      elapsed={elapsed}
-                      level={level}
-                      sheetOpen={!!sheet}
-                      disabled={!!data.recording || !!retryingRecording}
-                      onStart={() => record()}
-                      onStop={() => guard(() => call('stop'))}
-                      onToggleSheet={() => setSheet((s) => (s ? null : 'transcript'))}
-                    />
-                  )}
-                  <div className="dock-chat">
-                    <button
-                      className="dock-placeholder"
-                      aria-label={meeting ? 'Chat with this meeting' : 'Chat with your notes'}
-                      onClick={() => openChat()}
-                    >
-                      Ask anything
-                      <kbd>⌘J</kbd>
-                    </button>
-                    <button
-                      className="dock-recipe"
-                      onClick={() => {
-                        setQuestion(
-                          meeting
-                            ? 'Draft a concise follow-up email with the decisions and next steps.'
-                            : 'List recent action items with their owners and due dates, citing the source meetings.',
-                        );
-                        openChat();
-                      }}
-                    >
-                      <span className="slash" aria-hidden="true">
-                        /
-                      </span>
-                      {meeting ? 'Write follow-up email' : 'List recent todos'}
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-          {chatOpen && !globalChat && chat}
-        </div>
-      </main>
-      <dialog
-        ref={dialogRef}
-        className={modal?.kind === 'settings' ? 'settings-dialog' : ''}
-        onCancel={() => setModal(null)}
-        onMouseDown={(e) => {
-          backdropDown.current = e.target === e.currentTarget;
-        }}
-        onClick={(e) => {
-          if (backdropDown.current && e.target === e.currentTarget) setModal(null);
-          backdropDown.current = false;
-        }}
-        aria-labelledby="modal-title"
       >
-        <div className="modal-inner">
-          <div className="modal-header">
-            <h2 id="modal-title">
-              {
-                {
-                  settings: 'Settings',
-                  folder: 'New folder',
-                  transcript: 'Add a transcript',
-                  segment: 'Edit transcript',
-                  history: 'Previous summaries',
-                  template: 'Create a template',
-                }[modal?.kind]
-              }
-            </h2>
-            <IconButton label="Close dialog" onClick={() => setModal(null)}>
-              <X size={17} />
-            </IconButton>
-          </div>
+        <Sidebar
+          view={view}
+          chatOpen={chatOpen}
+          folders={data.folders}
+          query={query}
+          onQuery={(value) => {
+            setQuery(value);
+            setSelected(null);
+            setChatOpen(false);
+            if (!['home', 'all', 'trash'].includes(view) && !view.startsWith('folder:'))
+              setView('all');
+          }}
+          searchRef={searchRef}
+          searchOpen={searchOpen || !!query}
+          setSearchOpen={setSearchOpen}
+          navigate={navigate}
+          openChat={() =>
+            guard(async () => {
+              await flushAll();
+              setSelected(null);
+              setView('chat');
+              setChatScope('all');
+              setChatOpen(true);
+            })
+          }
+          newFolder={() => setModal({ kind: 'folder', name: '' })}
+          importFile={importFile}
+          openSettings={settings}
+          ai={ai}
+          icon={stillnoteIcon}
+        />
+        <main className="workspace">
+          <header className="topbar">
+            <div className="topbar-left">
+              {meeting ? (
+                <>
+                  <button
+                    className="home-back"
+                    onClick={() => navigate('home')}
+                    aria-label={t('Back to Home')}
+                  >
+                    <ArrowLeft size={14} />
+                    <Home size={14} />
+                  </button>
+                  <span className="save-state" aria-live="polite">
+                    {saving ? (
+                      t('Saving…')
+                    ) : Object.keys(drafts[selected] ?? {}).length ? (
+                      t('Unsaved')
+                    ) : (
+                      <>
+                        <Check size={12} />
+                        {t('Saved')}
+                      </>
+                    )}
+                  </span>
+                </>
+              ) : (
+                <span className="workspace-label">{view === 'home' ? '' : title}</span>
+              )}
+            </div>
+            <div className="top-actions">
+              {data.recording && !activeRecord && (
+                <div className="global-recording" role="status">
+                  <span className="rec-dot live" />
+                  <span>
+                    {data.recording.stopping
+                      ? t('Finishing…')
+                      : data.starting
+                        ? t('Connecting…')
+                        : t('Listening · {time}', { time: duration(elapsed) })}
+                  </span>
+                  <button
+                    onClick={() => guard(() => call('stop'))}
+                    aria-label={t('Finish active recording')}
+                    disabled={data.recording.stopping}
+                  >
+                    <Square size={10} fill="currentColor" />
+                    {t('Finish')}
+                  </button>
+                </div>
+              )}
+              {meeting ? (
+                <NoteToolbar
+                  meeting={meeting}
+                  tab={tab}
+                  setTab={(t) => {
+                    setTab(t);
+                    setEditingSummary(false);
+                  }}
+                  templates={templates}
+                  patch={patch}
+                  activeRecord={activeRecord}
+                  onExport={() =>
+                    guard(async () => {
+                      await flushAll();
+                      const path = await call('export', selected);
+                      if (path) setNotice(t('Exported to {path}', { path }));
+                    })
+                  }
+                />
+              ) : (
+                <button className="quick-note" onClick={() => newNote()} aria-label={t('New note')}>
+                  <Plus size={14} />
+                  {t('New note')}
+                </button>
+              )}
+            </div>
+          </header>
           {error && (
-            <div className="modal-error" role="alert">
-              {error}
+            <div className="error-banner" role="alert">
+              <span>{t(error)}</span>
+              {errorState.permission === 'screen-recording' && (
+                <button
+                  className="banner-action"
+                  onClick={() => guard(() => call('open-privacy', 'screen-recording'))}
+                >
+                  {t('Open Settings')}
+                </button>
+              )}
+              <IconButton label={t('Dismiss error')} className="small" onClick={() => setError('')}>
+                <X size={14} />
+              </IconButton>
             </div>
           )}
-          {modal?.kind === 'settings' ? (
-            <SettingsDialog
-              initialSection={modal.initialSection}
-              call={call}
-              subscribe={api.subscribe}
-              data={data}
-              ai={ai}
-              accountBusy={accountBusy}
-              account={account}
-              aiActions={aiActions}
-              models={{ chatgpt: chatgptModels, claude: claudeModels }}
-              setting={setting}
-              guard={guard}
-              onUsage={() => guard(() => call('usage'))}
-              onBackup={() =>
-                guard(async () => {
-                  await flushAll();
-                  const p = await call('backup');
-                  if (p) {
-                    setNotice('Backup saved.');
-                    setModal(null);
-                  }
-                })
-              }
-              onReveal={() => guard(() => call('reveal'))}
-              onTemplate={() => setModal({ kind: 'template', name: '', prompt: '' })}
-            />
-          ) : modal?.kind === 'folder' ? (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                guard(async () => {
-                  const f = await call('folder', modal.name);
-                  setData((d) => ({ ...d, folders: [...d.folders, f] }));
-                  setModal(null);
-                });
-              }}
-            >
-              <label className="field">
-                Folder name
-                <input
-                  autoFocus
-                  required
-                  maxLength={100}
-                  value={modal.name}
-                  onChange={(e) => setModal({ ...modal, name: e.target.value })}
-                  placeholder="e.g. Customer conversations"
-                />
-              </label>
-              <div className="modal-footer">
-                <button className="primary" type="submit">
-                  Create folder
-                </button>
-              </div>
-            </form>
-          ) : ['transcript', 'segment'].includes(modal?.kind) ? (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                guard(async () => {
-                  const m =
-                    modal.kind === 'segment'
-                      ? await call('edit-segment', selected, modal.id, {
-                          text: modal.text,
-                          speaker: modal.speaker,
-                        })
-                      : await call('transcript', selected, {
-                          text: modal.text,
-                          speaker: modal.speaker,
-                          timestamp: meeting.duration,
-                        });
-                  updateMeeting(m);
-                  setModal(null);
-                  setSheet('transcript');
-                });
-              }}
-            >
-              <label className="field">
-                Speaker
-                <input
-                  value={modal.speaker}
-                  onChange={(e) => setModal({ ...modal, speaker: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                Transcript
-                <textarea
-                  autoFocus
-                  required
-                  rows={10}
-                  value={modal.text}
-                  onChange={(e) => setModal({ ...modal, text: e.target.value })}
-                  placeholder="Paste what was said…"
-                />
-              </label>
-              <div className="modal-footer">
-                {modal.kind === 'segment' && (
-                  <button
-                    type="button"
-                    className="text-button danger"
-                    onClick={() =>
-                      guard(async () => {
-                        updateMeeting(
-                          await call('edit-segment', selected, modal.id, { remove: true }),
-                        );
-                        setModal(null);
-                      })
+          {notice && (
+            <div className="notice" role="status">
+              <Check size={14} />
+              {typeof notice === 'string' ? notice : notice.text}
+              {notice.id && (
+                <button
+                  className="text-button"
+                  onClick={async () => {
+                    const target = data.meetings.find((m) => m.id === notice.id);
+                    if (target) {
+                      await openNote(target);
+                      setTab('summary');
+                      setNotice('');
                     }
-                  >
-                    Delete segment
+                  }}
+                >
+                  {t('Open')}
+                </button>
+              )}
+            </div>
+          )}
+          <div className="workspace-body">
+            <section className="main-content">
+              {globalChat ? (
+                chat
+              ) : meeting ? (
+                <NoteView
+                  meeting={meeting}
+                  folders={data.folders}
+                  tab={tab}
+                  draft={draft}
+                  patch={patch}
+                  busy={aiTarget?.id === selected ? busy : null}
+                  stream={aiTarget?.id === selected ? stream : ''}
+                  editingSummary={editingSummary}
+                  setEditingSummary={setEditingSummary}
+                  onEnhance={enhance}
+                  enhanceDisabled={enhanceDisabled}
+                  onCancel={cancelAi}
+                  showCancel={chatOpen}
+                  onHistory={() => setModal({ kind: 'history' })}
+                  onSource={() => setSheet('transcript')}
+                  coverage={{
+                    onListen: () => setSheet('recordings'),
+                    onRetry: retryRecording,
+                    retrying: retryingRecording,
+                    disabled: !!data.recording || !!meeting.deletedAt || !!busy,
+                  }}
+                  activeRecord={activeRecord}
+                  ai={ai}
+                  aiActions={aiActions}
+                />
+              ) : (
+                <HomeFeed
+                  data={data}
+                  visible={visible}
+                  view={view}
+                  query={query}
+                  title={title}
+                  calendarBusy={calendarBusy}
+                  calendar={calendar}
+                  newNote={newNote}
+                  startMeeting={startMeeting}
+                  openNote={openNote}
+                  importFile={importFile}
+                  setQuery={setQuery}
+                />
+              )}
+            </section>
+            <div className={'dock-wrap' + (chatOpen ? ' capture-only' : '')}>
+              {data.recording && (silent.microphone || silent.system) && (
+                <div className="capture-warnings" role="status">
+                  {silent.microphone && (
+                    <div className="capture-warning">
+                      {t('No sound from {device}', { device: silent.microphone })}
+                      <button className="text-button" onClick={() => settings('capture')}>
+                        {t('Change microphone')}
+                      </button>
+                    </div>
+                  )}
+                  {silent.system && (
+                    <div className="capture-warning soft">{t('No meeting audio yet')}</div>
+                  )}
+                </div>
+              )}
+              {!chatOpen && (
+                <>
+                  {meeting && sheet && (
+                    <TranscriptSheet
+                      meeting={meeting}
+                      tab={sheet}
+                      setTab={setSheet}
+                      onClose={() => setSheet(null)}
+                      activeRecord={activeRecord}
+                      partial={partial}
+                      capture={{
+                        levels: audioLevels,
+                        sources: { ...data.recording?.sources, ...captureSources },
+                        systemAudioRequested: data.settings.systemAudio ?? true,
+                        starting: data.starting,
+                        engine: data.recording?.engine,
+                      }}
+                      recordings={{
+                        call,
+                        onRetry: retryRecording,
+                        retrying: retryingRecording,
+                        locale: data.settings.locale ?? 'en-US',
+                        autoLocales: data.settings.autoLocales,
+                        disabled: !!data.recording || !!meeting.deletedAt || !!busy,
+                      }}
+                      onAddTranscript={() =>
+                        setModal({ kind: 'transcript', text: '', speaker: 'Speaker' })
+                      }
+                      onEditSegment={(s) => setModal({ kind: 'segment', ...s })}
+                    />
+                  )}
+                  {meeting &&
+                    !sheet &&
+                    ((busy === 'enhance' && aiTarget?.id === selected) ||
+                      (!meeting.summary && hasContent && !activeRecord && !meeting.deletedAt)) && (
+                      <EnhancePill
+                        busy={busy === 'enhance' && aiTarget?.id === selected}
+                        disabled={enhanceDisabled}
+                        onEnhance={enhance}
+                        onCancel={cancelAi}
+                      />
+                    )}
+                  <div className="dock">
+                    {meeting && !meeting.deletedAt && (
+                      <RecordPill
+                        recording={{ ...data.recording, starting: data.starting }}
+                        active={activeRecord}
+                        hasAudio={meeting.recordings?.length > 0 || meeting.transcript.length > 0}
+                        elapsed={elapsed}
+                        level={level}
+                        sheetOpen={!!sheet}
+                        disabled={!!data.recording || !!retryingRecording}
+                        onStart={() => record()}
+                        onStop={() => guard(() => call('stop'))}
+                        onToggleSheet={() => setSheet((s) => (s ? null : 'transcript'))}
+                      />
+                    )}
+                    <div className="dock-chat">
+                      <button
+                        className="dock-placeholder"
+                        aria-label={
+                          meeting ? t('Chat with this meeting') : t('Chat with your notes')
+                        }
+                        onClick={() => openChat()}
+                      >
+                        {t('Ask anything')}
+                        <kbd>⌘J</kbd>
+                      </button>
+                      <button
+                        className="dock-recipe"
+                        onClick={() => {
+                          setQuestion(
+                            meeting
+                              ? t(
+                                  'Draft a concise follow-up email with the decisions and next steps.',
+                                )
+                              : t(
+                                  'List recent action items with their owners and due dates, citing the source meetings.',
+                                ),
+                          );
+                          openChat();
+                        }}
+                      >
+                        <span className="slash" aria-hidden="true">
+                          /
+                        </span>
+                        {meeting ? t('Write follow-up email') : t('List recent todos')}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            {chatOpen && !globalChat && chat}
+          </div>
+        </main>
+        <dialog
+          ref={dialogRef}
+          className={modal?.kind === 'settings' ? 'settings-dialog' : ''}
+          onCancel={() => setModal(null)}
+          onMouseDown={(e) => {
+            backdropDown.current = e.target === e.currentTarget;
+          }}
+          onClick={(e) => {
+            if (backdropDown.current && e.target === e.currentTarget) setModal(null);
+            backdropDown.current = false;
+          }}
+          aria-labelledby="modal-title"
+        >
+          <div className="modal-inner">
+            <div className="modal-header">
+              <h2 id="modal-title">
+                {
+                  {
+                    settings: t('Settings'),
+                    folder: t('New folder'),
+                    transcript: t('Add a transcript'),
+                    segment: t('Edit transcript'),
+                    history: t('Previous summaries'),
+                    template: t('Create a template'),
+                  }[modal?.kind]
+                }
+              </h2>
+              <IconButton label={t('Close dialog')} onClick={() => setModal(null)}>
+                <X size={17} />
+              </IconButton>
+            </div>
+            {error && (
+              <div className="modal-error" role="alert">
+                {t(error)}
+              </div>
+            )}
+            {modal?.kind === 'settings' ? (
+              <SettingsDialog
+                initialSection={modal.initialSection}
+                call={call}
+                subscribe={api.subscribe}
+                data={data}
+                ai={ai}
+                accountBusy={accountBusy}
+                account={account}
+                aiActions={aiActions}
+                models={{ chatgpt: chatgptModels, claude: claudeModels }}
+                setting={setting}
+                guard={guard}
+                onUsage={() => guard(() => call('usage'))}
+                onBackup={() =>
+                  guard(async () => {
+                    await flushAll();
+                    const p = await call('backup');
+                    if (p) {
+                      setNotice(t('Backup saved.'));
+                      setModal(null);
+                    }
+                  })
+                }
+                onReveal={() => guard(() => call('reveal'))}
+                onTemplate={() => setModal({ kind: 'template', name: '', prompt: '' })}
+              />
+            ) : modal?.kind === 'folder' ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  guard(async () => {
+                    const f = await call('folder', modal.name);
+                    setData((d) => ({ ...d, folders: [...d.folders, f] }));
+                    setModal(null);
+                  });
+                }}
+              >
+                <label className="field">
+                  {t('Folder name')}
+                  <input
+                    autoFocus
+                    required
+                    maxLength={100}
+                    value={modal.name}
+                    onChange={(e) => setModal({ ...modal, name: e.target.value })}
+                    placeholder={t('e.g. Customer conversations')}
+                  />
+                </label>
+                <div className="modal-footer">
+                  <button className="primary" type="submit">
+                    {t('Create folder')}
                   </button>
-                )}
-                <button className="primary" type="submit">
-                  Save transcript
-                </button>
-              </div>
-            </form>
-          ) : modal?.kind === 'template' ? (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                guard(async () => {
-                  const item = { id: crypto.randomUUID(), name: modal.name, prompt: modal.prompt };
-                  await setting('templates', [...(data.settings.templates ?? []), item]);
-                  await load();
-                  setModal(null);
-                });
-              }}
-            >
-              <label className="field">
-                Name
-                <input
-                  required
-                  maxLength={100}
-                  value={modal.name}
-                  onChange={(e) => setModal({ ...modal, name: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                Instructions
-                <textarea
-                  required
-                  rows={6}
-                  value={modal.prompt}
-                  onChange={(e) => setModal({ ...modal, prompt: e.target.value })}
-                  placeholder="What should Stillnote focus on?"
-                />
-              </label>
-              <div className="modal-footer">
-                <button className="primary" type="submit">
-                  Save template
-                </button>
-              </div>
-            </form>
-          ) : modal?.kind === 'history' ? (
-            <div className="history-list">
-              {meeting?.versions.map((v, i) => (
-                <div className="history-item" key={i}>
-                  <div>
-                    <strong>
-                      {date(v.at)} · {time(v.at)}
-                    </strong>
+                </div>
+              </form>
+            ) : ['transcript', 'segment'].includes(modal?.kind) ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  guard(async () => {
+                    const m =
+                      modal.kind === 'segment'
+                        ? await call('edit-segment', selected, modal.id, {
+                            text: modal.text,
+                            speaker: modal.speaker,
+                          })
+                        : await call('transcript', selected, {
+                            text: modal.text,
+                            speaker: modal.speaker,
+                            timestamp: meeting.duration,
+                          });
+                    updateMeeting(m);
+                    setModal(null);
+                    setSheet('transcript');
+                  });
+                }}
+              >
+                <label className="field">
+                  {t('Speaker')}
+                  <input
+                    value={modal.speaker}
+                    onChange={(e) => setModal({ ...modal, speaker: e.target.value })}
+                  />
+                </label>
+                <label className="field">
+                  {t('Transcript')}
+                  <textarea
+                    autoFocus
+                    required
+                    rows={10}
+                    value={modal.text}
+                    onChange={(e) => setModal({ ...modal, text: e.target.value })}
+                    placeholder={t('Paste what was said…')}
+                  />
+                </label>
+                <div className="modal-footer">
+                  {modal.kind === 'segment' && (
                     <button
-                      className="text-button"
+                      type="button"
+                      className="text-button danger"
                       onClick={() =>
                         guard(async () => {
-                          if (!(await patch({ summary: v.text, snapshotSummary: true }))) return;
+                          updateMeeting(
+                            await call('edit-segment', selected, modal.id, { remove: true }),
+                          );
                           setModal(null);
                         })
                       }
                     >
-                      Restore this version
+                      {t('Delete segment')}
                     </button>
-                  </div>
-                  <Rich text={v.text} />
+                  )}
+                  <button className="primary" type="submit">
+                    {t('Save transcript')}
+                  </button>
                 </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </dialog>
-    </div>
+              </form>
+            ) : modal?.kind === 'template' ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  guard(async () => {
+                    const item = {
+                      id: crypto.randomUUID(),
+                      name: modal.name,
+                      prompt: modal.prompt,
+                    };
+                    await setting('templates', [...(data.settings.templates ?? []), item]);
+                    await load();
+                    setModal(null);
+                  });
+                }}
+              >
+                <label className="field">
+                  {t('Name')}
+                  <input
+                    required
+                    maxLength={100}
+                    value={modal.name}
+                    onChange={(e) => setModal({ ...modal, name: e.target.value })}
+                  />
+                </label>
+                <label className="field">
+                  {t('Instructions')}
+                  <textarea
+                    required
+                    rows={6}
+                    value={modal.prompt}
+                    onChange={(e) => setModal({ ...modal, prompt: e.target.value })}
+                    placeholder={t('What should Stillnote focus on?')}
+                  />
+                </label>
+                <div className="modal-footer">
+                  <button className="primary" type="submit">
+                    {t('Save template')}
+                  </button>
+                </div>
+              </form>
+            ) : modal?.kind === 'history' ? (
+              <div className="history-list">
+                {meeting?.versions.map((v, i) => (
+                  <div className="history-item" key={i}>
+                    <div>
+                      <strong>
+                        {date(v.at, t.locale)} · {time(v.at, t.locale)}
+                      </strong>
+                      <button
+                        className="text-button"
+                        onClick={() =>
+                          guard(async () => {
+                            if (!(await patch({ summary: v.text, snapshotSummary: true }))) return;
+                            setModal(null);
+                          })
+                        }
+                      >
+                        {t('Restore this version')}
+                      </button>
+                    </div>
+                    <Rich text={v.text} />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </dialog>
+      </div>
+    </I18nProvider>
   );
 }
 createRoot(document.getElementById('root')).render(<App />);

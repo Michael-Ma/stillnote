@@ -3,10 +3,12 @@ import { CalendarDays, FileText, LoaderCircle, Plus, RefreshCw, Star } from 'luc
 import { dayLabel, time } from '../format.mjs';
 import { eventKey } from '../reminders.mjs';
 import { IconButton } from './Content.jsx';
+import { useT } from '../i18n/react.jsx';
 
 // "11:30 AM" with a quieter meridiem, as in Granola's lists.
 function Clock({ value }) {
-  const parts = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+  const t = useT();
+  const parts = new Intl.DateTimeFormat(t.locale, { hour: 'numeric', minute: '2-digit' })
     .formatToParts(new Date(value))
     .map((p, i) =>
       p.type === 'dayPeriod' ? (
@@ -19,6 +21,7 @@ function Clock({ value }) {
 }
 
 function DayStamp({ day }) {
+  const t = useT();
   const d = new Date(day);
   const today = day === new Date().toDateString();
   return (
@@ -26,10 +29,10 @@ function DayStamp({ day }) {
       <strong>{d.getDate()}</strong>
       <span>
         <span>
-          {new Intl.DateTimeFormat(undefined, { month: 'long' }).format(d)}
-          {today && <i className="today-dot" aria-label="Today" />}
+          {new Intl.DateTimeFormat(t.locale, { month: 'long' }).format(d)}
+          {today && <i className="today-dot" aria-label={t('Today')} />}
         </span>
-        <small>{new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(d)}</small>
+        <small>{new Intl.DateTimeFormat(t.locale, { weekday: 'short' }).format(d)}</small>
       </span>
     </div>
   );
@@ -49,9 +52,10 @@ export function HomeFeed({
   importFile,
   setQuery,
 }) {
+  const t = useT();
   const groups = Object.entries(
     visible.reduce((all, m) => {
-      const label = dayLabel(m.createdAt);
+      const label = dayLabel(m.createdAt, t);
       (all[label] ??= []).push(m);
       return all;
     }, {}),
@@ -71,10 +75,10 @@ export function HomeFeed({
       {view === 'home' && !query && (
         <section className="upcoming">
           <div className="section-heading">
-            <h1>Coming up</h1>
+            <h1>{t('Coming up')}</h1>
             {data.calendar.length > 0 && (
               <IconButton
-                label="Refresh calendar"
+                label={t('Refresh calendar')}
                 className="small"
                 onClick={calendar}
                 disabled={calendarBusy}
@@ -89,7 +93,7 @@ export function HomeFeed({
                 <div className="day-events" key={day}>
                   <DayStamp day={day} />
                   <div className="day-event-list">
-                    {!events.length && <p className="no-events">No more events today</p>}
+                    {!events.length && <p className="no-events">{t('No more events today')}</p>}
                     {events.map((e) => {
                       const soon =
                         Date.parse(e.start) - Date.now() < 600000 && Date.parse(e.end) > Date.now();
@@ -109,15 +113,15 @@ export function HomeFeed({
                                 <Clock value={e.start} /> – <Clock value={e.end} />
                               </small>
                             </span>
-                            {!soon && <span className="start-event">Take notes</span>}
+                            {!soon && <span className="start-event">{t('Take notes')}</span>}
                           </button>
                           {soon && (
                             <button
                               className="start-event"
-                              title="Open the note and start recording"
+                              title={t('Open the note and start recording')}
                               onClick={() => startMeeting(note)}
                             >
-                              Start now
+                              {t('Start now')}
                             </button>
                           )}
                         </div>
@@ -130,12 +134,12 @@ export function HomeFeed({
               <div className="calendar-empty">
                 <CalendarDays size={20} />
                 <div>
-                  <strong>Your meetings, all in one place</strong>
-                  <p>Connect the calendars on your Mac to see what’s next.</p>
+                  <strong>{t('Your meetings, all in one place')}</strong>
+                  <p>{t('Connect the calendars on your Mac to see what’s next.')}</p>
                 </div>
                 <button onClick={calendar} disabled={calendarBusy} className="calendar-connect">
                   {calendarBusy && <LoaderCircle size={13} className="spin" />}
-                  {calendarBusy ? 'Connecting…' : 'Connect'}
+                  {calendarBusy ? t('Connecting…') : t('Connect')}
                 </button>
               </div>
             )}
@@ -144,18 +148,16 @@ export function HomeFeed({
       )}
       {query && (
         <div className="section-heading search-heading">
-          <h1>Search results</h1>
+          <h1>{t('Search results')}</h1>
           <button className="text-button" onClick={() => setQuery('')}>
-            Clear search
+            {t('Clear search')}
           </button>
         </div>
       )}
       {view !== 'home' && !query && (
         <div className="section-heading feed-heading">
           <h1>{title}</h1>
-          <span>
-            {visible.length} {visible.length === 1 ? 'note' : 'notes'}
-          </span>
+          <span>{t.count(visible.length, '{n} note', '{n} notes')}</span>
         </div>
       )}
       <div className="meeting-feed">
@@ -178,13 +180,13 @@ export function HomeFeed({
                 </span>
                 <span className="feed-note">
                   <span className="row-title">
-                    <strong>{m.title || 'New note'}</strong>
-                    {m.starred && <Star size={11} fill="currentColor" aria-label="Starred" />}
+                    <strong>{m.title || t('New note')}</strong>
+                    {m.starred && <Star size={11} fill="currentColor" aria-label={t('Starred')} />}
                     {data.recording?.id === m.id && <span className="record-dot" />}
                   </span>
                   <span className="feed-description">
-                    {m.participants || 'Me'}
-                    {m.duration > 0 ? ` · ${Math.ceil(m.duration / 60)} min` : ''}
+                    {m.participants || t('Me')}
+                    {m.duration > 0 ? ` · ${t('{n} min', { n: Math.ceil(m.duration / 60) })}` : ''}
                   </span>
                 </span>
                 <time>
@@ -200,26 +202,26 @@ export function HomeFeed({
           <FileText size={26} />
           <h2>
             {query
-              ? 'No notes found'
+              ? t('No notes found')
               : view === 'trash'
-                ? 'Nothing in Trash'
-                : 'A place for every conversation'}
+                ? t('Nothing in Trash')
+                : t('A place for every conversation')}
           </h2>
           <p>
             {query
-              ? 'Try another word from a title, your notes, or a transcript.'
+              ? t('Try another word from a title, your notes, or a transcript.')
               : view === 'trash'
-                ? 'Deleted notes will appear here until you restore them.'
-                : 'Start a note, press record, and stay in the conversation.'}
+                ? t('Deleted notes will appear here until you restore them.')
+                : t('Start a note, press record, and stay in the conversation.')}
           </p>
           {!query && view !== 'trash' && (
             <div>
               <button className="primary" onClick={() => newNote()}>
                 <Plus size={15} />
-                Quick note
+                {t('Quick note')}
               </button>
               <button className="text-button" onClick={importFile}>
-                Import a transcript
+                {t('Import a transcript')}
               </button>
             </div>
           )}

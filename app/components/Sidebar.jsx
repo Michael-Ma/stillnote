@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { IconButton } from './Content.jsx';
+import { useT } from '../i18n/react.jsx';
 
 const plans = { max: 'Max', pro: 'Pro', team: 'Team', enterprise: 'Enterprise' };
 
@@ -33,6 +34,7 @@ export function Sidebar({
   ai,
   icon,
 }) {
+  const t = useT();
   const item = (key, label, Icon, onClick = () => navigate(key)) => (
     <button
       className={view === key && (key !== 'home' || !chatOpen) ? 'active' : ''}
@@ -48,8 +50,8 @@ export function Sidebar({
     <aside className="sidebar">
       <div className="window-space">
         <IconButton
-          label="Search"
-          title="Search ⌘K"
+          label={t('Search')}
+          title={t('Search {shortcut}', { shortcut: '⌘K' })}
           className={'search-toggle' + (searchOpen ? ' active' : '')}
           onClick={() => setSearchOpen(!searchOpen)}
         >
@@ -62,8 +64,8 @@ export function Sidebar({
           <input
             ref={searchRef}
             autoFocus
-            aria-label="Search notes"
-            placeholder="Search notes"
+            aria-label={t('Search notes')}
+            placeholder={t('Search notes')}
             value={query}
             onChange={(e) => onQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -75,7 +77,7 @@ export function Sidebar({
           />
           <button
             className="search-clear"
-            aria-label="Close search"
+            aria-label={t('Close search')}
             onClick={() => {
               onQuery('');
               setSearchOpen(false);
@@ -85,18 +87,18 @@ export function Sidebar({
           </button>
         </label>
       )}
-      <nav aria-label="Notebook">
-        {item('home', 'Home', Home)}
-        {item('chat', 'Chat', MessageCircle, openChat)}
-        {item('starred', 'Starred', Star)}
+      <nav aria-label={t('Notebook')}>
+        {item('home', t('Home'), Home)}
+        {item('chat', t('Chat'), MessageCircle, openChat)}
+        {item('starred', t('Starred'), Star)}
       </nav>
       <div className="nav-label">
-        <span>Spaces</span>
-        <IconButton label="New folder" className="small" onClick={newFolder}>
+        <span>{t('Spaces')}</span>
+        <IconButton label={t('New folder')} className="small" onClick={newFolder}>
           <Plus size={14} />
         </IconButton>
       </div>
-      <nav aria-label="Folders" className="folders">
+      <nav aria-label={t('Folders')} className="folders">
         <button
           className={'my-notes' + (view === 'all' ? ' active' : '')}
           onClick={() => navigate('all')}
@@ -104,7 +106,7 @@ export function Sidebar({
           <span className="space-icon">
             <Lock size={12} />
           </span>
-          <span>My notes</span>
+          <span>{t('My notes')}</span>
         </button>
         {folders.map((f) => (
           <button
@@ -120,27 +122,27 @@ export function Sidebar({
       </nav>
       <div className="sidebar-bottom">
         <div className="sidebar-tools">
-          <IconButton label="Import transcript or backup" onClick={importFile}>
+          <IconButton label={t('Import transcript or backup')} onClick={importFile}>
             <Upload size={16} />
           </IconButton>
-          <IconButton label="Trash" onClick={() => navigate('trash')}>
+          <IconButton label={t('Trash')} onClick={() => navigate('trash')}>
             <Trash2 size={16} />
           </IconButton>
-          <IconButton label="Settings" onClick={openSettings}>
+          <IconButton label={t('Settings')} onClick={openSettings}>
             <Settings size={16} />
           </IconButton>
         </div>
-        <button className="plan-pill" onClick={openSettings} aria-label="AI settings">
+        <button className="plan-pill" onClick={openSettings} aria-label={t('AI settings')}>
           <span>
             <span className={'status-dot' + (ai.ready ? ' on' : '')} aria-hidden="true" />
-            {ai.ready ? `${ai.label}${plan ? ` ${plan}` : ''}` : 'AI not set up'}
+            {ai.ready ? `${ai.label}${plan ? ` ${plan}` : ''}` : t('AI not set up')}
           </span>
-          <span className="plan-action">{ai.ready ? 'Manage' : 'Connect'}</span>
+          <span className="plan-action">{ai.ready ? t('Manage') : t('Connect')}</span>
         </button>
         <div className="workspace-row">
           <img className="brand-icon" src={icon} alt="" />
           <strong>Stillnote</strong>
-          <small>On this Mac</small>
+          <small>{t('On this Mac')}</small>
         </div>
       </div>
     </aside>

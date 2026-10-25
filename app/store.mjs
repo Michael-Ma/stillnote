@@ -71,6 +71,7 @@ const portableSettings = new Set([
   'claudeModel',
   'locale',
   'autoLocales',
+  'uiLanguage',
   'echoCancellation',
   'systemAudio',
   'autoEnhance',
@@ -547,6 +548,9 @@ export function validateSetting(key, value) {
     if (!Array.isArray(value) || value.length !== 2 || value[0] === value[1])
       throw new Error('Choose two different languages for Auto.');
     value.forEach(validateLocale);
+  } else if (key === 'uiLanguage') {
+    if (!['system', 'en', 'zh-Hans'].includes(value))
+      throw new Error('Invalid interface language.');
   } else if (key === 'inputDevice') {
     if (
       value !== null &&

@@ -4,6 +4,7 @@ import {
   Check,
   Download,
   Folder,
+  Languages,
   LoaderCircle,
   Mic,
   NotebookPen,
@@ -13,11 +14,16 @@ import {
 } from 'lucide-react';
 import { RecordingSettings } from './RecordingSettings.jsx';
 import { claudeSummary, modelKey, usageSummary } from '../ai-view.mjs';
+import { useT } from '../i18n/react.jsx';
 
+// Labels are translation keys, translated where they are shown.
+// Labels are translated where shown; msg() lists them for the i18n coverage test.
+const msg = (text) => text;
 const sections = [
-  ['ai', 'AI', Sparkles],
-  ['capture', 'Recording', Mic],
-  ['notebook', 'Notebook', NotebookPen],
+  ['general', msg('General'), Languages],
+  ['ai', msg('AI'), Sparkles],
+  ['capture', msg('Recording'), Mic],
+  ['notebook', msg('Notebook'), NotebookPen],
 ];
 
 function Toggle({ id, checked, onChange }) {
@@ -34,6 +40,7 @@ function Toggle({ id, checked, onChange }) {
 }
 
 function ProviderCard({ id, name, active, ready, onUse, children, status }) {
+  const t = useT();
   return (
     <div className={'provider-card' + (active ? ' active' : '')}>
       <div className="provider-head">
@@ -47,12 +54,12 @@ function ProviderCard({ id, name, active, ready, onUse, children, status }) {
         {active ? (
           <span className="provider-badge">
             <Check size={12} />
-            In use
+            {t('In use')}
           </span>
         ) : (
           ready && (
             <button className="secondary small" onClick={onUse}>
-              Use {name}
+              {t('Use {provider}', { provider: name })}
             </button>
           )
         )}
@@ -79,12 +86,13 @@ export function SettingsDialog({
   onTemplate,
   onUsage,
 }) {
+  const t = useT();
   const [section, setSection] = useState(initialSection);
   const { chatgpt, claude } = ai;
   const activeModels = ai.provider === 'claude' ? models.claude : models.chatgpt;
   return (
     <div className="settings">
-      <nav className="settings-nav" aria-label="Settings sections">
+      <nav className="settings-nav" aria-label={t('Settings sections')}>
         {sections.map(([key, label, Icon]) => (
           <button
             key={key}
@@ -93,17 +101,41 @@ export function SettingsDialog({
             onClick={() => setSection(key)}
           >
             <Icon size={15} />
-            {label}
+            {t(label)}
           </button>
         ))}
       </nav>
       <div className="settings-body">
+        {section === 'general' && (
+          <section>
+            <h3>{t('General')}</h3>
+            <div className="setting-row">
+              <div>
+                <label htmlFor="ui-language">{t('App language')}</label>
+                <small>
+                  {t('Menus, buttons and messages. Notes keep the language you write in.')}
+                </small>
+              </div>
+              <select
+                id="ui-language"
+                value={data.settings.uiLanguage ?? 'system'}
+                onChange={(e) => guard(() => setting('uiLanguage', e.target.value))}
+              >
+                <option value="system">{t('Follow macOS')}</option>
+                {/* Each language is named in itself, so it can be found whatever is shown. */}
+                <option value="en">English</option>
+                <option value="zh-Hans">简体中文</option>
+              </select>
+            </div>
+          </section>
+        )}
         {section === 'ai' && (
           <section>
-            <h3>AI provider</h3>
+            <h3>{t('AI provider')}</h3>
             <p className="settings-lead">
-              Stillnote enhances notes and answers questions with a plan you already have. Audio
-              never leaves this Mac; only the notes and transcripts you use are sent.
+              {t(
+                'Stillnote enhances notes and answers questions with a plan you already have. Audio never leaves this Mac; only the notes and transcripts you use are sent.',
+              )}
             </p>
             <ProviderCard
               id="claude"
@@ -111,11 +143,11 @@ export function SettingsDialog({
               active={ai.provider === 'claude'}
               ready={claude.ready}
               onUse={() => aiActions.use('claude')}
-              status={claudeSummary(claude)}
+              status={claudeSummary(claude, t)}
             >
               <div className="provider-actions">
                 {claude.ready ? (
-                  claude.usage && <small>{usageSummary(claude.usage)}</small>
+                  claude.usage && <small>{usageSummary(claude.usage, Date.now(), t)}</small>
                 ) : claude.installed ? (
                   <button
                     className="primary small"
@@ -123,36 +155,37 @@ export function SettingsDialog({
                     onClick={aiActions.claudeSignIn}
                   >
                     {claude.signingIn && <LoaderCircle size={13} className="spin" />}
-                    Sign in to Claude
+                    {t('Sign in to Claude')}
                   </button>
                 ) : (
                   <>
                     <button className="primary small" onClick={() => aiActions.terminal('install')}>
-                      Install Claude Code
+                      {t('Install Claude Code')}
                     </button>
                     <button className="text-button" onClick={aiActions.installHelp}>
-                      Learn more <ArrowUpRight size={12} />
+                      {t('Learn more')} <ArrowUpRight size={12} />
                     </button>
                   </>
                 )}
                 {claude.signingIn && (
                   <>
                     <button className="text-button" onClick={aiActions.claudeCancel}>
-                      Cancel
+                      {t('Cancel')}
                     </button>
                     <button className="text-button" onClick={() => aiActions.terminal('sign-in')}>
-                      Sign in using Terminal
+                      {t('Sign in using Terminal')}
                     </button>
                   </>
                 )}
                 <button className="text-button" onClick={aiActions.refresh}>
                   <RefreshCw size={12} className={claude.checking ? 'spin' : ''} />
-                  Check again
+                  {t('Check again')}
                 </button>
               </div>
               <small className="provider-note">
-                Uses the Claude Code app on this Mac with your own sign-in. Stillnote never reads
-                your Claude credentials. Requests count toward your Claude plan limits.
+                {t(
+                  'Uses the Claude Code app on this Mac with your own sign-in. Stillnote never reads your Claude credentials. Requests count toward your Claude plan limits.',
+                )}
               </small>
             </ProviderCard>
             <ProviderCard
@@ -163,16 +196,18 @@ export function SettingsDialog({
               onUse={() => aiActions.use('chatgpt')}
               status={
                 chatgpt.ready
-                  ? `Connected${chatgpt.email ? ` · ${chatgpt.email}` : ''}`
+                  ? chatgpt.email
+                    ? t('Connected · {email}', { email: chatgpt.email })
+                    : t('Connected')
                   : chatgpt.connected
-                    ? 'Connected, but plan usage is not enabled. Reconnect to allow it.'
-                    : 'Sign in with your ChatGPT account in the browser.'
+                    ? t('Connected, but plan usage is not enabled. Reconnect to allow it.')
+                    : t('Sign in with your ChatGPT account in the browser.')
               }
             >
               <div className="provider-actions">
                 {accountBusy ? (
                   <button className="secondary small" onClick={() => account('cancel')}>
-                    Cancel sign-in
+                    {t('Cancel sign-in')}
                   </button>
                 ) : (
                   <button
@@ -182,7 +217,7 @@ export function SettingsDialog({
                     }
                     onClick={() => account('connect')}
                   >
-                    {chatgpt.connected ? 'Reconnect' : 'Continue with ChatGPT'}
+                    {chatgpt.connected ? t('Reconnect') : t('Continue with ChatGPT')}
                     <ArrowUpRight size={13} />
                   </button>
                 )}
@@ -193,21 +228,21 @@ export function SettingsDialog({
                       disabled={accountBusy}
                       onClick={() => account('add')}
                     >
-                      Add account
+                      {t('Add account')}
                     </button>
                     <button
                       className="text-button"
                       disabled={accountBusy}
                       onClick={() => account('disconnect')}
                     >
-                      Sign out
+                      {t('Sign out')}
                     </button>
                   </>
                 )}
               </div>
               {chatgpt.profiles?.length > 1 && (
                 <div className="setting-row">
-                  <label htmlFor="profile">Account</label>
+                  <label htmlFor="profile">{t('Account')}</label>
                   <select
                     id="profile"
                     disabled={accountBusy}
@@ -216,7 +251,7 @@ export function SettingsDialog({
                   >
                     {chatgpt.profiles.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.label} · {p.email ?? 'Pending registration'}
+                        {p.label} · {p.email ?? t('Pending registration')}
                       </option>
                     ))}
                   </select>
@@ -226,10 +261,11 @@ export function SettingsDialog({
             {ai.ready && (
               <div className="setting-row">
                 <div>
-                  <label htmlFor="model">Model</label>
+                  <label htmlFor="model">{t('Model')}</label>
                   <small>
                     <button className="text-button" onClick={onUsage}>
-                      View {ai.label} usage <ArrowUpRight size={12} />
+                      {t('View {provider} usage', { provider: ai.label })}{' '}
+                      <ArrowUpRight size={12} />
                     </button>
                   </small>
                 </div>
@@ -249,15 +285,15 @@ export function SettingsDialog({
                       </option>
                     ))
                   ) : (
-                    <option value="">Loading models…</option>
+                    <option value="">{t('Loading models…')}</option>
                   )}
                 </select>
               </div>
             )}
             <div className="setting-row">
               <div>
-                <label htmlFor="autoEnhance">Enhance when the meeting ends</label>
-                <small>Write enhanced notes automatically after recording.</small>
+                <label htmlFor="autoEnhance">{t('Enhance when the meeting ends')}</label>
+                <small>{t('Write enhanced notes automatically after recording.')}</small>
               </div>
               <Toggle
                 id="autoEnhance"
@@ -269,7 +305,7 @@ export function SettingsDialog({
         )}
         {section === 'capture' && (
           <section>
-            <h3>Recording</h3>
+            <h3>{t('Recording')}</h3>
             <RecordingSettings
               settings={data.settings}
               setting={setting}
@@ -279,8 +315,10 @@ export function SettingsDialog({
             />
             <div className="setting-row">
               <div>
-                <label htmlFor="systemAudio">Capture meeting audio</label>
-                <small>Transcribe other apps, like Zoom or Meet, alongside your microphone.</small>
+                <label htmlFor="systemAudio">{t('Capture meeting audio')}</label>
+                <small>
+                  {t('Transcribe other apps, like Zoom or Meet, alongside your microphone.')}
+                </small>
               </div>
               <Toggle
                 id="systemAudio"
@@ -290,11 +328,11 @@ export function SettingsDialog({
             </div>
             <div className="setting-row">
               <div>
-                <label htmlFor="meetingReminders">Meeting reminders</label>
+                <label htmlFor="meetingReminders">{t('Meeting reminders')}</label>
                 <small>
                   {data.settings.calendarConnected
-                    ? 'Notify me a minute before calendar meetings while Stillnote is open.'
-                    : 'Connect your calendar on Home to get a reminder before each meeting.'}
+                    ? t('Notify me a minute before calendar meetings while Stillnote is open.')
+                    : t('Connect your calendar on Home to get a reminder before each meeting.')}
                 </small>
               </div>
               <Toggle
@@ -305,8 +343,10 @@ export function SettingsDialog({
             </div>
             <div className="setting-row">
               <div>
-                <label htmlFor="reminderAutoRecord">Start recording from a reminder</label>
-                <small>Clicking a reminder opens the meeting’s note and starts recording.</small>
+                <label htmlFor="reminderAutoRecord">{t('Start recording from a reminder')}</label>
+                <small>
+                  {t('Clicking a reminder opens the meeting’s note and starts recording.')}
+                </small>
               </div>
               <Toggle
                 id="reminderAutoRecord"
@@ -315,32 +355,33 @@ export function SettingsDialog({
               />
             </div>
             <p className="settings-foot">
-              Your microphone is labeled “You” and other apps “Meeting audio”. Individual remote
-              speakers are not identified. Let participants know when you record.
+              {t(
+                'Your microphone is labeled “You” and other apps “Meeting audio”. Individual remote speakers are not identified. Let participants know when you record.',
+              )}
             </p>
           </section>
         )}
         {section === 'notebook' && (
           <section>
-            <h3>Notebook</h3>
+            <h3>{t('Notebook')}</h3>
             <div className="settings-buttons">
               <button className="secondary" onClick={onBackup}>
                 <Download size={15} />
-                Back up notebook
+                {t('Back up notebook')}
               </button>
               <button className="secondary" onClick={onReveal}>
                 <Folder size={15} />
-                Open data folder
+                {t('Open data folder')}
               </button>
               <button className="secondary" onClick={onTemplate}>
                 <Plus size={15} />
-                Custom template
+                {t('Custom template')}
               </button>
             </div>
             <p className="settings-foot">
-              Notes live in a local SQLite database. Backups include meetings, transcripts and chat
-              history, but not raw audio or account credentials. Importing a backup adds new
-              meetings without replacing existing ones.
+              {t(
+                'Notes live in a local SQLite database. Backups include meetings, transcripts and chat history, but not raw audio or account credentials. Importing a backup adds new meetings without replacing existing ones.',
+              )}
             </p>
           </section>
         )}

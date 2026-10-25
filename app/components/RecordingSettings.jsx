@@ -1,12 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { cleanError, languageName, languageOptions } from '../format.mjs';
+import { useT } from '../i18n/react.jsx';
 
-const unavailable = (error, label) =>
-  /Unknown operation/.test(cleanError(error))
-    ? `${label} are unavailable in this version.`
-    : cleanError(error);
+// `message` is the translated sentence for a main process without this operation; any other
+// error comes back in English from the main process and is translated when it is known.
+const unavailable = (error, message, t) =>
+  /Unknown operation/.test(cleanError(error)) ? message : t(cleanError(error));
 
 export function RecordingSettings({ settings, setting, guard, call, subscribe }) {
+  const t = useT();
   const [inputs, setInputs] = useState(null);
   const [languages, setLanguages] = useState(null);
   const [deviceError, setDeviceError] = useState('');
@@ -17,7 +19,7 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
   const locale = settings.locale ?? 'en-US';
   const auto = locale === 'auto';
   const autoLocales = settings.autoLocales ?? ['zh-CN', 'en-US'];
-  const options = languageOptions(languages);
+  const options = languageOptions(languages, t.locale);
   const installed = (code) => options.some((o) => o.locale === code && o.installed);
   // The languages this choice needs that are supported here but not downloaded yet.
   const missing = (auto ? autoLocales : [locale]).filter(
@@ -31,7 +33,10 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
         if (alive.current) setInputs(r.inputs);
       })
       .catch((e) => {
-        if (alive.current) setDeviceError(unavailable(e, 'Microphone controls'));
+        if (alive.current)
+          setDeviceError(
+            unavailable(e, t('Microphone controls are unavailable in this version.'), t),
+          );
       });
     Promise.resolve()
       .then(() => call('languages'))
@@ -39,7 +44,10 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
         if (alive.current) setLanguages(r);
       })
       .catch((e) => {
-        if (alive.current) setLanguageError(unavailable(e, 'Language controls'));
+        if (alive.current)
+          setLanguageError(
+            unavailable(e, t('Language controls are unavailable in this version.'), t),
+          );
       });
     const unsubscribe = subscribe((event) => {
       if (event.type === 'language-progress' && installing.current === event.locale)
@@ -59,20 +67,24 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
       const result = await call('install-language', target);
       if (alive.current) setLanguages(result);
     } catch (e) {
-      if (alive.current) setLanguageError(unavailable(e, 'Language downloads'));
+      if (alive.current)
+        setLanguageError(
+          unavailable(e, t('Language downloads are unavailable in this version.'), t),
+        );
     } finally {
       installing.current = null;
       if (alive.current) setDownload(null);
     }
   }
+  const defaultInput = inputs?.find((d) => d.isDefault);
   return (
     <>
       {inputs ? (
         <>
           <div className="setting-row">
             <div>
-              <label htmlFor="inputDevice">Microphone</label>
-              <small>Applies to your next recording.</small>
+              <label htmlFor="inputDevice">{t('Microphone')}</label>
+              <small>{t('Applies to your next recording.')}</small>
             </div>
             <select
               id="inputDevice"
@@ -80,28 +92,31 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
               onChange={(e) => guard(() => setting('inputDevice', e.target.value || null))}
             >
               <option value="">
-                System default
-                {inputs.find((d) => d.isDefault)
-                  ? ` (${inputs.find((d) => d.isDefault).name})`
-                  : ''}
+                {defaultInput
+                  ? t('System default ({device})', { device: defaultInput.name })
+                  : t('System default')}
               </option>
               {settings.inputDevice && !inputs.some((d) => d.uid === settings.inputDevice) && (
-                <option value={settings.inputDevice}>Selected microphone (unavailable)</option>
+                <option value={settings.inputDevice}>
+                  {t('Selected microphone (unavailable)')}
+                </option>
               )}
               {inputs.map((device) => (
                 <option key={device.uid} value={device.uid}>
-                  {device.name}
-                  {device.isDefault ? ' · Default' : ''}
+                  {device.isDefault
+                    ? t('{device} · Default', { device: device.name })
+                    : device.name}
                 </option>
               ))}
             </select>
           </div>
           <div className="setting-row">
             <div>
-              <label htmlFor="echoCancellation">Echo cancellation</label>
+              <label htmlFor="echoCancellation">{t('Echo cancellation')}</label>
               <small>
-                Experimental. Use headphones for the cleanest transcript; Stillnote falls back to
-                normal capture if your Mac can’t start it.
+                {t(
+                  'Experimental. Use headphones for the cleanest transcript; Stillnote falls back to normal capture if your Mac can’t start it.',
+                )}
               </small>
             </div>
             <select
@@ -109,25 +124,27 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
               value={settings.echoCancellation === 'on' ? 'on' : 'off'}
               onChange={(e) => guard(() => setting('echoCancellation', e.target.value))}
             >
-              <option value="off">Off</option>
-              <option value="on">On (experimental)</option>
+              <option value="off">{t('Off')}</option>
+              <option value="on">{t('On (experimental)')}</option>
             </select>
           </div>
         </>
       ) : (
         <p className="settings-foot" role="status">
-          {deviceError || 'Loading microphones…'}
+          {deviceError || t('Loading microphones…')}
         </p>
       )}
       {languages && (
         <>
           <div className="setting-row">
             <div>
-              <label htmlFor="locale">Meeting language</label>
+              <label htmlFor="locale">{t('Meeting language')}</label>
               <small>
                 {auto
-                  ? 'Each sentence is transcribed in whichever language fits. Uses more processing while recording.'
-                  : 'Transcribed on this Mac.'}
+                  ? t(
+                      'Each sentence is transcribed in whichever language fits. Uses more processing while recording.',
+                    )
+                  : t('Transcribed on this Mac.')}
               </small>
             </div>
             <select
@@ -136,14 +153,17 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
               disabled={!!download}
               onChange={(e) => guard(() => setting('locale', e.target.value))}
             >
-              {languages.engine !== 'legacy' && <option value="auto">Auto</option>}
+              {languages.engine !== 'legacy' && <option value="auto">{t('Auto')}</option>}
               {!auto && !options.some((o) => o.locale === locale) && (
-                <option value={locale}>{locale} · Unavailable</option>
+                <option value={locale}>
+                  {t('{language} · Unavailable', { language: locale })}
+                </option>
               )}
               {options.map((option) => (
                 <option key={option.locale} value={option.locale}>
-                  {option.name}
-                  {option.installed ? ' · Installed' : ''}
+                  {option.installed
+                    ? t('{language} · Installed', { language: option.name })
+                    : option.name}
                 </option>
               ))}
             </select>
@@ -151,14 +171,14 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
           {auto && (
             <div className="setting-row">
               <div>
-                <span id="auto-languages">Listen for</span>
-                <small>Pick the two languages your meetings use.</small>
+                <span id="auto-languages">{t('Listen for')}</span>
+                <small>{t('Pick the two languages your meetings use.')}</small>
               </div>
               <div className="auto-languages" role="group" aria-labelledby="auto-languages">
                 {autoLocales.map((code, index) => (
                   <select
                     key={index}
-                    aria-label={index ? 'Second language' : 'First language'}
+                    aria-label={index ? t('Second language') : t('First language')}
                     value={code}
                     disabled={!!download}
                     onChange={(e) => {
@@ -171,8 +191,9 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
                   >
                     {options.map((option) => (
                       <option key={option.locale} value={option.locale}>
-                        {option.name}
-                        {option.installed ? ' · Installed' : ''}
+                        {option.installed
+                          ? t('{language} · Installed', { language: option.name })
+                          : option.name}
                       </option>
                     ))}
                   </select>
@@ -182,9 +203,12 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
           )}
           {languages.engine === 'legacy' ? (
             <p className="settings-foot">
-              Languages that work on this Mac:{' '}
-              {options.map((o) => o.name).join(', ') || 'None available'}. Apple Speech (legacy)
-              uses macOS Dictation settings for language setup. Auto language needs macOS 26.
+              {t(
+                'Languages that work on this Mac: {languages}. Apple Speech (legacy) uses macOS Dictation settings for language setup. Auto language needs macOS 26.',
+                {
+                  languages: options.map((o) => o.name).join(', ') || t('None available'),
+                },
+              )}
             </p>
           ) : (
             missing.map((code) => (
@@ -194,12 +218,14 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
                   disabled={!!download}
                   onClick={() => install(code)}
                 >
-                  {download?.locale === code ? 'Downloading…' : `Download ${languageName(code)}`}
+                  {download?.locale === code
+                    ? t('Downloading…')
+                    : t('Download {language}', { language: languageName(code, t.locale) })}
                 </button>
                 {download?.locale === code && (
                   <>
                     <progress
-                      aria-label="Language download progress"
+                      aria-label={t('Language download progress')}
                       max={1}
                       value={download.fraction}
                     />
@@ -213,7 +239,7 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
       )}
       {(!languages || languageError) && (
         <p className="settings-foot" role="status">
-          {languageError || 'Loading meeting languages…'}
+          {languageError || t('Loading meeting languages…')}
         </p>
       )}
     </>

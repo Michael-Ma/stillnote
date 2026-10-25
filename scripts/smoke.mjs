@@ -17,6 +17,7 @@ async function launch() {
       STILLNOTE_DATA_DIR: dataDir,
       STILLNOTE_DISABLE_CLAUDE: '1',
       STILLNOTE_MOCK_KEYCHAIN: '1',
+      STILLNOTE_UI_LANGUAGE: 'en',
     },
     timeout: 30000,
   });

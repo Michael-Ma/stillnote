@@ -1,4 +1,7 @@
 // Pure view model for the AI provider UI. Tolerates the older state shape (account only).
+import { translator } from './i18n/index.mjs';
+
+const english = translator('en');
 export const claudeModels = [
   { id: 'sonnet', name: 'Sonnet' },
   { id: 'opus', name: 'Opus' },
@@ -25,29 +28,34 @@ export function aiView(data) {
 }
 
 const plans = { max: 'Max', pro: 'Pro', team: 'Team', enterprise: 'Enterprise', free: 'Free' };
-export function claudeSummary(claude) {
+export function claudeSummary(claude, t = english) {
   if (!claude) return '';
   if (claude.checking && claude.installed === undefined)
-    return 'Looking for Claude Code on this Mac…';
-  if (claude.signingIn) return 'Finish signing in to Claude in your browser…';
-  if (!claude.installed) return 'Claude Code is not installed on this Mac.';
-  if (!claude.loggedIn) return 'Claude Code is installed. Sign in once to use your plan.';
+    return t('Looking for Claude Code on this Mac…');
+  if (claude.signingIn) return t('Finish signing in to Claude in your browser…');
+  if (!claude.installed) return t('Claude Code is not installed on this Mac.');
+  if (!claude.loggedIn) return t('Claude Code is installed. Sign in once to use your plan.');
   if (!claude.ready)
-    return 'Claude Code is signed in with an API key, so requests would be billed to that key.';
+    return t('Claude Code is signed in with an API key, so requests would be billed to that key.');
   const plan = plans[claude.subscriptionType] ?? claude.subscriptionType;
-  return `Signed in${plan ? ` · ${plan} plan` : ''}${claude.email ? ` · ${claude.email}` : ''}`;
+  return [t('Signed in'), plan && t('{plan} plan', { plan }), claude.email]
+    .filter(Boolean)
+    .join(' · ');
 }
 
-export function usageSummary(usage, now = Date.now()) {
+export function usageSummary(usage, now = Date.now(), t = english) {
   const window = usage?.sevenDay ?? usage?.fiveHour;
   if (!window || !Number.isFinite(window.utilization)) return '';
-  const label = usage.sevenDay ? 'weekly' : '5-hour';
+  const percent = Math.round(window.utilization * 100);
+  const used = usage.sevenDay
+    ? t('{percent}% of weekly limit used', { percent })
+    : t('{percent}% of 5-hour limit used', { percent });
   const reset = Number.isFinite(window.resetsAt)
-    ? new Intl.DateTimeFormat(undefined, {
+    ? new Intl.DateTimeFormat(t.locale, {
         weekday: window.resetsAt * 1000 - now > 86400000 ? 'short' : undefined,
         hour: 'numeric',
         minute: '2-digit',
       }).format(new Date(window.resetsAt * 1000))
     : '';
-  return `${Math.round(window.utilization * 100)}% of ${label} limit used${reset ? ` · resets ${reset}` : ''}`;
+  return reset ? `${used} · ${t('resets {time}', { time: reset })}` : used;
 }

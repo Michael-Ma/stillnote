@@ -12,14 +12,20 @@ import {
   X,
 } from 'lucide-react';
 import { cleanError, date, duration, recordingLanguage, time } from '../format.mjs';
+import { translator } from '../i18n/index.mjs';
+import { useT } from '../i18n/react.jsx';
 
-const sourceName = (source) => (source === 'system' ? 'Meeting audio' : 'Microphone');
+// Stored in English and translated where shown; listed for the i18n coverage test.
+const msg = (text) => text;
+
+const english = translator('en');
+const sourceName = (source, t) => (source === 'system' ? t('Meeting audio') : t('Microphone'));
 const isCapturing = (recording) =>
   ['starting', 'recording', 'capturing', 'stopping'].includes(recording.status);
 const playableTracks = (recording) =>
   (recording.tracks ?? []).filter((track) => track.fileName && track.bytes !== 0);
 
-export function transcriptCoverageWarning(meeting) {
+export function transcriptCoverageWarning(meeting, t = english) {
   const recordings = meeting.recordings ?? [];
   const flagged = recordings.find((recording) => recording.diagnostics?.lowCoverage === true);
   const text = (meeting.transcript ?? [])
@@ -29,14 +35,15 @@ export function transcriptCoverageWarning(meeting) {
   const seconds = Number(meeting.duration) || 0;
   if (!flagged && !(seconds >= 30 && text.length < Math.max(20, seconds * 0.5))) return null;
   return recordings.some((recording) => playableTracks(recording).length)
-    ? 'Very little text was recognized. Listen to the audio before relying on enhanced notes.'
-    : 'Very little text was recognized. Review the transcript before relying on enhanced notes.';
+    ? t('Very little text was recognized. Listen to the audio before relying on enhanced notes.')
+    : t('Very little text was recognized. Review the transcript before relying on enhanced notes.');
 }
 
 // One quiet line under the title instead of a banner above every view.
 export function CoverageWarning({ meeting, onListen, onRetry, retrying, disabled }) {
+  const t = useT();
   const [dismissed, setDismissed] = useState(null);
-  const message = transcriptCoverageWarning(meeting);
+  const message = transcriptCoverageWarning(meeting, t);
   if (!message || dismissed === meeting.id + meeting.updatedAt) return null;
   const candidates = [...(meeting.recordings ?? [])]
     .reverse()
@@ -46,10 +53,10 @@ export function CoverageWarning({ meeting, onListen, onRetry, retrying, disabled
   return (
     <div className="coverage-warning" role="status">
       <AlertTriangle size={14} aria-hidden="true" />
-      <strong>Review transcript coverage</strong>
+      <strong>{t('Review transcript coverage')}</strong>
       <span>{message}</span>
       <button className="text-button" onClick={onListen}>
-        {retryable ? 'Listen' : 'Details'}
+        {retryable ? t('Listen') : t('Details')}
       </button>
       {retryable && (
         <button
@@ -57,12 +64,12 @@ export function CoverageWarning({ meeting, onListen, onRetry, retrying, disabled
           disabled={disabled || !!retrying}
           onClick={() => onRetry(retryable.id)}
         >
-          {retrying === retryable.id ? 'Transcribing…' : 'Retry'}
+          {retrying === retryable.id ? t('Transcribing…') : t('Retry')}
         </button>
       )}
       <button
         className="icon-button small"
-        aria-label="Dismiss coverage warning"
+        aria-label={t('Dismiss coverage warning')}
         onClick={() => setDismissed(meeting.id + meeting.updatedAt)}
       >
         <X size={13} />
@@ -72,13 +79,14 @@ export function CoverageWarning({ meeting, onListen, onRetry, retrying, disabled
 }
 
 export function CaptureDiagnostics({ levels, sources, systemAudioRequested, starting, engine }) {
+  const t = useT();
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
   return (
-    <div className="capture-diagnostics" aria-label="Capture sources">
+    <div className="capture-diagnostics" aria-label={t('Capture sources')}>
       {['microphone', ...(systemAudioRequested ? ['system'] : [])].map((source) => {
         const level = levels[source];
         const state = sources?.[source];
@@ -89,29 +97,33 @@ export function CaptureDiagnostics({ levels, sources, systemAudioRequested, star
         const recent = level && now - level.receivedAt < 4000;
         const rms = recent ? Math.max(0, Number(level.rms) || 0) : 0;
         const label = unavailable
-          ? 'Unavailable'
+          ? t('Unavailable')
           : starting
-            ? 'Connecting…'
+            ? t('Connecting…')
             : recent
               ? rms >= 0.005
-                ? 'Signal'
-                : 'Quiet'
-              : 'Waiting';
+                ? t('Signal')
+                : t('Quiet')
+              : t('Waiting');
+        // Source messages come from the main process in English.
+        const message = state?.message ? t(state.message) : '';
         return (
           <div
             className={'capture-source ' + (unavailable ? 'unavailable' : '')}
             key={source}
-            title={state?.message ?? ''}
+            title={message}
           >
             {source === 'system' ? <AudioLines size={14} /> : <Mic size={14} />}
             <span className="capture-source-name">
-              {sourceName(source)}
+              {sourceName(source, t)}
               {source === 'microphone' && state?.device?.name ? ` · ${state.device.name}` : ''}
             </span>
             <span
               className="source-meter"
               role="meter"
-              aria-label={`${sourceName(source)} input level`}
+              aria-label={
+                source === 'system' ? t('Meeting audio input level') : t('Microphone input level')
+              }
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(Math.min(100, Math.sqrt(rms) * 100))}
@@ -119,17 +131,16 @@ export function CaptureDiagnostics({ levels, sources, systemAudioRequested, star
               <span style={{ width: `${Math.min(100, Math.sqrt(rms) * 100)}%` }} />
             </span>
             <span className="capture-source-state">{label}</span>
-            {unavailable && state?.message && <small>{state.message}</small>}
+            {unavailable && message && <small>{message}</small>}
           </div>
         );
       })}
       <p>
         {engine === 'speechTranscriber'
-          ? 'On-device · Apple SpeechTranscriber'
+          ? t('On-device · Apple SpeechTranscriber. Levels show incoming audio.')
           : engine === 'legacy'
-            ? 'On-device · Apple Speech (legacy)'
-            : 'On-device speech recognition'}
-        . Levels show incoming audio.
+            ? t('On-device · Apple Speech (legacy). Levels show incoming audio.')
+            : t('On-device speech recognition. Levels show incoming audio.')}
       </p>
     </div>
   );
@@ -144,7 +155,7 @@ function useTrackUrl(call, meetingId, recordingId, source, attempt) {
       .then(() => call('recording-url', meetingId, recordingId, source))
       .then((result) => {
         const url = typeof result === 'string' ? result : result?.url;
-        if (!url) throw new Error('No recording file is available.');
+        if (!url) throw new Error(msg('No recording file is available.'));
         if (valid) setState({ url, error: '' });
       })
       .catch((e) => valid && setState({ url: '', error: cleanError(e) }));
@@ -156,6 +167,7 @@ function useTrackUrl(call, meetingId, recordingId, source, attempt) {
 }
 
 function Track({ meetingId, recordingId, track, call, register, muted, onToggleMute }) {
+  const t = useT();
   const [attempt, setAttempt] = useState(0);
   const [failed, setFailed] = useState('');
   const { url, error } = useTrackUrl(call, meetingId, recordingId, track.source, attempt);
@@ -163,6 +175,7 @@ function Track({ meetingId, recordingId, track, call, register, muted, onToggleM
   useEffect(() => {
     if (audioRef.current) audioRef.current.muted = muted;
   }, [muted, url]);
+  // Kept in English (errors also come from the main process) and translated when shown.
   const shown = error || failed;
   return (
     <div className="audio-track">
@@ -170,15 +183,28 @@ function Track({ meetingId, recordingId, track, call, register, muted, onToggleM
         className={'track-toggle' + (muted ? ' muted' : '')}
         onClick={onToggleMute}
         aria-pressed={!muted}
-        aria-label={`${muted ? 'Unmute' : 'Mute'} ${sourceName(track.source)}`}
+        aria-label={
+          track.source === 'system'
+            ? muted
+              ? t('Unmute Meeting audio')
+              : t('Mute Meeting audio')
+            : muted
+              ? t('Unmute Microphone')
+              : t('Mute Microphone')
+        }
         title={
           track.sampleRate
-            ? `${(track.sampleRate / 1000).toLocaleString()} kHz · ${track.channels === 1 ? 'mono' : `${track.channels} channels`}`
+            ? track.channels === 1
+              ? t('{rate} kHz · mono', { rate: (track.sampleRate / 1000).toLocaleString(t.locale) })
+              : t('{rate} kHz · {n} channels', {
+                  rate: (track.sampleRate / 1000).toLocaleString(t.locale),
+                  n: track.channels,
+                })
             : undefined
         }
       >
         {track.source === 'system' ? <AudioLines size={14} /> : <Mic size={14} />}
-        {sourceName(track.source)}
+        {sourceName(track.source, t)}
         {muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
       </button>
       {url && (
@@ -189,15 +215,17 @@ function Track({ meetingId, recordingId, track, call, register, muted, onToggleM
           }}
           preload="metadata"
           src={url}
-          aria-label={`${sourceName(track.source)} recording`}
+          aria-label={
+            track.source === 'system' ? t('Meeting audio recording') : t('Microphone recording')
+          }
           onError={() =>
-            setFailed('This audio could not be played. The file may be missing or unreadable.')
+            setFailed(msg('This audio could not be played. The file may be missing or unreadable.'))
           }
         />
       )}
       {shown ? (
         <div className="audio-track-error" role="alert">
-          <span>{shown}</span>
+          <span>{t(shown)}</span>
           <button
             className="text-button"
             onClick={() => {
@@ -205,11 +233,11 @@ function Track({ meetingId, recordingId, track, call, register, muted, onToggleM
               setAttempt((value) => value + 1);
             }}
           >
-            Try again
+            {t('Try again')}
           </button>
         </div>
       ) : !url ? (
-        <LoaderCircle className="spin" size={13} aria-label="Loading local audio" />
+        <LoaderCircle className="spin" size={13} aria-label={t('Loading local audio')} />
       ) : null}
     </div>
   );
@@ -217,6 +245,7 @@ function Track({ meetingId, recordingId, track, call, register, muted, onToggleM
 
 // One transport for every source of a recording, so microphone and meeting audio stay aligned.
 function Player({ meeting, recording, tracks, call }) {
+  const t = useT();
   const elements = useRef({});
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
@@ -301,7 +330,7 @@ function Player({ meeting, recording, tracks, call }) {
         <button
           className="play-button"
           onClick={toggle}
-          aria-label={playing ? 'Pause recording' : 'Play recording'}
+          aria-label={playing ? t('Pause recording') : t('Play recording')}
         >
           {playing ? (
             <Pause size={14} fill="currentColor" />
@@ -313,7 +342,7 @@ function Player({ meeting, recording, tracks, call }) {
         <input
           type="range"
           className="scrubber"
-          aria-label="Playback position"
+          aria-label={t('Playback position')}
           min={0}
           max={Math.max(total, 0.1)}
           step={0.1}
@@ -350,14 +379,16 @@ export function RecordingAudio({
   locale = 'en-US',
   autoLocales,
 }) {
+  const t = useT();
   const recordings = meeting.recordings ?? [];
+  const target = recordingLanguage(locale, autoLocales, t.locale, t);
   return (
-    <section className="recordings-panel" aria-label="Saved recordings">
+    <section className="recordings-panel" aria-label={t('Saved recordings')}>
       {!recordings.length ? (
         <div className="sheet-empty">
           <AudioLines size={22} aria-hidden="true" />
-          <h2>No saved audio</h2>
-          <p>Recordings appear here after you finish capturing. Audio stays on this Mac.</p>
+          <h2>{t('No saved audio')}</h2>
+          <p>{t('Recordings appear here after you finish capturing. Audio stays on this Mac.')}</p>
         </div>
       ) : (
         [...recordings].reverse().map((recording, index) => {
@@ -371,13 +402,13 @@ export function RecordingAudio({
             <article className="saved-recording" key={recording.id}>
               <header>
                 <div>
-                  <strong>Recording {recordings.length - index}</strong>
+                  <strong>{t('Recording {n}', { n: recordings.length - index })}</strong>
                   <span>
-                    {date(recording.startedAt)} · {time(recording.startedAt)} ·{' '}
+                    {date(recording.startedAt, t.locale)} · {time(recording.startedAt, t.locale)} ·{' '}
                     {duration(Number(recording.duration) || 0)} ·{' '}
                     {recording.locale
-                      ? recordingLanguage(recording.locale, recording.locales)
-                      : 'Language not recorded'}
+                      ? recordingLanguage(recording.locale, recording.locales, t.locale, t)
+                      : t('Language not recorded')}
                   </span>
                 </div>
                 {!capturing && tracks.length > 0 && (
@@ -386,9 +417,9 @@ export function RecordingAudio({
                     disabled={disabled || !!retrying}
                     onClick={() => onRetry(recording.id)}
                     title={
-                      recordingLanguage(recording.locale ?? '', recording.locales) !==
-                      recordingLanguage(locale, autoLocales)
-                        ? `Transcribes again in ${recordingLanguage(locale, autoLocales)}`
+                      recordingLanguage(recording.locale ?? '', recording.locales, t.locale, t) !==
+                      target
+                        ? t('Transcribes again in {language}', { language: target })
                         : undefined
                     }
                   >
@@ -397,7 +428,7 @@ export function RecordingAudio({
                     ) : (
                       <RotateCcw size={13} />
                     )}
-                    {retrying === recording.id ? 'Transcribing…' : 'Retry transcription'}
+                    {retrying === recording.id ? t('Transcribing…') : t('Retry transcription')}
                   </button>
                 )}
               </header>
@@ -406,37 +437,40 @@ export function RecordingAudio({
                   {recording.sources?.microphone?.device?.name}
                   {recording.sources?.microphone?.device?.name && recording.engine ? ' · ' : ''}
                   {recording.engine === 'speechTranscriber'
-                    ? 'On-device · Apple SpeechTranscriber'
+                    ? t('On-device · Apple SpeechTranscriber')
                     : recording.engine === 'legacy'
-                      ? 'On-device · Apple Speech (legacy)'
+                      ? t('On-device · Apple Speech (legacy)')
                       : ''}
                 </p>
               )}
               {capturing ? (
                 <p className="recording-pending">
-                  Audio is being saved. Finish recording to listen.
+                  {t('Audio is being saved. Finish recording to listen.')}
                 </p>
               ) : tracks.length ? (
                 <Player meeting={meeting} recording={recording} tracks={tracks} call={call} />
               ) : (
                 <p className="recording-pending">
-                  No playable audio file was saved for this session.
+                  {t('No playable audio file was saved for this session.')}
                 </p>
               )}
               {recording.status === 'interrupted' && (
                 <p className="recording-detail-warning">
-                  This capture ended unexpectedly. Listen to the saved audio to check its coverage.
+                  {t(
+                    'This capture ended unexpectedly. Listen to the saved audio to check its coverage.',
+                  )}
                 </p>
               )}
               {recording.status === 'startfailed' && (
                 <p className="recording-detail-warning">
-                  This capture could not start. Check the capture permissions in macOS and try a new
-                  recording.
+                  {t(
+                    'This capture could not start. Check the capture permissions in macOS and try a new recording.',
+                  )}
                 </p>
               )}
               {problems.map((warning, warningIndex) => (
                 <p className="recording-detail-warning" key={warningIndex}>
-                  {warning}
+                  {t(warning)}
                 </p>
               ))}
             </article>
@@ -445,7 +479,7 @@ export function RecordingAudio({
       )}
       {recordings.length > 0 && (
         <p className="recording-footnote">
-          Audio never leaves this Mac. Retry re-transcribes the saved audio on-device.
+          {t('Audio never leaves this Mac. Retry re-transcribes the saved audio on-device.')}
         </p>
       )}
     </section>

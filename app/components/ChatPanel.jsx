@@ -3,12 +3,26 @@ import { ArrowUp, ArrowUpRight, PanelRightClose, Square } from 'lucide-react';
 import { IconButton, Rich } from './Content.jsx';
 import { AiConnect } from './AiConnect.jsx';
 import { providerName } from '../ai-view.mjs';
+import { useT } from '../i18n/react.jsx';
 
-const suggestions = {
-  meeting: ['What did we decide?', 'What should I follow up on?', 'Draft a follow-up email.'],
-  folder: ['What themes keep coming up?', 'Summarize open questions.', 'List action items.'],
-  all: ['What did I commit to this week?', 'List recent to-dos.', 'What changed since last week?'],
-};
+// Shown and sent as the question, so they are in the interface language.
+const suggestions = (t) => ({
+  meeting: [
+    t('What did we decide?'),
+    t('What should I follow up on?'),
+    t('Draft a follow-up email.'),
+  ],
+  folder: [
+    t('What themes keep coming up?'),
+    t('Summarize open questions.'),
+    t('List action items.'),
+  ],
+  all: [
+    t('What did I commit to this week?'),
+    t('List recent to-dos.'),
+    t('What changed since last week?'),
+  ],
+});
 
 export function ChatPanel({
   global,
@@ -32,6 +46,7 @@ export function ChatPanel({
   onOpenSource,
   onApply,
 }) {
+  const t = useT();
   const bottomRef = useRef();
   const inputRef = useRef();
   useEffect(() => {
@@ -41,6 +56,7 @@ export function ChatPanel({
     inputRef.current?.focus();
   }, [scope]);
   const empty = !messages.length && !busy;
+  const prompts = suggestions(t);
   const composer = (
     <form
       className="chat-composer"
@@ -51,9 +67,9 @@ export function ChatPanel({
     >
       <textarea
         ref={inputRef}
-        aria-label="Ask a question"
+        aria-label={t('Ask a question')}
         placeholder={
-          scope === 'meeting' ? 'Ask about this meeting…' : 'Ask anything about your notes…'
+          scope === 'meeting' ? t('Ask about this meeting…') : t('Ask anything about your notes…')
         }
         rows={global && empty ? 3 : 2}
         value={question}
@@ -68,7 +84,7 @@ export function ChatPanel({
       <div className="composer-bar">
         <select
           className="chip-select"
-          aria-label="Chat scope"
+          aria-label={t('Chat scope')}
           disabled={!!busy}
           value={scope}
           onChange={(e) => setScope(e.target.value)}
@@ -82,7 +98,7 @@ export function ChatPanel({
         {modelOptions.length > 0 && (
           <select
             className="chip-select"
-            aria-label="AI model"
+            aria-label={t('AI model')}
             disabled={!!busy}
             value={modelValue}
             onChange={(e) => onModel(e.target.value)}
@@ -100,7 +116,7 @@ export function ChatPanel({
         )}
         <span className="composer-spacer" />
         {busy ? (
-          <IconButton label="Stop response" className="send-button" onClick={onCancel}>
+          <IconButton label={t('Stop response')} className="send-button" onClick={onCancel}>
             <Square size={12} fill="currentColor" />
           </IconButton>
         ) : (
@@ -108,7 +124,7 @@ export function ChatPanel({
             className="send-button"
             type="submit"
             disabled={!question.trim()}
-            aria-label="Send question"
+            aria-label={t('Send question')}
           >
             <ArrowUp size={16} />
           </button>
@@ -119,18 +135,18 @@ export function ChatPanel({
   return (
     <aside className={'chat-panel' + (global ? ' global' : '') + (empty ? ' empty' : '')}>
       <header>
-        <h2>{global ? 'Chat' : 'Ask about this meeting'}</h2>
-        <IconButton label="Close chat" onClick={onClose}>
+        <h2>{global ? t('Chat') : t('Ask about this meeting')}</h2>
+        <IconButton label={t('Close chat')} onClick={onClose}>
           <PanelRightClose size={16} />
         </IconButton>
       </header>
       <div className="chat-messages">
         {empty && (
           <div className="chat-intro">
-            <h3>{global ? 'Ask anything' : 'What would you like to know?'}</h3>
+            <h3>{global ? t('Ask anything') : t('What would you like to know?')}</h3>
             {global && composer}
             <div className="suggestions">
-              {(suggestions[scope] ?? suggestions.all).map((q) => (
+              {(prompts[scope] ?? prompts.all).map((q) => (
                 <button key={q} onClick={() => setQuestion(q)}>
                   {q}
                   <ArrowUpRight size={13} />
@@ -148,7 +164,10 @@ export function ChatPanel({
                 <Rich text={m.content} onSource={(number) => onSource(m, number)} />
                 {m.context?.included < m.context?.total && (
                   <p className="context-coverage">
-                    Used {m.context.included} of {m.context.total} notes
+                    {t('Used {used} of {total} notes', {
+                      used: m.context.included,
+                      total: m.context.total,
+                    })}
                   </p>
                 )}
                 {(m.sources?.length > 0 || onApply) && (
@@ -161,7 +180,7 @@ export function ChatPanel({
                     ))}
                     {onApply && (
                       <button className="text-button" onClick={() => onApply(m)}>
-                        Use as enhanced notes
+                        {t('Use as enhanced notes')}
                       </button>
                     )}
                   </div>
@@ -177,7 +196,7 @@ export function ChatPanel({
             ) : (
               <p className="thinking">
                 <span className="dot-pulse" aria-hidden="true" />
-                Reading your notes…
+                {t('Reading your notes…')}
               </p>
             )}
           </div>
@@ -186,13 +205,16 @@ export function ChatPanel({
       </div>
       {!ai.ready && (
         <div className="chat-connect">
-          <AiConnect ai={ai} actions={aiActions} title="Connect an AI to chat" />
+          <AiConnect ai={ai} actions={aiActions} title={t('Connect an AI to chat')} />
         </div>
       )}
       {!(global && empty) && composer}
       <p className="chat-disclaimer">
-        {ai.ready ? `Answers use your ${ai.label} plan. ` : ''}Check important details against the
-        transcript.
+        {ai.ready
+          ? t('Answers use your {ai} plan. Check important details against the transcript.', {
+              ai: ai.label,
+            })
+          : t('Check important details against the transcript.')}
       </p>
     </aside>
   );

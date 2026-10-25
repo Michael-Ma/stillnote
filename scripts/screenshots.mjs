@@ -157,6 +157,7 @@ const desktop = await electron.launch({
     STILLNOTE_TEST_ADAPTER: resolve('tests/e2e/adapter.mjs'),
     STILLNOTE_E2E_SCENARIO_FILE: scenarioPath,
     STILLNOTE_MOCK_KEYCHAIN: '1',
+    STILLNOTE_UI_LANGUAGE: 'en',
   },
   timeout: 30000,
 });

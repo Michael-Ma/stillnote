@@ -7,6 +7,7 @@ import { notebook } from '../tests/e2e/notebook.mjs';
 import { capture, captureScenario } from '../tests/e2e/capture.mjs';
 import { ai, aiScenario } from '../tests/e2e/ai.mjs';
 import { recovery } from '../tests/e2e/recovery.mjs';
+import { language, languageScenario } from '../tests/e2e/language.mjs';
 import { reminders, remindersScenario } from '../tests/e2e/reminders.mjs';
 
 const args = process.argv.slice(2);
@@ -19,7 +20,7 @@ const option = (name) => {
 };
 if (args.includes('--help')) {
   console.log(
-    'Usage: node scripts/e2e.mjs [--suite notebook|capture|ai|recovery|reminders|all] [--no-build] [--output path]\nRuns deterministic Electron E2E tests with synthetic audio and AI. No real account or device is used.',
+    'Usage: node scripts/e2e.mjs [--suite notebook|capture|ai|recovery|reminders|language|all] [--no-build] [--output path]\nRuns deterministic Electron E2E tests with synthetic audio and AI. No real account or device is used.',
   );
   process.exit(0);
 }
@@ -27,6 +28,17 @@ const runId = new Date().toISOString().replace(/[:.]/g, '-');
 const output = resolve(option('--output') ?? join(root, 'output/e2e', runId));
 mkdirSync(output, { recursive: true });
 const suites = {
+  language: {
+    run: language,
+    scenario: languageScenario,
+    checks: [
+      'switching to 简体中文 updates the window without a restart',
+      'no English labels left on Home',
+      'reminder notification in Chinese',
+      'new note title and dock in Chinese',
+      'switching back to English',
+    ],
+  },
   reminders: {
     run: reminders,
     scenario: remindersScenario,

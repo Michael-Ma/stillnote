@@ -13,6 +13,7 @@ Object.assign(app, {
     return this.paths[key] ?? '/tmp';
   },
   commandLine: { appendSwitch() {} },
+  getPreferredSystemLanguages: () => ['en-US'],
   requestSingleInstanceLock: () => true,
   whenReady: async () => {},
   quit() {},

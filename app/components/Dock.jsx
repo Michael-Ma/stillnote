@@ -1,6 +1,7 @@
 import React from 'react';
 import { ChevronDown, ChevronUp, LoaderCircle, Sparkles, Square } from 'lucide-react';
 import { duration } from '../format.mjs';
+import { useT } from '../i18n/react.jsx';
 
 // Four bars that follow the live input level, like Granola's listening indicator.
 export function LevelBars({ level = 0, live = false }) {
@@ -33,11 +34,12 @@ export function RecordPill({
   onStop,
   onToggleSheet,
 }) {
+  const t = useT();
   const toggle = (
     <button
       className="pill-toggle"
       onClick={onToggleSheet}
-      aria-label={sheetOpen ? 'Hide transcript' : 'Show transcript'}
+      aria-label={sheetOpen ? t('Hide transcript') : t('Show transcript')}
       aria-expanded={sheetOpen}
     >
       {sheetOpen ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
@@ -45,17 +47,21 @@ export function RecordPill({
   );
   if (active)
     return (
-      <div className="record-pill recording" role="group" aria-label="Recording">
-        <button className="pill-main" onClick={onToggleSheet} aria-label="Live transcript">
+      <div className="record-pill recording" role="group" aria-label={t('Recording')}>
+        <button className="pill-main" onClick={onToggleSheet} aria-label={t('Live transcript')}>
           <LevelBars level={level} live={!recording.stopping} />
           <span className="pill-time">
-            {recording.stopping ? 'Saving…' : recording.starting ? 'Starting…' : duration(elapsed)}
+            {recording.stopping
+              ? t('Saving…')
+              : recording.starting
+                ? t('Starting…')
+                : duration(elapsed)}
           </span>
         </button>
         <button
           className="pill-stop"
-          aria-label="Stop recording"
-          title="Stop recording"
+          aria-label={t('Stop recording')}
+          title={t('Stop recording')}
           disabled={recording.stopping}
           onClick={onStop}
         >
@@ -65,16 +71,16 @@ export function RecordPill({
       </div>
     );
   return (
-    <div className="record-pill" role="group" aria-label="Recording">
+    <div className="record-pill" role="group" aria-label={t('Recording')}>
       <button
         className="pill-main"
-        aria-label="Start recording"
-        title="Start recording on this Mac"
+        aria-label={t('Start recording')}
+        title={t('Start recording on this Mac')}
         disabled={disabled}
         onClick={onStart}
       >
         {hasAudio ? <LevelBars /> : <span className="rec-dot" aria-hidden="true" />}
-        <span className="pill-label">{hasAudio ? 'Resume' : 'Record'}</span>
+        <span className="pill-label">{hasAudio ? t('Resume') : t('Record')}</span>
       </button>
       {toggle}
     </div>
@@ -82,15 +88,16 @@ export function RecordPill({
 }
 
 export function EnhancePill({ busy, disabled, onEnhance, onCancel }) {
+  const t = useT();
   return busy ? (
     <button className="float-pill" onClick={onCancel}>
       <LoaderCircle size={14} className="spin" />
-      Cancel
+      {t('Cancel')}
     </button>
   ) : (
     <button className="float-pill accent" disabled={disabled} onClick={onEnhance}>
       <Sparkles size={14} />
-      Enhance notes
+      {t('Enhance notes')}
     </button>
   );
 }

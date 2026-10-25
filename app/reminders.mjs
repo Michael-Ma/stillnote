@@ -1,5 +1,7 @@
 // Calendar reminders, Granola-style: announce a meeting shortly before it starts. Pure, so the
 // main process, the renderer and the tests share one definition of "this meeting, this time".
+import { translator } from './i18n/index.mjs';
+
 export const LEAD_MS = 60_000;
 // A reminder that arrives late (the app opened after the start) is still useful for a while.
 export const LATE_MS = 5 * 60_000;
@@ -19,16 +21,16 @@ export function dueReminders(events, now, announced, lead = LEAD_MS) {
   });
 }
 
-export function reminderBody(event, now, autoRecord) {
+export function reminderBody(event, now, autoRecord, t = translator('en')) {
   // Round toward the start: 29 s ahead is "in 1 min", not "now".
   const ms = Date.parse(event.start) - now;
   const when =
     ms > 0
-      ? `Starts in ${Math.ceil(ms / 60_000)} min`
+      ? t('Starts in {n} min', { n: Math.ceil(ms / 60_000) })
       : ms > -60_000
-        ? 'Starting now'
-        : `Started ${Math.floor(-ms / 60_000)} min ago`;
-  return `${when} · Click to take notes${autoRecord ? ' and start recording' : ''}.`;
+        ? t('Starting now')
+        : t('Started {n} min ago', { n: Math.floor(-ms / 60_000) });
+  return `${when} · ${autoRecord ? t('Click to take notes and start recording.') : t('Click to take notes.')}`;
 }
 
 export const meetingForEvent = (meetings, key) =>
