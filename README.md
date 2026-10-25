@@ -18,6 +18,7 @@ Stillnote keeps the core loop small: **open a note → capture a conversation �
 - **Meeting chat:** ask about one meeting, a folder, or your notebook. Source citations open the corresponding transcript. Apply a chat answer to your enhanced notes explicitly.
 - **Your calendar:** read meetings from accounts configured in Apple Calendar, including Google or Outlook accounts. Create a note from an event; each occurrence keeps one note.
 - **Meeting reminders:** once the calendar is connected, Stillnote refreshes it in the background and notifies you a minute before each timed meeting. Clicking the notification opens that meeting's note and starts recording (both switchable in **Settings › Recording**). Reminders appear while Stillnote is running.
+- **English and 简体中文:** the interface follows the macOS language (any Chinese → 简体中文) and can be changed in **Settings › General**, including menus, notifications and macOS permission prompts. Notes, transcripts and enhanced notes keep the language of the meeting.
 - **Local ownership:** SQLite storage, Markdown export, JSON backup/restore, and an optional read-only local MCP server.
 
 ## Screenshots
@@ -32,6 +33,8 @@ Stillnote keeps the core loop small: **open a note → capture a conversation �
 | **Recordings.** Replay each source, or retry transcription from the saved audio. | **AI provider.** Use your Claude or ChatGPT plan; usage shows next to it. |
 | ![Recording settings: microphone, echo cancellation, language, meeting audio and reminders](docs/images/settings-recording.png) | ![Home in dark mode](docs/images/home-dark.png) |
 | **Recording settings.** Microphone, meeting language, meeting audio and reminders. | **Dark mode.** Follows macOS appearance. |
+| ![Home in Simplified Chinese](docs/images/home-zh.png) | |
+| **简体中文.** The interface follows your Mac's language. | |
 
 Team workspaces, cloud synchronization, public sharing links, mobile apps, CRM integrations, and automatic identification of every remote speaker are intentionally outside this version's scope.
 
@@ -120,6 +123,7 @@ npm run format:check     # source formatting
 npm run build            # Swift helper, Electron main/preload, and renderer
 npm run package          # standalone macOS app
 npm run screenshots      # README screenshots from fictional fixtures; add `-- --demo` for the GIF
+npm run test:native:languages # opt-in: Auto language on synthetic Chinese/English speech (`-- --live` streams it)
 ```
 
 The desktop test exercises real persistence, transcript editing, folder assignment, stars, search, Trash/restore, Markdown export, immediate-close draft saving, and sign-in error recovery. The deterministic E2E suite replaces device, ChatGPT and Claude transports, but exercises the real renderer, IPC, SQLite, media protocol, seeking, decoded playback, and restart recovery. Native file dialogs are stubbed for import/export. The separate native tests use synthesized speech and the real audio writer; recognition is opt-in. No automatic test records a real meeting or accesses a real ChatGPT or Claude account; Claude provider tests drive a fake `claude` program.

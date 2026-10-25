@@ -262,6 +262,16 @@ try {
   // Escape returns focus to the settings button; drop its focus ring before the dark shots.
   await page.evaluate(() => document.activeElement?.blur());
 
+  // The same Home in 简体中文: the interface switches without a restart.
+  await page.evaluate(() => window.stillnote.call('setting', 'uiLanguage', 'zh-Hans'));
+  await page.reload();
+  await page.getByText('即将开始', { exact: true }).waitFor();
+  await wait(800);
+  await shot('home-zh');
+  await page.evaluate(() => window.stillnote.call('setting', 'uiLanguage', 'en'));
+  await page.reload();
+  await page.getByText('Coming up', { exact: true }).waitFor();
+
   await page.emulateMedia({ colorScheme: 'dark' });
   await wait(500);
   await shot('home-dark');

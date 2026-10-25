@@ -1,0 +1,6 @@
+/* macOS permission prompts in 简体中文; English is in package.json build.mac.extendInfo. */
+"NSMicrophoneUsageDescription" = "Stillnote 使用麦克风在你的 Mac 上转写会议。";
+"NSSpeechRecognitionUsageDescription" = "Stillnote 在你的 Mac 上转写会议音频。";
+"NSCalendarsFullAccessUsageDescription" = "Stillnote 读取你 Mac 上日历中即将开始的会议。";
+"NSCalendarsUsageDescription" = "Stillnote 读取你 Mac 上日历中即将开始的会议。";
+"NSAudioCaptureUsageDescription" = "Stillnote 转写会议应用中的声音。";

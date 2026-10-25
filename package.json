@@ -42,6 +42,10 @@
       {
         "from": "native/bin/StillnoteCapture",
         "to": "StillnoteCapture"
+      },
+      {
+        "from": "assets/zh_CN.lproj/InfoPlist.strings",
+        "to": "zh_CN.lproj/InfoPlist.strings"
       }
     ],
     "mac": {
