@@ -1,0 +1,98 @@
+{
+  "locales": ["zh-CN", "en-US"],
+  "candidates": [
+    {
+      "source": "microphone",
+      "locale": "zh-CN",
+      "segmentId": "401CCDDA-B4B1-4E91-A501-118004CE5DC6",
+      "text": "今天我们讨论一下第四季的招聘计划",
+      "timestamp": 1.56,
+      "end": 7.92,
+      "confidence": 0.808375,
+      "runs": [
+        [1.56, 2.82, 0.765, "今"],
+        [2.82, 3.06, 0.712, "天"],
+        [3.06, 3.3, 0.822, "我"],
+        [3.3, 3.42, 0.849, "们"],
+        [3.42, 3.6, 0.785, "讨"],
+        [3.6, 3.84, 0.8, "论"],
+        [3.84, 4.08, 0.601, "一"],
+        [4.08, 4.26, 0.681, "下"],
+        [4.26, 4.5, 0.785, "第"],
+        [4.5, 4.74, 0.933, "四"],
+        [4.74, 4.92, 0.842, "季"],
+        [4.92, 5.28, 0.739, "的"],
+        [5.28, 5.46, 0.917, "招"],
+        [5.46, 5.7, 0.852, "聘"],
+        [5.7, 5.94, 0.96, "计"],
+        [5.94, 6.12, 0.891, "划"]
+      ]
+    },
+    {
+      "source": "microphone",
+      "locale": "en-US",
+      "segmentId": "828C83E9-EB81-460C-A37A-79CB7AC26B86",
+      "text": "The pricing page launches planned for the 28th.",
+      "timestamp": 6.18,
+      "end": 10.08,
+      "confidence": 0.614979,
+      "runs": [
+        [6.18, 7.44, 0.091, "The"],
+        [7.44, 7.92, 0.36, " pricing"],
+        [7.92, 8.1, 0.734, " page"],
+        [8.1, 8.64, 0.623, " launches"],
+        [8.64, 8.94, 0.762, " planned"],
+        [8.94, 9.12, 0.754, " for"],
+        [9.12, 9.24, 0.927, " the"],
+        [9.24, 10.02, 0.609, " 28th."]
+      ]
+    },
+    {
+      "source": "microphone",
+      "locale": "zh-CN",
+      "segmentId": "0EE582E1-0FB4-4248-A201-DF6D09DCCD4A",
+      "text": "anch",
+      "timestamp": 7.92,
+      "end": 12.96,
+      "confidence": 0.283,
+      "runs": [[7.92, 8.58, 0.283, "anch"]]
+    },
+    {
+      "source": "microphone",
+      "locale": "zh-CN",
+      "segmentId": "2F79589E-E35D-479D-A20E-4297562B4B63",
+      "text": "初开始 Pleasende revise pode for dridat",
+      "timestamp": 12.96,
+      "end": 19.92,
+      "confidence": 0.529917,
+      "runs": [
+        [12.96, 13.26, 0.555, "初"],
+        [13.26, 13.5, 0.477, "开"],
+        [13.5, 13.68, 0.451, "始"],
+        [13.68, 15.6, 0.536, " Pleasende"],
+        [15.6, 16.02, 0.66, " revise"],
+        [16.02, 16.56, 0.384, " pode"],
+        [16.56, 16.8, 0.293, " for"],
+        [16.8, 17.46, 0.646, " dridat"]
+      ]
+    },
+    {
+      "source": "microphone",
+      "locale": "en-US",
+      "segmentId": "223C133E-6874-41EA-A634-CCB8CD7EFD13",
+      "text": "Please send the revised call before Friday.",
+      "timestamp": 13.8,
+      "end": 17.28,
+      "confidence": 0.679705,
+      "runs": [
+        [13.8, 15.06, 0.148, " Please"],
+        [15.06, 15.48, 0.842, " send"],
+        [15.48, 15.66, 0.622, " the"],
+        [15.66, 16.02, 0.918, " revised"],
+        [16.02, 16.2, 0.339, " call"],
+        [16.2, 16.56, 0.858, " before"],
+        [16.56, 17.22, 0.891, " Friday."]
+      ]
+    }
+  ]
+}

@@ -211,8 +211,7 @@ export class Store {
     return this.write(m);
   }
   importFile(path, raw) {
-    if (typeof raw !== 'string' || raw.length > 30_000_000)
-      throw new Error('File exceeds the 30 MB import limit.');
+    checkImportSize(path, typeof raw === 'string' ? raw.length : Infinity);
     if (extname(path).toLowerCase() === '.json') return { restored: this.restore(JSON.parse(raw)) };
     if (raw.length > 2_000_000)
       throw new Error('Transcript exceeds the 2,000,000-character import limit.');
@@ -393,7 +392,9 @@ export class Store {
       version: 1,
       exportedAt: new Date().toISOString(),
       audioIncluded: false,
-      meetings: this.all(true).map((m) => ({
+      // Earlier transcript versions stay on this Mac: a restore never brings them back, and after
+      // a few retries they are most of a notebook's size.
+      meetings: this.all(true).map(({ transcriptVersions, ...m }) => ({
         ...m,
         recordings: m.recordings.map(({ id, startedAt, duration, status }) => ({
           id,
@@ -417,6 +418,11 @@ export class Store {
     if (input?.version !== 1 || !Array.isArray(input.meetings) || input.meetings.length > 10000)
       throw new Error('Not a Stillnote backup.');
     // Validate the entire import before a single mutation; credentials are never part of backups.
+    const folders = (input.folders ?? []).map((f) => ({
+      id: text(f.id, 100),
+      name: text(f.name, 100),
+    }));
+    const knownFolders = new Set([...folders, ...this.folders()].map((f) => f.id));
     const meetings = input.meetings.map((m) => {
       if (
         !m ||
@@ -459,27 +465,27 @@ export class Store {
             'updatedAt',
             'duration',
             'starred',
-            'folderId',
             'deletedAt',
-            'versions',
           ].map((key) => [key, m[key]]),
         ),
+        folderId: knownFolders.has(m.folderId) ? m.folderId : null,
+        // The calendar occurrence keeps a restored Mac from creating a second note for it.
+        ...(typeof m.eventKey === 'string' ? { eventKey: text(m.eventKey, 1100) } : {}),
+        versions: m.versions.slice(0, 20).map(({ text, at }) => ({ text, at })),
         summarySource: m.summarySource === 'edited' ? 'edited' : 'ai',
         summaryAt: Number.isFinite(Date.parse(m.summaryAt)) ? m.summaryAt : m.updatedAt,
-        transcript: m.transcript.map(({ id, text, speaker, timestamp }) => ({
-          id,
-          text,
-          speaker,
-          timestamp,
+        transcript: m.transcript.map((s) => ({
+          id: s.id,
+          text: s.text,
+          speaker: s.speaker,
+          timestamp: s.timestamp,
+          ...(['microphone', 'system'].includes(s.source) ? { source: s.source } : {}),
+          ...segmentLocale(s),
         })),
         recordings: [],
         transcriptVersions: [],
       };
     });
-    const folders = (input.folders ?? []).map((f) => ({
-      id: text(f.id, 100),
-      name: text(f.name, 100),
-    }));
     const messages = (input.messages ?? []).map((m) => {
       text(m.id, 100);
       text(m.scope, 1000);
@@ -492,7 +498,16 @@ export class Store {
         if (!Number.isInteger(source.number) || source.number < 1)
           throw new Error('Invalid source number.');
       }
-      return m;
+      return {
+        id: m.id,
+        scope: m.scope,
+        role: m.role,
+        content: m.content,
+        createdAt: Number.isFinite(Date.parse(m.createdAt))
+          ? m.createdAt
+          : new Date().toISOString(),
+        sources: m.sources.map(({ id, title, number }) => ({ id, title, number })),
+      };
     });
     const settings = Object.entries(input.settings ?? {})
       .filter(([key]) => portableSettings.has(key))
@@ -500,7 +515,10 @@ export class Store {
         validateSetting(key, value);
         return [key, value];
       });
-    const additions = meetings.filter(
+    // A meeting listed twice (a hand-edited or merged backup) is restored once.
+    const seen = new Set();
+    const unique = meetings.filter((m) => !seen.has(m.id) && seen.add(m.id));
+    const additions = unique.filter(
       (m) => !this.db.prepare('SELECT id FROM meetings WHERE id=?').get(m.id),
     );
     this.db.exec('BEGIN IMMEDIATE');
@@ -536,6 +554,13 @@ const isLocale = (value) =>
   typeof value === 'string' && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8}){0,2}$/.test(value);
 export function validateLocale(value) {
   if (!isLocale(value)) throw new Error('Invalid recognition language.');
+}
+// A backup holds the whole notebook; any other import is one transcript. Checked against the file
+// size before reading, and against the text after.
+export function checkImportSize(path, size) {
+  if (extname(path).toLowerCase() === '.json') {
+    if (size > 250_000_000) throw new Error('Backup exceeds the 250 MB import limit.');
+  } else if (size > 30_000_000) throw new Error('File exceeds the 30 MB import limit.');
 }
 // Segments remember which language produced them (Auto picks one per sentence).
 const segmentLocale = (segment) => (isLocale(segment.locale) ? { locale: segment.locale } : {});

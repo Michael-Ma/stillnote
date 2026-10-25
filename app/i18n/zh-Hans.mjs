@@ -153,6 +153,7 @@ export default {
   'Export Markdown': '导出 Markdown',
   'Exported to {path}': '已导出到 {path}',
   'File exceeds the 30 MB import limit.': '文件超过 30 MB 的导入上限。',
+  'Backup exceeds the 250 MB import limit.': '备份超过 250 MB 的导入上限。',
   'File transcription finalization timed out. Retry from the saved audio.':
     '文件转写收尾超时。请从保存的音频重试。',
   Finish: '结束',

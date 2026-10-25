@@ -4,6 +4,15 @@
 const count = (text, pattern) => text.match(pattern)?.length ?? 0;
 const isChinese = (locale = '') => /^(zh|yue)(-|$)/i.test(locale);
 const duration = (s) => Math.max(0.05, s.end - s.start);
+const spokenRuns = (segment) => (segment.runs ?? []).filter((run) => /[\p{L}\p{N}]/u.test(run[3]));
+
+// A model ends a phrase where it next hears its own language, so a phrase's range can run on
+// through the other language's speech. Where word timing exists, a phrase spans its words.
+function spoken(segment) {
+  const words = spokenRuns(segment);
+  if (!words.length) return segment;
+  return { ...segment, timestamp: words[0][0], end: Math.max(words[0][0], words.at(-1)[1]) };
+}
 
 // What to transcribe with: a fixed language, or both Auto candidates (primary first).
 export function recognitionPlan(settings = {}) {
@@ -18,7 +27,7 @@ export const defaultWeights = {
   latinInChinese: 0.3, // a Chinese model writing mostly Latin was hearing English
   sticky: 0.04, // short utterances lean to the previous winner
   tie: 0.03,
-  minimumAlone: 0.3, // a group only one language heard is kept above this confidence
+  minimumAlone: 0.2, // a group only one language heard is kept above this confidence
   merge: 0.3, // seconds; phrase boundaries closer than this count as one
 };
 
@@ -48,7 +57,7 @@ function piece(segment, runs, index, count) {
 // substantial (two Han characters, three Latin words, two words either side of the confidence
 // change), so English terms inside a Chinese sentence ("这个 feature 的 deadline") do not cut it.
 export function switchPoints(segment) {
-  const runs = (segment.runs ?? []).filter((run) => /[\p{L}\p{N}]/u.test(run[3]));
+  const runs = spokenRuns(segment);
   const chinese = isChinese(segment.locale);
   const kind = (run) =>
     chinese
@@ -250,14 +259,16 @@ function stitch(winners) {
   }));
 }
 
-// Where a row in one language starts inside the previous row in another, its first words are
-// that model's version of speech the previous row already has (a garbled tail): drop them.
-// `before` is the last row already in the transcript (live mode commits in batches).
+// Where a row in one language starts before the previous row in another has finished speaking,
+// its first words are that model's version of speech the previous row already has (a garbled
+// echo of its last word): drop them. Rows span their spoken words, so a word starting after the
+// previous row's last word is new speech. `before` is the last row already in the transcript
+// (live mode commits in batches).
 function trimSeams(rows, before = null) {
   const out = before ? [before] : [];
   for (const row of rows) {
     const last = out.at(-1);
-    if (!last || last.locale === row.locale || row.timestamp >= last.end - 0.05) {
+    if (!last || last.locale === row.locale || row.timestamp >= last.end) {
       out.push(row);
       continue;
     }
@@ -265,8 +276,7 @@ function trimSeams(rows, before = null) {
       out.push(row);
       continue;
     }
-    // A word that starts inside the previous row belongs to it, even when it absorbed the pause.
-    const runs = row.runs.filter((r) => r[0] >= last.end - 0.15);
+    const runs = row.runs.filter((r) => r[0] >= last.end);
     if (!runs.length) continue;
     out.push({
       ...row,
@@ -290,7 +300,7 @@ export function arbitrateOffline(segments, locales = [], weights = defaultWeight
     let previous = null;
     const own = segments
       .filter((s) => (s.source ?? 'microphone') === source)
-      .map((s) => ({ ...s, end: Math.max(s.end ?? s.timestamp, s.timestamp) }));
+      .map((s) => spoken({ ...s, end: Math.max(s.end ?? s.timestamp, s.timestamp) }));
     const cuts = boundaries(own, weights.merge);
     const pieces = alignToBoundaries(own, cuts, weights.merge).map((s) => ({
       ...s,
@@ -449,7 +459,8 @@ export function createLiveArbiter({
       }
       s.volatile.delete(event.segmentId);
       const end = Math.max(event.end ?? event.timestamp, event.timestamp);
-      s.pending.push({ ...event, end });
+      // The language has finalized through the phrase's own end; its words say where it spoke.
+      s.pending.push(spoken({ ...event, end }));
       s.through[event.locale] = Math.max(s.through[event.locale] ?? -Infinity, end);
       const actions = event.locale === s.leading ? [show(s, event)] : [];
       return [...actions, ...resolve(source, s, now, false)];

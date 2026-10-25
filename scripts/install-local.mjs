@@ -29,7 +29,8 @@ run('ditto', [built, staging]);
 run('codesign', ['--verify', '--deep', '--strict', staging]);
 
 // Quit a running copy the normal way, so it saves drafts first. `is running` avoids launching it.
-if (running()) {
+const wasRunning = running();
+if (wasRunning) {
   run('osascript', [
     '-e',
     'if application id "local.stillnote.app" is running then tell application id "local.stillnote.app" to quit',
@@ -47,4 +48,6 @@ if (existsSync(target)) renameSync(target, previous);
 renameSync(staging, target);
 // The replaced copy goes to the Trash rather than being deleted outright.
 if (existsSync(previous)) run('/usr/bin/trash', [previous]);
-console.log(`Installed ${target}`);
+// A copy that was open before the update comes back as the new version.
+if (wasRunning) run('open', [target]);
+console.log(`Installed ${target}${wasRunning ? ' and reopened it' : ''}`);

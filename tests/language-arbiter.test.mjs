@@ -283,6 +283,26 @@ for (const [name, { windows, candidates }] of Object.entries(replay.fixtures)) {
   });
 }
 
+// A real Auto recording (macOS voices played into the microphone). The Chinese model's first
+// phrase runs on to 7.92 s although its last word ends at 6.12 s, and the English sentence that
+// follows opens with two unsure words: both used to cost "The pricing".
+const boundary = JSON.parse(
+  readFileSync(new URL('./fixtures/language-boundary.json', import.meta.url), 'utf8'),
+);
+const englishText = (rows) =>
+  rows
+    .filter((s) => s.locale === 'en-US')
+    .map((s) => s.text)
+    .join(' ');
+
+test('the first words after a language switch are kept', () => {
+  const auto = arbitrateOffline(boundary.candidates, boundary.locales);
+  assert.match(englishText(auto), /^The pricing page launches/);
+  assert.match(auto[0].text, /^今天我们讨论一下/);
+  const { rows } = streamLive(boundary.candidates, boundary.locales);
+  assert.match(englishText(rows), /^The pricing page launches/);
+});
+
 test('live: only the leading language shows provisional text, and a dropped one is ignored', () => {
   const arbiter = createLiveArbiter({ locales: ['zh-CN', 'en-US'], startedAt: 0 });
   const partial = (locale, segmentId, text) => ({

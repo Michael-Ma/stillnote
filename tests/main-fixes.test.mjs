@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { Store, chatContext, chatHistory, validateLocale } from '../app/store.mjs';
+import { Store, chatContext, chatHistory, checkImportSize, validateLocale } from '../app/store.mjs';
 import { contextHints, meetingEvents, helperRequests } from '../app/recordings.mjs';
 import { modelCache } from '../app/providers/index.mjs';
 import { consumeResponse } from '../app/stream.mjs';
@@ -166,6 +166,55 @@ test('backup imports use case-insensitive extensions and portable settings only'
   assert.equal(b.settings().futureUnknown, undefined);
   assert.equal(b.settings().locale, 'yue-CN');
   assert.equal(b.settings().echoCancellation, 'off');
+});
+test('a notebook larger than the old 30 MB import limit backs up and restores', (t) => {
+  const a = fixture(t).store,
+    b = fixture(t).store;
+  for (let i = 0; i < 16; i++)
+    a.create({ title: `Long ${i}`, notes: `${i} `.padEnd(1_990_000, 'word ') });
+  const file = JSON.stringify(a.backup());
+  assert.ok(file.length > 30_000_000, 'the backup is above the old limit');
+  assert.equal(b.importFile('Stillnote-backup.json', file).restored, 16);
+  assert.equal(b.get(a.all()[0].id).notes, a.all()[0].notes);
+});
+test('imports are size-checked by kind before they are read', () => {
+  assert.doesNotThrow(() => checkImportSize('Stillnote-backup.JSON', 250_000_000));
+  assert.throws(() => checkImportSize('Stillnote-backup.json', 250_000_001), /250 MB/);
+  assert.doesNotThrow(() => checkImportSize('call.vtt', 30_000_000));
+  assert.throws(() => checkImportSize('call.txt', 30_000_001), /30 MB/);
+});
+test('a restore keeps line language, source and calendar link, and repairs odd backups', (t) => {
+  const a = fixture(t).store,
+    b = fixture(t).store;
+  const m = a.create({ title: 'Standup', eventKey: 'standup@2026-10-24T09:00:00.000Z' });
+  a.append(m.id, { text: '今天开会', speaker: 'You', source: 'microphone', locale: 'zh-CN' });
+  const backup = a.backup();
+  assert.ok(!('transcriptVersions' in backup.meetings[0]), 'earlier versions stay on this Mac');
+  const [meeting] = backup.meetings;
+  meeting.folderId = 'deleted-folder';
+  meeting.versions = Array.from({ length: 25 }, (_, i) => ({
+    text: `v${i}`,
+    at: new Date().toISOString(),
+    extra: 'x',
+  }));
+  backup.meetings.push({ ...meeting, title: 'Duplicate' });
+  backup.messages = [
+    { id: 'q', scope: 'all', role: 'user', content: 'Hi', sources: [], injected: 'x' },
+  ];
+  assert.equal(b.restore(backup), 1);
+  const restored = b.get(m.id);
+  assert.equal(restored.title, 'Standup');
+  assert.equal(restored.eventKey, 'standup@2026-10-24T09:00:00.000Z');
+  assert.deepEqual(
+    restored.transcript.map((s) => [s.text, s.source, s.locale]),
+    [['今天开会', 'microphone', 'zh-CN']],
+  );
+  assert.equal(restored.folderId, null);
+  assert.equal(restored.versions.length, 20);
+  assert.deepEqual(Object.keys(restored.versions[0]), ['text', 'at']);
+  const [message] = b.messages('all');
+  assert.equal(message.injected, undefined);
+  assert.ok(Number.isFinite(Date.parse(message.createdAt)));
 });
 test('settings validate device, echo cancellation, and widened BCP-47 locales', (t) => {
   const { store } = fixture(t);

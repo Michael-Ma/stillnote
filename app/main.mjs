@@ -13,7 +13,15 @@ import {
 } from 'electron';
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -24,6 +32,7 @@ import {
   markdown,
   chatContext,
   chatHistory,
+  checkImportSize,
   validateLocale,
   validateSetting,
 } from './store.mjs';
@@ -518,7 +527,15 @@ if (!app.requestSingleInstanceLock()) {
       filters: [{ name: 'Export', extensions }],
     });
     if (result.canceled) return null;
-    writeFileSync(result.filePath, content, { mode: 0o600 });
+    // Written beside the target and renamed, so a failed write never leaves a truncated file.
+    const partial = `${result.filePath}.${randomUUID()}.partial`;
+    try {
+      writeFileSync(partial, content, { mode: 0o600 });
+      renameSync(partial, result.filePath);
+    } catch (error) {
+      rmSync(partial, { force: true });
+      throw error;
+    }
     return result.filePath;
   }
   async function ai({ kind, id, ids, question, scope }) {
@@ -622,6 +639,9 @@ if (!app.requestSingleInstanceLock()) {
     .whenReady()
     .then(async () => {
       store = new Store(app.getPath('userData'));
+      // A scripted copy beside the user's own Stillnote is marked, so the two Dock icons differ.
+      if (process.env.STILLNOTE_MOCK_KEYCHAIN && process.env.STILLNOTE_DATA_DIR)
+        app.dock?.setBadge('Test');
       if (
         !app.isPackaged &&
         process.env.NODE_ENV === 'test' &&
@@ -1045,7 +1065,7 @@ if (!app.requestSingleInstanceLock()) {
       register('backup', () =>
         saveExport(
           'Stillnote-backup-' + new Date().toISOString().slice(0, 10) + '.json',
-          JSON.stringify(store.backup(), null, 2),
+          JSON.stringify(store.backup()),
           ['json'],
         ),
       );
@@ -1057,8 +1077,10 @@ if (!app.requestSingleInstanceLock()) {
           ],
         });
         if (r.canceled) return null;
-        const raw = readFileSync(r.filePaths[0], 'utf8');
-        return store.importFile(r.filePaths[0], raw);
+        const [path] = r.filePaths;
+        // An oversized file is refused before it is read into memory.
+        checkImportSize(path, statSync(path).size);
+        return store.importFile(path, readFileSync(path, 'utf8'));
       });
       register('reveal', () => shell.openPath(app.getPath('userData')));
       // Only the privacy panes Stillnote's own messages point to.
