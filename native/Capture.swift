@@ -342,6 +342,7 @@ func speechChannel(source: String, locale: String, recordingId: String, context:
 @MainActor
 final class ModernSpeechChannel: SpeechChannel {
   let source: String
+  let locale: String
   let recordingId: String
   let transcriber: SpeechTranscriber
   let analyzer: SpeechAnalyzer
@@ -368,6 +369,7 @@ final class ModernSpeechChannel: SpeechChannel {
     async throws
   {
     self.source = source
+    self.locale = locale
     self.recordingId = recordingId
     self.live = live
     guard SpeechTranscriber.isAvailable,
@@ -376,9 +378,11 @@ final class ModernSpeechChannel: SpeechChannel {
     else {
       throw problem("On-device recognition is unavailable for \(locale). Audio is still saved.")
     }
+    // Confidence lets Auto language compare the same phrase transcribed in two languages.
     transcriber = SpeechTranscriber(
       locale: supported, transcriptionOptions: [],
-      reportingOptions: live ? [.volatileResults] : [], attributeOptions: [.audioTimeRange])
+      reportingOptions: live ? [.volatileResults] : [],
+      attributeOptions: [.audioTimeRange, .transcriptionConfidence])
     // `AssetInventory.status` reports `.supported` for usable installed locales on macOS 26, so the
     // installed-locale list is the reliable signal (and matches what the `languages` op reports).
     let installed = await SpeechTranscriber.installedLocales.contains {
@@ -389,6 +393,12 @@ final class ModernSpeechChannel: SpeechChannel {
         "Download the \(locale) language in Settings to enable transcription. Audio is still saved."
       )
     }
+    // Modules must use a locale reserved by this app ("unallocated locales" is slated to become
+    // an error). A full reservation list still works today, so a failed reserve is not fatal.
+    let reserved = await AssetInventory.reservedLocales.contains {
+      $0.identifier(.bcp47) == supported.identifier(.bcp47)
+    }
+    if !reserved { _ = try? await AssetInventory.reserve(locale: supported) }
     analyzer = SpeechAnalyzer(modules: [transcriber])
     let hints = AnalysisContext()
     hints.contextualStrings[.general] = context
@@ -450,12 +460,16 @@ final class ModernSpeechChannel: SpeechChannel {
         abs($0 - start) < 0.1 || (start < (pendingEnds[$0] ?? $0) && $0 < end)
       }.min { abs($0 - start) < abs($1 - start) } ?? start
     let id = pending[key]?["segmentId"] as? String ?? UUID().uuidString
-    let event: [String: Any] = [
+    var event: [String: Any] = [
       "type": result.isFinal ? "segment" : "partial", "recordingId": recordingId,
       "segmentId": id, "source": source,
       "speaker": source == "microphone" ? "You" : "Meeting audio",
       "text": text, "timestamp": (baseOffset ?? 0) + start, "partial": !result.isFinal,
+      "end": (baseOffset ?? 0) + end, "locale": locale,
     ]
+    if let confidence = Self.confidence(of: result.text) { event["confidence"] = confidence }
+    // Word timing lets Auto language split a long phrase at its pauses.
+    if result.isFinal { event["runs"] = Self.runs(of: result.text, offset: baseOffset ?? 0) }
     if result.isFinal {
       pending.removeValue(forKey: key)
       pendingEnds.removeValue(forKey: key)
@@ -466,6 +480,42 @@ final class ModernSpeechChannel: SpeechChannel {
     }
     if live { emit(event) }
     progress?(end)
+  }
+  // Character-weighted mean of the runs' confidence, or nil when the model reports none.
+  static func confidence(of text: AttributedString) -> Double? {
+    var weighted = 0.0
+    var count = 0.0
+    for run in text.runs {
+      guard let value = run[AttributeScopes.SpeechAttributes.ConfidenceAttribute.self] else {
+        continue
+      }
+      let characters = Double(text[run.range].characters.count)
+      weighted += value * characters
+      count += characters
+    }
+    return count > 0 ? weighted / count : nil
+  }
+  // [start, end, confidence or -1, text] per timed run; untimed text joins the previous run.
+  static func runs(of text: AttributedString, offset: Double) -> [[Any]] {
+    var out: [[Any]] = []
+    for run in text.runs {
+      let piece = String(text[run.range].characters)
+      guard let range = run[AttributeScopes.SpeechAttributes.TimeRangeAttribute.self],
+        range.start.seconds.isFinite, CMTimeRangeGetEnd(range).seconds.isFinite
+      else {
+        if var last = out.popLast() {
+          last[3] = (last[3] as? String ?? "") + piece
+          out.append(last)
+        }
+        continue
+      }
+      let round = { (value: Double) in (value * 1000).rounded() / 1000 }
+      out.append([
+        round(offset + range.start.seconds), round(offset + CMTimeRangeGetEnd(range).seconds),
+        run[AttributeScopes.SpeechAttributes.ConfidenceAttribute.self] ?? -1, piece,
+      ])
+    }
+    return out
   }
   func yield(_ buffer: AVAudioPCMBuffer) {
     guard let continuation, buffer.frameLength > 0 else { return }
@@ -1562,37 +1612,46 @@ func recognizeFile(
   }
 }
 
+// Several locales (Auto language) transcribe every track once per locale, one pass at a time to
+// stay inside the system's limit on simultaneous analyses; the app picks per sentence.
 @MainActor
-func transcribe(_ input: [[String: Any]], id: String, locale: String, context: [String] = [])
+func transcribe(_ input: [[String: Any]], id: String, locales: [String], context: [String] = [])
   async throws
 {
+  let locale = locales.first ?? "en-US"
   if #available(macOS 26.0, *) {
     var segments: [[String: Any]] = []
-    for track in input {
-      guard let path = track["path"] as? String, let source = track["source"] as? String,
-        ["microphone", "system"].contains(source)
-      else { throw problem("Invalid recording track.") }
-      let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
-      let duration = Double(file.length) / file.processingFormat.sampleRate
-      let channel = try await ModernSpeechChannel(
-        source: source, locale: locale, recordingId: id, context: context, live: false)
-      var lastProgress = Date.distantPast
-      var completed = 0.0
-      channel.progress = { seconds in
-        completed = max(completed, min(duration, seconds))
-        guard Date().timeIntervalSince(lastProgress) >= 0.25 else { return }
-        lastProgress = Date()
+    for (pass, candidate) in locales.enumerated() {
+      for track in input {
+        guard let path = track["path"] as? String, let source = track["source"] as? String,
+          ["microphone", "system"].contains(source)
+        else { throw problem("Invalid recording track.") }
+        let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
+        let duration = Double(file.length) / file.processingFormat.sampleRate
+        let channel = try await ModernSpeechChannel(
+          source: source, locale: candidate, recordingId: id, context: context, live: false)
+        var lastProgress = Date.distantPast
+        var completed = 0.0
+        let passes = Double(locales.count)
+        let progress = { (seconds: Double) in
+          (Double(pass) * duration + min(duration, seconds)) / passes
+        }
+        channel.progress = { seconds in
+          completed = max(completed, progress(seconds))
+          guard Date().timeIntervalSince(lastProgress) >= 0.25 else { return }
+          lastProgress = Date()
+          emit([
+            "type": "transcription-progress", "recordingId": id, "source": source,
+            "completed": completed, "total": duration,
+          ])
+        }
+        segments += try await channel.transcribeFile(
+          file, offset: track["startOffset"] as? Double ?? 0)
         emit([
           "type": "transcription-progress", "recordingId": id, "source": source,
-          "completed": completed, "total": duration,
+          "completed": progress(duration), "total": duration,
         ])
       }
-      segments += try await channel.transcribeFile(
-        file, offset: track["startOffset"] as? Double ?? 0)
-      emit([
-        "type": "transcription-progress", "recordingId": id, "source": source,
-        "completed": duration, "total": duration,
-      ])
     }
     emit([
       "type": "retranscription-completed", "recordingId": id,
@@ -1884,7 +1943,9 @@ func command(_ data: Data) {
         transcribing = true
         do {
           try await transcribe(
-            tracks, id: id, locale: obj["locale"] as? String ?? "en-US",
+            tracks, id: id,
+            locales: (obj["locales"] as? [String]).flatMap { $0.isEmpty ? nil : $0 }
+              ?? [obj["locale"] as? String ?? "en-US"],
             context: contextHints(obj["context"]))
         } catch {
           emit([
@@ -1987,7 +2048,9 @@ if let index = CommandLine.arguments.firstIndex(of: "--transcribe-file"),
       } else {
         try await transcribe(
           [["source": "microphone", "path": CommandLine.arguments[index + 1], "startOffset": 0]],
-          id: id, locale: argument("--locale") ?? "en-US")
+          id: id,
+          locales: argument("--locales")?.split(separator: ",").map(String.init)
+            ?? [argument("--locale") ?? "en-US"])
       }
       try? eventFile?.close()
       exit(0)

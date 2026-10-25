@@ -24,6 +24,7 @@
     "test:native": "node scripts/native-audio-test.mjs",
     "test:native:recognize": "node scripts/native-audio-test.mjs --recognize",
     "test:native-scheduler": "node scripts/native-scheduler-test.mjs",
+    "test:native:languages": "node scripts/language-eval.mjs",
     "test:claude": "node scripts/claude-smoke.mjs"
   },
   "build": {
