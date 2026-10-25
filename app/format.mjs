@@ -51,6 +51,16 @@ export function languageName(locale, displayLocale) {
   }
 }
 
+// A recording's language: one language, or Auto with its two candidates ("Auto (Chinese +
+// English)"), named by language alone unless both share it.
+export function recordingLanguage(locale, locales = [], displayLocale) {
+  if (locale !== 'auto') return languageName(locale, displayLocale);
+  const base = (code) => languageName(code.split('-')[0], displayLocale);
+  const names = locales.map(base);
+  const distinct = new Set(names).size === names.length;
+  return `Auto (${locales.map((code, i) => (distinct ? names[i] : languageName(code, displayLocale))).join(' + ')})`;
+}
+
 export function languageOptions(languages, displayLocale) {
   const installed = new Set(languages?.installed ?? []);
   return [...new Set(languages?.supported ?? [])]

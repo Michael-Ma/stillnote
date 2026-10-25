@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { Store, chatContext, chatHistory } from '../app/store.mjs';
+import { Store, chatContext, chatHistory, validateLocale } from '../app/store.mjs';
 import { contextHints, meetingEvents, helperRequests } from '../app/recordings.mjs';
 import { modelCache } from '../app/providers/index.mjs';
 import { consumeResponse } from '../app/stream.mjs';
@@ -175,6 +175,12 @@ test('settings validate device, echo cancellation, and widened BCP-47 locales', 
     store.setting('locale', locale);
   for (const locale of ['english', 'en_US', 'en-a', 'EN-us', 'en-US-x-test', null])
     assert.throws(() => store.setting('locale', locale));
+  // Auto picks between two different languages; installing a language never accepts 'auto'.
+  store.setting('locale', 'auto');
+  store.setting('autoLocales', ['zh-CN', 'en-US']);
+  for (const pair of [['zh-CN'], ['zh-CN', 'zh-CN'], ['zh-CN', 'english'], 'zh-CN,en-US'])
+    assert.throws(() => store.setting('autoLocales', pair), /two different languages|recognition/);
+  assert.throws(() => validateLocale('auto'), /Invalid recognition language/);
   for (const value of [null, 'CoreAudio:USB-123']) store.setting('inputDevice', value);
   for (const value of ['', 42, 'a\n', 'x'.repeat(1001)])
     assert.throws(() => store.setting('inputDevice', value));

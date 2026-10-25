@@ -376,14 +376,29 @@ export function createTestAdapter({ dataDir }) {
         emit({ type: 'stopped', duration, audio: { tracks, diagnostics: { fixture: true } } });
       }
       if (command.op === 'transcribe') {
-        const segments = [
-          {
-            source: 'microphone',
-            speaker: 'You',
-            text: 'Recovered complete fixture sentence from saved audio.',
-            timestamp: 0,
-          },
-        ];
+        const locales = command.locales ?? [command.locale ?? 'en-US'];
+        // Several locales (Auto): one candidate per locale; scenario.transcribeCandidates gives
+        // each locale's text and confidence, otherwise the first locale is the confident one.
+        const segments =
+          locales.length > 1
+            ? locales.map((locale, i) => ({
+                source: 'microphone',
+                speaker: 'You',
+                segmentId: `retry-${locale}`,
+                locale,
+                timestamp: 0,
+                end: 2,
+                text: scenario.transcribeCandidates?.[locale]?.text ?? `Fixture text in ${locale}.`,
+                confidence: scenario.transcribeCandidates?.[locale]?.confidence ?? (i ? 0.2 : 0.9),
+              }))
+            : [
+                {
+                  source: 'microphone',
+                  speaker: 'You',
+                  text: 'Recovered complete fixture sentence from saved audio.',
+                  timestamp: 0,
+                },
+              ];
         emit({ type: 'retranscription-completed', recordingId: command.recordingId, segments });
       }
       if (command.op === 'devices')

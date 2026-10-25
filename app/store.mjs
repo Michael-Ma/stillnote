@@ -70,6 +70,7 @@ const portableSettings = new Set([
   'model',
   'claudeModel',
   'locale',
+  'autoLocales',
   'echoCancellation',
   'systemAudio',
   'autoEnhance',
@@ -234,6 +235,7 @@ export class Store {
       ...(segment.recordingId ? { recordingId: text(segment.recordingId, 100) } : {}),
       ...(segment.segmentId ? { segmentId: text(segment.segmentId, 200) } : {}),
       ...(['microphone', 'system'].includes(segment.source) ? { source: segment.source } : {}),
+      ...segmentLocale(segment),
     };
     m.transcript.push(s);
     m.transcript.sort((a, b) => a.timestamp - b.timestamp);
@@ -246,6 +248,9 @@ export class Store {
       id: input.id ?? randomUUID(),
       startedAt: input.startedAt ?? new Date().toISOString(),
       locale: input.locale ?? 'en-US',
+      ...(Array.isArray(input.locales) && input.locales.length > 1
+        ? { locales: input.locales }
+        : {}),
       baseDuration: m.duration,
       duration: 0,
       status: 'starting',
@@ -270,7 +275,8 @@ export class Store {
     m.updatedAt = new Date().toISOString();
     return this.write(m);
   }
-  replaceRecordingTranscript(id, recordingId, segments, diagnostics) {
+  // `language` is what the retry used ({ locale, locales }); the recording's label follows it.
+  replaceRecordingTranscript(id, recordingId, segments, diagnostics, language) {
     const m = this.get(id),
       session = m.recordings.find((r) => r.id === recordingId);
     if (!session) throw new Error('Recording not found.');
@@ -281,6 +287,7 @@ export class Store {
         recordingId,
         ...(segment.segmentId ? { segmentId: text(segment.segmentId, 200) } : {}),
         ...(['microphone', 'system'].includes(segment.source) ? { source: segment.source } : {}),
+        ...segmentLocale(segment),
         text: text(segment.text),
         speaker: text(segment.speaker ?? 'Speaker', 100),
         timestamp: session.baseDuration + Math.max(0, Number(segment.timestamp) || 0),
@@ -301,6 +308,11 @@ export class Store {
     ].sort((a, b) => a.timestamp - b.timestamp);
     session.diagnostics = diagnostics;
     session.lastTranscribedAt = new Date().toISOString();
+    if (language?.locale) {
+      session.locale = language.locale;
+      if (language.locales?.length > 1) session.locales = language.locales;
+      else delete session.locales;
+    }
     m.updatedAt = new Date().toISOString();
     return this.write(m);
   }
@@ -519,11 +531,22 @@ export class Store {
     this.db.close();
   }
 }
+const isLocale = (value) =>
+  typeof value === 'string' && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8}){0,2}$/.test(value);
+export function validateLocale(value) {
+  if (!isLocale(value)) throw new Error('Invalid recognition language.');
+}
+// Segments remember which language produced them (Auto picks one per sentence).
+const segmentLocale = (segment) => (isLocale(segment.locale) ? { locale: segment.locale } : {});
 export function validateSetting(key, value) {
   if (['model', 'claudeModel'].includes(key)) text(value, 300);
   else if (key === 'locale') {
-    if (typeof value !== 'string' || !/^[a-z]{2,3}(-[A-Za-z0-9]{2,8}){0,2}$/.test(value))
-      throw new Error('Invalid recognition language.');
+    // 'auto' picks between the two `autoLocales` sentence by sentence.
+    if (value !== 'auto') validateLocale(value);
+  } else if (key === 'autoLocales') {
+    if (!Array.isArray(value) || value.length !== 2 || value[0] === value[1])
+      throw new Error('Choose two different languages for Auto.');
+    value.forEach(validateLocale);
   } else if (key === 'inputDevice') {
     if (
       value !== null &&

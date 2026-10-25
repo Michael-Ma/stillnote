@@ -141,6 +141,30 @@ test('main IPC consumes the native contract, bounds chat, and closes after 5 sec
     );
     await call('transcribe-recording', meeting.id, stored.recordings[0].id);
     assert.deepEqual(events().find((e) => e.op === 'transcribe').context, command.context);
+    assert.deepEqual(command.locales, ['en-US']);
+    // Auto: the retry transcribes in both languages and keeps the better one per sentence, and
+    // the recording's language label follows what the retry used.
+    await call('setting', 'autoLocales', ['zh-CN', 'en-US']);
+    await call('setting', 'locale', 'auto');
+    const auto = await call('transcribe-recording', meeting.id, stored.recordings[0].id);
+    assert.deepEqual(
+      events()
+        .filter((e) => e.op === 'transcribe')
+        .at(-1).locales,
+      ['zh-CN', 'en-US'],
+    );
+    const session = auto.recordings.find((r) => r.id === stored.recordings[0].id);
+    assert.equal(session.locale, 'auto');
+    assert.deepEqual(session.locales, ['zh-CN', 'en-US']);
+    assert.deepEqual(
+      auto.transcript.filter((s) => s.recordingId === session.id).map((s) => [s.locale, s.text]),
+      [['zh-CN', 'Fixture text in zh-CN.']],
+    );
+    await call('setting', 'locale', 'en-US');
+    const fixed = await call('transcribe-recording', meeting.id, stored.recordings[0].id);
+    const relabeled = fixed.recordings.find((r) => r.id === session.id);
+    assert.equal(relabeled.locale, 'en-US');
+    assert.equal('locales' in relabeled, false);
   });
   await t.test('AI enhancement marks summary source and chat returns context counts', async () => {
     const result = await call('ai', { kind: 'enhance', id: meeting.id });

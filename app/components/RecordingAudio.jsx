@@ -11,7 +11,7 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { cleanError, date, duration, languageName, time } from '../format.mjs';
+import { cleanError, date, duration, recordingLanguage, time } from '../format.mjs';
 
 const sourceName = (source) => (source === 'system' ? 'Meeting audio' : 'Microphone');
 const isCapturing = (recording) =>
@@ -341,7 +341,15 @@ function Player({ meeting, recording, tracks, call }) {
   );
 }
 
-export function RecordingAudio({ meeting, call, onRetry, retrying, disabled, locale = 'en-US' }) {
+export function RecordingAudio({
+  meeting,
+  call,
+  onRetry,
+  retrying,
+  disabled,
+  locale = 'en-US',
+  autoLocales,
+}) {
   const recordings = meeting.recordings ?? [];
   return (
     <section className="recordings-panel" aria-label="Saved recordings">
@@ -367,7 +375,9 @@ export function RecordingAudio({ meeting, call, onRetry, retrying, disabled, loc
                   <span>
                     {date(recording.startedAt)} · {time(recording.startedAt)} ·{' '}
                     {duration(Number(recording.duration) || 0)} ·{' '}
-                    {recording.locale ? languageName(recording.locale) : 'Language not recorded'}
+                    {recording.locale
+                      ? recordingLanguage(recording.locale, recording.locales)
+                      : 'Language not recorded'}
                   </span>
                 </div>
                 {!capturing && tracks.length > 0 && (
@@ -376,8 +386,9 @@ export function RecordingAudio({ meeting, call, onRetry, retrying, disabled, loc
                     disabled={disabled || !!retrying}
                     onClick={() => onRetry(recording.id)}
                     title={
-                      recording.locale !== locale
-                        ? `Transcribes again in ${languageName(locale)}`
+                      recordingLanguage(recording.locale ?? '', recording.locales) !==
+                      recordingLanguage(locale, autoLocales)
+                        ? `Transcribes again in ${recordingLanguage(locale, autoLocales)}`
                         : undefined
                     }
                   >

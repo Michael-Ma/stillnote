@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanError, languageName, languageOptions, silentState } from '../app/format.mjs';
+import {
+  cleanError,
+  languageName,
+  languageOptions,
+  recordingLanguage,
+  silentState,
+} from '../app/format.mjs';
 import { ownLineMatcher } from '../app/own-lines.mjs';
 import { aiView, claudeSummary, usageSummary, modelKey } from '../app/ai-view.mjs';
 
@@ -114,6 +120,12 @@ test('cleanError gives cancellation and timeout calm, distinct messages', () => 
 test('language display supports the complete native locale list and falls back safely', () => {
   assert.equal(languageName('en-US', 'en'), 'English (United States)');
   assert.equal(languageName('zh-TW', 'en'), 'Chinese (Taiwan)');
+  assert.equal(recordingLanguage('auto', ['zh-CN', 'en-US'], 'en'), 'Auto (Chinese + English)');
+  assert.equal(
+    recordingLanguage('auto', ['zh-CN', 'zh-TW'], 'en'),
+    'Auto (Chinese (China) + Chinese (Taiwan))',
+  );
+  assert.equal(recordingLanguage('en-US', [], 'en'), 'English (United States)');
   assert.equal(languageName('not_a_locale', 'en'), 'not_a_locale');
 });
 

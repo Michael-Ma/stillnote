@@ -5,6 +5,14 @@ const count = (text, pattern) => text.match(pattern)?.length ?? 0;
 const isChinese = (locale = '') => /^(zh|yue)(-|$)/i.test(locale);
 const duration = (s) => Math.max(0.05, s.end - s.start);
 
+// What to transcribe with: a fixed language, or both Auto candidates (primary first).
+export function recognitionPlan(settings = {}) {
+  if (settings.locale !== 'auto')
+    return { label: settings.locale ?? 'en-US', locales: [settings.locale ?? 'en-US'] };
+  const locales = settings.autoLocales ?? ['zh-CN', 'en-US'];
+  return { label: 'auto', locales };
+}
+
 export const defaultWeights = {
   coverage: 0.25, // per unit of coverage behind the best candidate
   latinInChinese: 0.3, // a Chinese model writing mostly Latin was hearing English

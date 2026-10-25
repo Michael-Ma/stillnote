@@ -876,6 +876,7 @@ function App() {
                       onRetry: retryRecording,
                       retrying: retryingRecording,
                       locale: data.settings.locale ?? 'en-US',
+                      autoLocales: data.settings.autoLocales,
                       disabled: !!data.recording || !!meeting.deletedAt || !!busy,
                     }}
                     onAddTranscript={() =>

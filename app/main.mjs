@@ -24,12 +24,14 @@ import {
   markdown,
   chatContext,
   chatHistory,
+  validateLocale,
   validateSetting,
 } from './store.mjs';
 import { ChatGPT } from './auth.mjs';
 import { dueReminders, eventKey, meetingForEvent, reminderBody } from './reminders.mjs';
 import { ClaudeCode } from './providers/claude-code.mjs';
 import { enhanceInstructions, enhanceRequest } from './enhance.mjs';
+import { arbitrateOffline, recognitionPlan } from './language-arbiter.mjs';
 import {
   aiState,
   modelSetting,
@@ -680,7 +682,7 @@ if (!app.requestSingleInstanceLock()) {
       };
       register('languages', languages);
       register('install-language', async (locale) => {
-        validateSetting('locale', locale);
+        validateLocale(locale);
         if (installingLanguage) throw new Error('A language installation is already in progress.');
         installingLanguage = true;
         try {
@@ -699,13 +701,15 @@ if (!app.requestSingleInstanceLock()) {
         if (m.deletedAt) throw new Error('Restore this meeting before recording.');
         const recordingId = randomUUID(),
           startedAt = Date.now(),
-          locale = store.settings().locale ?? 'en-US';
+          plan = recognitionPlan(store.settings()),
+          locale = plan.label;
         const audioDir = recordingDirectory(app.getPath('userData'), id, recordingId);
         mkdirSync(audioDir, { recursive: true, mode: 0o700 });
         store.beginRecording(id, {
           id: recordingId,
           startedAt: new Date(startedAt).toISOString(),
           locale,
+          locales: plan.locales,
         });
         emit({ type: 'meeting', meeting: store.get(id) });
         starting = true;
@@ -725,7 +729,8 @@ if (!app.requestSingleInstanceLock()) {
         try {
           send({
             op: 'start',
-            locale,
+            locale: plan.locales[0],
+            locales: plan.locales,
             inputDevice: store.settings().inputDevice ?? null,
             echoCancellation: store.settings().echoCancellation ?? 'auto',
             context: hints(m),
@@ -794,13 +799,15 @@ if (!app.requestSingleInstanceLock()) {
           startOffset: track.startOffset ?? 0,
         }));
         if (!tracks.length) throw new Error('No saved audio is available for this recording.');
-        const segments = await new Promise((resolve, reject) => {
+        // Retry uses the current language setting, so it is also how a wrong language is fixed.
+        const plan = recognitionPlan(store.settings());
+        const candidates = await new Promise((resolve, reject) => {
           const timer = setTimeout(
             () =>
               transcriptionWait?.reject(
                 new Error('Transcription timed out. The existing transcript was preserved.'),
               ),
-            Math.max(90_000, session.duration * 3000),
+            Math.max(90_000, session.duration * 3000) * plan.locales.length,
           );
           const settle = (fn) => (value) => {
             clearTimeout(timer);
@@ -813,13 +820,17 @@ if (!app.requestSingleInstanceLock()) {
               op: 'transcribe',
               recordingId,
               context: hints(meeting),
-              locale: store.settings().locale ?? 'en-US',
+              locale: plan.locales[0],
+              locales: plan.locales,
               tracks,
             });
           } catch (error) {
             transcriptionWait.reject(error);
           }
         });
+        // Auto: every track came back once per language; keep the better one per sentence.
+        const segments =
+          plan.locales.length > 1 ? arbitrateOffline(candidates, plan.locales) : candidates;
         const diagnostics = assessCoverage(
           segments,
           session.duration,
@@ -830,6 +841,7 @@ if (!app.requestSingleInstanceLock()) {
           recordingId,
           segments,
           diagnostics,
+          { locale: plan.label, locales: plan.locales },
         );
         emit({ type: 'meeting', meeting: updated });
         return updated;
