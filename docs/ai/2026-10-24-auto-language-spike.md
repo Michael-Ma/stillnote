@@ -46,12 +46,40 @@ stays within 2.5 points of the oracle.
 4. Consecutive winning pieces of one phrase are stitched back (same row and id), and a
    garbled tail of the other language at a seam is dropped.
 
+## Live recording (added the same day)
+
+`npm run test:native:languages -- --live` streams each fixture in real time through the helper's
+recording path: the first language starts with the recording, the second joins 1.5 s later and
+catches up from a 10 s audio buffer, and the events are replayed with their real arrival times
+through the live arbiter (`createLiveArbiter`).
+
+| Fixture | Live Auto | Offline Auto | Oracle | Live language |
+| --- | --- | --- | --- | --- |
+| Chinese | 1.1 | 1.1 | 1.1 | 100% |
+| English | 11.9 | 11.9 | 10.2 | 100% |
+| Alternating | 8.0 | 10.8 | 8.7 | 100% |
+| Chinese with English terms | 12.8 | 12.8 | 12.8 | 100% |
+| Alternating, 0.3 s pauses | 8.1 | 9.4 | 7.3 | 100% |
+| One speaker | 27.2 | 27.2 | 24.8 | 100% |
+
+Two live-only problems had to be solved first:
+
+- **Slow models.** The Chinese model produced its first result 12.5 s into a recording, so
+  "a language that said nothing for 3.5 s heard silence" committed English garbage. The helper
+  now reports each transcriber's finalized-through watermark (SpeechAnalyzer's volatile range,
+  silence included) as `recognition-progress`; the arbiter waits for it and only gives up on a
+  language that sent nothing at all for 15 s.
+- **Moving provisional starts.** A growing phrase reports later and later start times, and the
+  watermark can move past a phrase just before its final arrives. A phrase still showing
+  provisional text holds the decision back, using the earliest start it ever reported.
+
 ## Limits and next steps
 
 - Synthetic speech is clean; real meetings add noise, accents and crosstalk. Needs a real
   Chinese/English/mixed recording with the user before calling Auto done.
 - Live mode runs two transcribers per source (four analyzers with meeting audio); system
-  limits may refuse some. Plan: allocate both sources' primary language first, then the
-  secondaries, falling back to one language per source if refused.
+  limits may refuse some. Both sources' first language is allocated before any second one,
+  and a refused or failed second language falls back to the first for that source with one
+  notice. Four analyzers on real meetings still need checking on the user's Mac.
 - Final text in live mode waits for the slower model to finish a phrase (seconds); partials
   show the leading language meanwhile.

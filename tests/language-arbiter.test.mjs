@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { arbitrateOffline, judge, switchPoints } from '../app/language-arbiter.mjs';
+import {
+  arbitrateOffline,
+  createLiveArbiter,
+  judge,
+  switchPoints,
+} from '../app/language-arbiter.mjs';
 import { mean, scoreSentences } from '../scripts/language-score.mjs';
 
 // Real SpeechTranscriber output (zh-CN and en-US) for macOS-voice fixtures, saved by
@@ -214,4 +219,161 @@ test('each source is judged on its own', () => {
     ['zh-CN', 'en-US'],
   );
   assert.deepEqual(auto.map((s) => s.segmentId).sort(), ['m-zh', 's-en']);
+});
+
+// Replays saved candidates as a live stream: each final phrase arrives a little after its audio
+// ends (the Chinese model finalizes later), with ticks in between, then the recording stops.
+function streamLive(candidates, locales, delay = { 'zh-CN': 1.6, 'en-US': 0.7 }) {
+  const arbiter = createLiveArbiter({ locales, startedAt: 0 });
+  // Each phrase updates its provisional text every second from half a second in, as the
+  // transcribers do, then sends its final after the delay.
+  const arrivals = candidates
+    .flatMap((s) => {
+      const final = (s.end ?? s.timestamp) + (delay[s.locale] ?? 1);
+      const updates = [];
+      // Like the real models, a growing phrase reports a later and later provisional start.
+      for (let at = s.timestamp + 0.5; at < final; at += 1)
+        updates.push({
+          s: {
+            ...s,
+            type: 'partial',
+            text: s.text.slice(0, 4),
+            timestamp: Math.min(s.end ?? s.timestamp, s.timestamp + (at - s.timestamp) * 0.7),
+          },
+          at,
+        });
+      return [...updates, { s: { ...s, type: 'segment' }, at: final }];
+    })
+    .sort((a, b) => a.at - b.at);
+  const rows = new Map(),
+    shown = new Map();
+  const apply = (actions) => {
+    for (const action of actions)
+      if (action.type === 'segment') rows.set(action.segment.segmentId, action.segment);
+      else if (action.type === 'partial') shown.set(action.event.segmentId, action.event);
+      else for (const id of action.segmentIds) shown.delete(id);
+  };
+  let t = 0;
+  for (const { s, at } of arrivals) {
+    for (; t < at; t += 0.25) apply(arbiter.tick(t * 1000));
+    apply(arbiter.push(s, at * 1000));
+  }
+  apply(arbiter.flush((t + 10) * 1000));
+  for (const id of rows.keys()) shown.delete(id);
+  return { rows: [...rows.values()].sort((a, b) => a.timestamp - b.timestamp), shown };
+}
+
+for (const [name, { windows, candidates }] of Object.entries(replay.fixtures)) {
+  test(`live ${name}: decides like the offline arbiter while speech streams in`, () => {
+    const { rows, shown } = streamLive(candidates, replay.locales);
+    const live = scoreSentences(windows, rows, languages);
+    const offline = scoreSentences(
+      windows,
+      arbitrateOffline(candidates, replay.locales),
+      languages,
+    );
+    assert.deepEqual(
+      live.map((s) => s.locale),
+      offline.map((s) => s.locale),
+    );
+    assert.ok(mean(live.map((s) => s.error)) <= mean(offline.map((s) => s.error)) + 0.03);
+    assert.equal(shown.size, 0, 'no provisional text is left after stop');
+    for (let i = 1; i < rows.length; i++)
+      assert.ok(rows[i].timestamp >= rows[i - 1].end - 0.35, `overlap at ${rows[i].timestamp}`);
+  });
+}
+
+test('live: only the leading language shows provisional text, and a dropped one is ignored', () => {
+  const arbiter = createLiveArbiter({ locales: ['zh-CN', 'en-US'], startedAt: 0 });
+  const partial = (locale, segmentId, text) => ({
+    type: 'partial',
+    source: 'microphone',
+    locale,
+    segmentId,
+    text,
+    timestamp: 0,
+    end: 1,
+  });
+  assert.deepEqual(arbiter.push(partial('en-US', 'e1', 'Hello'), 100), []);
+  assert.deepEqual(
+    arbiter.push(partial('zh-CN', 'z1', '你好'), 100).map((a) => [a.type, a.event.segmentId]),
+    [['partial', 'z1']],
+  );
+  const dropped = arbiter.drop('microphone', 'zh-CN', 200);
+  assert.deepEqual(dropped[0], { type: 'discard', segmentIds: ['z1'] });
+  assert.deepEqual(
+    dropped.slice(1).map((a) => [a.type, a.event.segmentId]),
+    [['partial', 'e1']],
+    'the remaining language takes over the live text',
+  );
+  assert.deepEqual(arbiter.push({ ...partial('zh-CN', 'z2', '再见'), type: 'segment' }, 300), []);
+  const done = arbiter.flush(400);
+  assert.deepEqual(
+    done.filter((a) => a.type === 'segment').map((a) => a.segment.text),
+    ['Hello'],
+  );
+});
+
+test('live: a language that hears nothing does not hold the transcript back', () => {
+  const arbiter = createLiveArbiter({ locales: ['zh-CN', 'en-US'], startedAt: 0, settle: 3500 });
+  const english = {
+    type: 'segment',
+    source: 'system',
+    locale: 'en-US',
+    segmentId: 'e1',
+    text: 'Hello everyone',
+    timestamp: 0,
+    end: 2,
+    confidence: 0.95,
+  };
+  const early = arbiter.push(english, 2500);
+  assert.equal(early.filter((a) => a.type === 'segment').length, 0, 'waits for Chinese first');
+  const later = arbiter.tick(4000);
+  assert.deepEqual(
+    later.filter((a) => a.type === 'segment').map((a) => a.segment.segmentId),
+    ['e1'],
+  );
+});
+
+test('live: with watermarks, a slow language is waited for instead of assumed silent', () => {
+  const arbiter = createLiveArbiter({ locales: ['zh-CN', 'en-US'], startedAt: 0 });
+  const progress = (locale, through, now) =>
+    arbiter.push({ type: 'recognition-progress', source: 'microphone', locale, through }, now);
+  const english = {
+    type: 'segment',
+    source: 'microphone',
+    locale: 'en-US',
+    segmentId: 'e1',
+    text: 'Jin tian kai hui',
+    timestamp: 0,
+    end: 3,
+    confidence: 0.2,
+  };
+  progress('en-US', 3, 3500);
+  progress('zh-CN', 0.5, 3500); // the Chinese model is still loading
+  const early = arbiter.push(english, 4000);
+  assert.equal(early.filter((a) => a.type === 'segment').length, 0);
+  assert.equal(
+    arbiter.tick(9000).filter((a) => a.type === 'segment').length,
+    0,
+    'waits past the old 3.5 s silence rule while Chinese keeps reporting progress',
+  );
+  progress('zh-CN', 1, 9000);
+  const chinese = arbiter.push(
+    {
+      type: 'segment',
+      source: 'microphone',
+      locale: 'zh-CN',
+      segmentId: 'z1',
+      text: '今天开会',
+      timestamp: 0,
+      end: 3,
+      confidence: 0.95,
+    },
+    12000,
+  );
+  assert.deepEqual(
+    chinese.filter((a) => a.type === 'segment').map((a) => a.segment.segmentId),
+    ['z1'],
+  );
 });

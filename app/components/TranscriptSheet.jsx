@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Mic, Plus, X } from 'lucide-react';
 import { IconButton } from './Content.jsx';
 import { CaptureDiagnostics, RecordingAudio } from './RecordingAudio.jsx';
-import { duration } from '../format.mjs';
+import { duration, languageName } from '../format.mjs';
 
 const isMe = (speaker = '') => /^(me|you|microphone|mic)$/i.test(speaker.trim());
 
@@ -20,6 +20,8 @@ export function TranscriptSheet({
   onEditSegment,
 }) {
   const bottomRef = useRef();
+  // Auto language: when sentences came out in different languages, each says which.
+  const mixed = new Set(meeting.transcript.map((s) => s.locale).filter(Boolean)).size > 1;
   useEffect(() => {
     if (activeRecord && tab === 'transcript')
       bottomRef.current?.scrollIntoView({ block: 'nearest' });
@@ -86,6 +88,11 @@ export function TranscriptSheet({
                   <div className="segment-head">
                     <strong>{s.speaker}</strong>
                     <time>{duration(s.timestamp)}</time>
+                    {mixed && s.locale && (
+                      <span className="segment-language">
+                        {languageName(s.locale.split('-')[0])}
+                      </span>
+                    )}
                     <button className="text-button segment-edit" onClick={() => onEditSegment(s)}>
                       Edit
                     </button>

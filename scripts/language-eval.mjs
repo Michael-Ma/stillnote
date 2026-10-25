@@ -2,14 +2,16 @@
 // alternating and code-switched sentences; the real helper transcribes each fixture once per
 // candidate language; the arbiter picks per sentence. Reports per-sentence language accuracy and
 // CER (Chinese) / WER (English) for each fixed language and for Auto. Nothing leaves this Mac.
-//   node scripts/language-eval.mjs [--locales zh-CN,en-US] [--save-replay]
+//   node scripts/language-eval.mjs [--locales zh-CN,en-US] [--save-replay] [--live]
 // --save-replay stores the real candidates and sentence timing in tests/fixtures, so the arbiter's
-// unit test can replay genuine model output without the helper.
+// unit test can replay genuine model output without the helper. --live streams each fixture in
+// real time through the helper's recording path (second language joining late, as in a meeting)
+// and replays the events with their real arrival times through the live arbiter.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { arbitrateOffline } from '../app/language-arbiter.mjs';
+import { arbitrateOffline, createLiveArbiter } from '../app/language-arbiter.mjs';
 import { mean, scoreSentences } from './language-score.mjs';
 
 const root = resolve(import.meta.dirname, '..');
@@ -118,31 +120,65 @@ function build(name, { lines, gap = 0.7, voice = 'default' }) {
   return { path, windows };
 }
 
+const live = process.argv.includes('--live');
 function transcribe(path) {
   const result = join(work, 'events.jsonl');
   rmSync(result, { force: true });
   execFileSync(
     helper,
-    ['--transcribe-file', path, '--result', result, '--locales', locales.join(',')],
+    [
+      '--transcribe-file',
+      path,
+      '--result',
+      result,
+      '--locales',
+      locales.join(','),
+      ...(live ? ['--streamed'] : []),
+    ],
     { stdio: 'ignore', timeout: 300000 },
   );
   const events = readFileSync(result, 'utf8').trim().split('\n').map(JSON.parse);
   const done = events.find((e) => e.type === 'retranscription-completed');
   if (!done)
     throw new Error(events.find((e) => e.type === 'retranscription-error')?.message ?? 'No result');
-  return done.segments;
+  return done;
+}
+
+// The live arbiter fed the streamed events at the moments they actually arrived.
+function replayLive(timeline) {
+  const arbiter = createLiveArbiter({ locales, startedAt: 0 });
+  const rows = new Map();
+  const apply = (actions) => {
+    for (const action of actions)
+      if (action.type === 'segment') rows.set(action.segment.segmentId, action.segment);
+  };
+  let t = 0;
+  for (const event of timeline) {
+    for (; t < event.arrival; t += 0.25) apply(arbiter.tick(t * 1000));
+    apply(
+      event.type === 'language-fallback'
+        ? arbiter.drop(event.source, event.locale, event.arrival * 1000)
+        : arbiter.push(event, event.arrival * 1000),
+    );
+  }
+  apply(arbiter.flush((t + 10) * 1000));
+  return [...rows.values()].sort((a, b) => a.timestamp - b.timestamp);
 }
 
 const report = { locales, fixtures: {} };
 const replay = { locales, fixtures: {} };
 try {
+  const only = process.argv.includes('--only') ? arg('--only').split(',') : null;
   for (const [name, fixture] of Object.entries(fixtures)) {
+    if (only && !only.includes(name)) continue;
     const { path, windows } = build(name, fixture);
-    const candidates = transcribe(path);
+    const done = transcribe(path);
+    const candidates = done.segments;
     const modes = {
       [zhLocale]: candidates.filter((s) => s.locale === zhLocale),
       [enLocale]: candidates.filter((s) => s.locale === enLocale),
       auto: arbitrateOffline(candidates, locales),
+      ...(live ? { live: replayLive(done.timeline ?? []) } : {}),
     };
     const result = {};
     for (const [mode, segments] of Object.entries(modes)) {
@@ -159,7 +195,7 @@ try {
         windows.map((w, i) => result[w.lang === 'zh' ? zhLocale : enLocale].sentences[i].error),
       ),
     };
-    report.fixtures[name] = { candidates, result };
+    report.fixtures[name] = { candidates, result, ...(live ? { timeline: done.timeline } : {}) };
     replay.fixtures[name] = {
       windows,
       candidates: candidates.map(
@@ -181,7 +217,9 @@ try {
           .map(
             ([mode, r]) =>
               `${mode}: error ${(r.error * 100).toFixed(1)}%` +
-              (mode === 'auto' ? `, language ${(r.languageAccuracy * 100).toFixed(0)}%` : ''),
+              (['auto', 'live'].includes(mode)
+                ? `, language ${(r.languageAccuracy * 100).toFixed(0)}%`
+                : ''),
           )
           .join(' | '),
     );

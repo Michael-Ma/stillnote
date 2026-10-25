@@ -60,12 +60,17 @@ export class Harness {
   state() {
     return this.call('state');
   }
-  async waitForState(predicate, argument) {
-    await this.page.waitForFunction(`async () => {
-      const state = await window.stillnote.call('state');
-      return (${predicate.toString()})(state, ${JSON.stringify(argument) ?? 'undefined'});
-    }`);
-    return this.state();
+  // Polls the app's state until the predicate holds. (A string predicate handed to
+  // waitForFunction evaluated to the function itself, which is truthy, so it never waited.)
+  async waitForState(predicate, argument, timeout = 12000) {
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      const state = await this.state();
+      if (predicate(state, argument)) return state;
+      if (Date.now() > deadline)
+        throw new Error(`Timed out waiting for state: ${predicate.toString().slice(0, 160)}`);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
   async create(title, notes = '') {
     const existing = (await this.state()).meetings.map((meeting) => meeting.id);

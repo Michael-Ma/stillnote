@@ -2367,6 +2367,21 @@ dialog.settings-dialog {
   width: 140px;
   accent-color: var(--accent);
 }
+.segment-language {
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+.auto-languages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+/* The two Auto languages stack in their own column; the 60% cap below would truncate them. */
+.settings-body .setting-row .auto-languages select {
+  width: 240px;
+  max-width: none;
+}
 .context-coverage {
   color: var(--muted);
   font-size: var(--text-xs);

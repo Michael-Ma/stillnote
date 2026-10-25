@@ -364,6 +364,12 @@ final class ModernSpeechChannel: SpeechChannel {
   var pendingEnds: [Double: Double] = [:]
   var segments: [[String: Any]] = []
   var progress: ((Double) -> Void)?
+  // Auto language reports a failed candidate as a fallback instead of a recognition warning, and
+  // reports how far it has finalized so the app knows when every language has spoken.
+  var quiet = false
+  var reportsProgress = false
+  var through: Double = 0
+  var lastProgress = Date.distantPast
   let live: Bool
   init(source: String, locale: String, recordingId: String, context: [String], live: Bool = true)
     async throws
@@ -409,6 +415,13 @@ final class ModernSpeechChannel: SpeechChannel {
     }
     self.format = format
     try await analyzer.prepareToAnalyze(in: format)
+    if live {
+      // Results before the volatile range are final, silence included.
+      await analyzer.setVolatileRangeChangedHandler { [weak self] range, _, _ in
+        let start = range.start.seconds
+        Task { @MainActor in self?.advance(to: start) }
+      }
+    }
     resultsTask = Task { @MainActor [weak self, transcriber] in
       do {
         for try await result in transcriber.results {
@@ -443,10 +456,12 @@ final class ModernSpeechChannel: SpeechChannel {
     guard !closed, failure == nil else { return }
     failure = error
     errors += 1
-    emit([
-      "type": "warning", "recordingId": recordingId, "source": source,
-      "message": "Recognition: \(error.localizedDescription). Original audio is preserved.",
-    ])
+    if !quiet {
+      emit([
+        "type": "warning", "recordingId": recordingId, "source": source,
+        "message": "Recognition: \(error.localizedDescription). Original audio is preserved.",
+      ])
+    }
     continuation?.finish()
   }
   func receive(_ result: SpeechTranscriber.Result) {
@@ -474,12 +489,23 @@ final class ModernSpeechChannel: SpeechChannel {
       pending.removeValue(forKey: key)
       pendingEnds.removeValue(forKey: key)
       segments.append(event)
+      through = max(through, (baseOffset ?? 0) + end)
     } else {
       pending[key] = event
       pendingEnds[key] = end
     }
     if live { emit(event) }
     progress?(end)
+  }
+  func advance(to seconds: Double) {
+    guard seconds.isFinite, !closed else { return }
+    through = max(through, (baseOffset ?? 0) + seconds)
+    guard reportsProgress, Date().timeIntervalSince(lastProgress) >= 0.5 else { return }
+    lastProgress = Date()
+    emit([
+      "type": "recognition-progress", "recordingId": recordingId, "source": source,
+      "locale": locale, "through": through,
+    ])
   }
   // Character-weighted mean of the runs' confidence, or nil when the model reports none.
   static func confidence(of text: AttributedString) -> Double? {
@@ -631,6 +657,77 @@ final class ModernSpeechChannel: SpeechChannel {
       resultsTask?.cancel()
       Task { [analyzer] in await analyzer.cancelAndFinishNow() }
       throw error
+    }
+  }
+}
+
+// Starts a second-language transcriber for a track that is already recording: it first hears the
+// buffered audio, then joins the first language. `stillWanted` guards against a stop meanwhile.
+@available(macOS 26.0, *)
+@MainActor
+func attachCandidate(
+  _ track: AudioTrack, locale: String, id: String, context: [String], stillWanted: () -> Bool
+) async {
+  do {
+    let second = try await ModernSpeechChannel(
+      source: track.source, locale: locale, recordingId: id, context: context)
+    guard stillWanted() else {
+      await second.finish()
+      return
+    }
+    for (buffer, offset) in track.preRoll ?? [] { second.append(buffer, offset: offset) }
+    track.preRoll = nil
+    if let first = track.speech as? ModernSpeechChannel {
+      track.speech = CandidateSpeechChannel(
+        source: track.source, recordingId: id, children: [first, second])
+    } else if track.speech == nil {
+      // The first language never started here; the second carries this source alone.
+      track.speech = second
+    } else {
+      await second.finish()
+    }
+  } catch {
+    track.preRoll = nil
+    emit([
+      "type": "language-fallback", "recordingId": id, "source": track.source, "locale": locale,
+      "reason": error.localizedDescription,
+    ])
+  }
+}
+
+// Auto language: one transcriber per candidate language hears the same audio. A candidate that
+// fails is reported once as `language-fallback` and the others carry on.
+@available(macOS 26.0, *)
+@MainActor
+final class CandidateSpeechChannel: SpeechChannel {
+  let source: String
+  let recordingId: String
+  let children: [ModernSpeechChannel]
+  var reported = Set<String>()
+  init(source: String, recordingId: String, children: [ModernSpeechChannel]) {
+    self.source = source
+    self.recordingId = recordingId
+    self.children = children
+    for child in children {
+      child.quiet = true
+      child.reportsProgress = true
+    }
+  }
+  var errors: Int { children.reduce(0) { $0 + $1.errors } }
+  var timeouts: Int { children.reduce(0) { $0 + $1.timeouts } }
+  func append(_ buffer: AVAudioPCMBuffer, offset: TimeInterval) {
+    for child in children { child.append(buffer, offset: offset) }
+    for child in children where child.failure != nil && !reported.contains(child.locale) {
+      reported.insert(child.locale)
+      emit([
+        "type": "language-fallback", "recordingId": recordingId, "source": source,
+        "locale": child.locale, "reason": child.failure?.localizedDescription ?? "",
+      ])
+    }
+  }
+  func finish() async {
+    await withTaskGroup(of: Void.self) { group in
+      for child in children { group.addTask { @MainActor in await child.finish() } }
     }
   }
 }
@@ -827,6 +924,10 @@ final class AudioTrack {
   var lastSignal = Date()
   var lastBuffer = Date()
   var padOnNextBuffer = false
+  // While Auto's second language is starting, the last seconds of audio wait here so it can
+  // begin from the same point as the first.
+  var preRoll: [(buffer: AVAudioPCMBuffer, offset: TimeInterval)]?
+  var preRollFrames: AVAudioFrameCount = 0
   init(source: String, recordingId: String, directory: URL, start: Date) throws {
     self.source = source
     self.recordingId = recordingId
@@ -909,6 +1010,14 @@ final class AudioTrack {
     }
     try writer.append(buffer)
     speech?.append(buffer, offset: offset)
+    if preRoll != nil, let copy = copyPCM(buffer) {
+      preRoll?.append((copy, offset))
+      preRollFrames += copy.frameLength
+      while preRollFrames > 10 * 16000, let first = preRoll?.first {
+        preRoll?.removeFirst()
+        preRollFrames -= first.buffer.frameLength
+      }
+    }
     if events && Date().timeIntervalSince(lastLevel) >= 0.5 {
       lastLevel = Date()
       emit([
@@ -1092,7 +1201,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   nonisolated let pendingAudio = DispatchGroup()
   func start(
     locale: String, includeSystem: Bool, directory: URL, id: String, inputDevice: String?,
-    context: [String], echoCancellation: String
+    context: [String], echoCancellation: String, locales: [String] = []
   ) async throws {
     guard engine == nil, started == nil, !isStarting, !stopping else {
       throw problem("Already recording or finishing a recording.")
@@ -1135,6 +1244,15 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     let mic = try AudioTrack(
       source: "microphone", recordingId: id, directory: directory, start: start)
     tracks["microphone"] = mic
+    let auto = locales.count > 1 && recognitionEngine == "speechTranscriber"
+    if auto { mic.preRoll = [] }
+    // In Auto the first language reports its progress from the start, so the app waits for the
+    // second instead of deciding early sentences alone.
+    func reportProgress(_ track: AudioTrack) {
+      if #available(macOS 26.0, *), auto {
+        (track.speech as? ModernSpeechChannel)?.reportsProgress = true
+      }
+    }
     if speechAllowed {
       do {
         mic.speech = try await speechChannel(
@@ -1147,6 +1265,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
       await mic.speech?.finish()
       throw CancellationError()
     }
+    reportProgress(mic)
     let device = try startMicrophone()
     startMonitoring()
     var systemActive = false
@@ -1178,10 +1297,12 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         let track = try AudioTrack(
           source: "system", recordingId: id, directory: directory, start: start)
         tracks["system"] = track
+        if auto { track.preRoll = [] }
         if speechAllowed {
           do {
             track.speech = try await speechChannel(
               source: "system", locale: locale, recordingId: id, context: context)
+            reportProgress(track)
           } catch {
             emit(["type": "warning", "recordingId": id, "message": error.localizedDescription])
           }
@@ -1236,6 +1357,25 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
       "startedAt": start.timeIntervalSince1970 * 1000,
       "engine": recognitionEngine, "echoCancellation": echoEnabled,
     ])
+    if auto, #available(macOS 26.0, *) {
+      Task { @MainActor in
+        await self.attachSecondLanguage(
+          locales[1], id: id, context: context, generation: generation)
+      }
+    }
+  }
+  // Auto language: the second candidate joins once every source's first language is running, so
+  // it can never take a slot the meeting audio needs, and first hears the buffered audio.
+  @available(macOS 26.0, *)
+  func attachSecondLanguage(_ locale: String, id: String, context: [String], generation: Int)
+    async
+  {
+    for source in ["microphone", "system"] {
+      guard let track = tracks[source], track.preRoll != nil else { continue }
+      await attachCandidate(track, locale: locale, id: id, context: context) {
+        generation == self.operation && self.tracks[source] === track
+      }
+    }
   }
   func warning(_ message: String) {
     emit(["type": "warning", "recordingId": recordingId, "message": message])
@@ -1737,9 +1877,10 @@ func transcribe(_ input: [[String: Any]], id: String, locales: [String], context
 // Reusable acceptance path: production streaming recognition, prerecorded PCM,
 // real-time pacing and window finalization, without opening any live audio input.
 @MainActor
-func streamedRecognition(input: URL, id: String, locale: String, dualSource: Bool = false)
-  async throws
-{
+func streamedRecognition(
+  input: URL, id: String, locales: [String], dualSource: Bool = false
+) async throws {
+  let locale = locales.first ?? "en-US"
   if #available(macOS 26.0, *) {
   } else {
     var permission = SFSpeechRecognizer.authorizationStatus()
@@ -1761,9 +1902,17 @@ func streamedRecognition(input: URL, id: String, locale: String, dualSource: Boo
     try? FileManager.default.removeItem(at: temporary)
   }
   var segments: [[String: Any]] = []
+  var timeline: [[String: Any]] = []
+  let began = Date()
   eventObserver = { event in
-    if event["type"] as? String == "segment", event["recordingId"] as? String == id {
-      segments.append(event)
+    guard event["recordingId"] as? String == id else { return }
+    let type = event["type"] as? String
+    if type == "segment" { segments.append(event) }
+    // Auto evaluation replays live decisions with real arrival times.
+    if ["segment", "partial", "language-fallback", "recognition-progress"].contains(type ?? "") {
+      var timed = event
+      timed["arrival"] = Date().timeIntervalSince(began)
+      timeline.append(timed)
     }
   }
   let file = try AVAudioFile(forReading: input, commonFormat: .pcmFormatFloat32, interleaved: false)
@@ -1775,7 +1924,23 @@ func streamedRecognition(input: URL, id: String, locale: String, dualSource: Boo
     track.startOffset = 0
     track.speech = try await speechChannel(
       source: source, locale: locale, recordingId: id, context: [])
+    if locales.count > 1 {
+      track.preRoll = []
+      if #available(macOS 26.0, *) {
+        (track.speech as? ModernSpeechChannel)?.reportsProgress = true
+      }
+    }
     tracks.append(track)
+  }
+  // Like a recording, the second language joins a moment later and catches up from the buffer.
+  if locales.count > 1, #available(macOS 26.0, *) {
+    let late = tracks
+    Task { @MainActor in
+      try? await Task.sleep(nanoseconds: 1_500_000_000)
+      for track in late {
+        await attachCandidate(track, locale: locales[1], id: id, context: []) { true }
+      }
+    }
   }
   let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096)!
   while file.framePosition < file.length {
@@ -1793,7 +1958,7 @@ func streamedRecognition(input: URL, id: String, locale: String, dualSource: Boo
   eventObserver = nil
   emit([
     "type": "retranscription-completed", "recordingId": id, "segments": segments, "streamed": true,
-    "dualSource": dualSource,
+    "dualSource": dualSource, "timeline": timeline,
     "diagnostics": Dictionary(uniqueKeysWithValues: tracks.map { ($0.source, $0.stats()) }),
   ])
 }
@@ -1927,7 +2092,8 @@ func command(_ data: Data) {
             includeSystem: obj["systemAudio"] as? Bool ?? true,
             directory: URL(fileURLWithPath: directory), id: id,
             inputDevice: obj["inputDevice"] as? String, context: contextHints(obj["context"]),
-            echoCancellation: obj["echoCancellation"] as? String ?? "auto")
+            echoCancellation: obj["echoCancellation"] as? String ?? "auto",
+            locales: obj["locales"] as? [String] ?? [])
         } catch is CancellationError { return } catch {
           emit([
             "type": "error", "op": op, "recordingId": id, "message": error.localizedDescription,
@@ -2043,7 +2209,8 @@ if let index = CommandLine.arguments.firstIndex(of: "--transcribe-file"),
       if CommandLine.arguments.contains("--streamed") {
         try await streamedRecognition(
           input: URL(fileURLWithPath: CommandLine.arguments[index + 1]), id: id,
-          locale: argument("--locale") ?? "en-US",
+          locales: argument("--locales")?.split(separator: ",").map(String.init)
+            ?? [argument("--locale") ?? "en-US"],
           dualSource: CommandLine.arguments.contains("--dual-source"))
       } else {
         try await transcribe(

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { cleanError, languageOptions } from '../format.mjs';
+import { cleanError, languageName, languageOptions } from '../format.mjs';
 
 const unavailable = (error, label) =>
   /Unknown operation/.test(cleanError(error))
@@ -15,7 +15,14 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
   const alive = useRef(false);
   const installing = useRef(null);
   const locale = settings.locale ?? 'en-US';
+  const auto = locale === 'auto';
+  const autoLocales = settings.autoLocales ?? ['zh-CN', 'en-US'];
   const options = languageOptions(languages);
+  const installed = (code) => options.some((o) => o.locale === code && o.installed);
+  // The languages this choice needs that are supported here but not downloaded yet.
+  const missing = (auto ? autoLocales : [locale]).filter(
+    (code) => options.some((o) => o.locale === code) && !installed(code),
+  );
   useEffect(() => {
     alive.current = true;
     Promise.resolve()
@@ -43,13 +50,13 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
       unsubscribe();
     };
   }, []);
-  async function install() {
+  async function install(target) {
     if (installing.current) return;
-    installing.current = locale;
+    installing.current = target;
     setLanguageError('');
-    setDownload({ locale, fraction: 0 });
+    setDownload({ locale: target, fraction: 0 });
     try {
-      const result = await call('install-language', locale);
+      const result = await call('install-language', target);
       if (alive.current) setLanguages(result);
     } catch (e) {
       if (alive.current) setLanguageError(unavailable(e, 'Language downloads'));
@@ -117,7 +124,11 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
           <div className="setting-row">
             <div>
               <label htmlFor="locale">Meeting language</label>
-              <small>Transcribed on this Mac.</small>
+              <small>
+                {auto
+                  ? 'Each sentence is transcribed in whichever language fits. Uses more processing while recording.'
+                  : 'Transcribed on this Mac.'}
+              </small>
             </div>
             <select
               id="locale"
@@ -125,7 +136,8 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
               disabled={!!download}
               onChange={(e) => guard(() => setting('locale', e.target.value))}
             >
-              {!options.some((o) => o.locale === locale) && (
+              {languages.engine !== 'legacy' && <option value="auto">Auto</option>}
+              {!auto && !options.some((o) => o.locale === locale) && (
                 <option value={locale}>{locale} · Unavailable</option>
               )}
               {options.map((option) => (
@@ -136,19 +148,55 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
               ))}
             </select>
           </div>
+          {auto && (
+            <div className="setting-row">
+              <div>
+                <span id="auto-languages">Listen for</span>
+                <small>Pick the two languages your meetings use.</small>
+              </div>
+              <div className="auto-languages" role="group" aria-labelledby="auto-languages">
+                {autoLocales.map((code, index) => (
+                  <select
+                    key={index}
+                    aria-label={index ? 'Second language' : 'First language'}
+                    value={code}
+                    disabled={!!download}
+                    onChange={(e) => {
+                      const next = [...autoLocales];
+                      // Picking the other slot's language swaps the two.
+                      if (next[1 - index] === e.target.value) next[1 - index] = next[index];
+                      next[index] = e.target.value;
+                      guard(() => setting('autoLocales', next));
+                    }}
+                  >
+                    {options.map((option) => (
+                      <option key={option.locale} value={option.locale}>
+                        {option.name}
+                        {option.installed ? ' · Installed' : ''}
+                      </option>
+                    ))}
+                  </select>
+                ))}
+              </div>
+            </div>
+          )}
           {languages.engine === 'legacy' ? (
             <p className="settings-foot">
               Languages that work on this Mac:{' '}
               {options.map((o) => o.name).join(', ') || 'None available'}. Apple Speech (legacy)
-              uses macOS Dictation settings for language setup.
+              uses macOS Dictation settings for language setup. Auto language needs macOS 26.
             </p>
           ) : (
-            options.some((o) => o.locale === locale && !o.installed) && (
-              <div className="language-download">
-                <button className="secondary small" disabled={!!download} onClick={install}>
-                  {download ? 'Downloading…' : 'Download'}
+            missing.map((code) => (
+              <div className="language-download" key={code}>
+                <button
+                  className="secondary small"
+                  disabled={!!download}
+                  onClick={() => install(code)}
+                >
+                  {download?.locale === code ? 'Downloading…' : `Download ${languageName(code)}`}
                 </button>
-                {download?.locale === locale && (
+                {download?.locale === code && (
                   <>
                     <progress
                       aria-label="Language download progress"
@@ -159,7 +207,7 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
                   </>
                 )}
               </div>
-            )
+            ))
           )}
         </>
       )}

@@ -31,7 +31,7 @@ import { ChatGPT } from './auth.mjs';
 import { dueReminders, eventKey, meetingForEvent, reminderBody } from './reminders.mjs';
 import { ClaudeCode } from './providers/claude-code.mjs';
 import { enhanceInstructions, enhanceRequest } from './enhance.mjs';
-import { arbitrateOffline, recognitionPlan } from './language-arbiter.mjs';
+import { arbitrateOffline, createLiveArbiter, recognitionPlan } from './language-arbiter.mjs';
 import {
   aiState,
   modelSetting,
@@ -87,7 +87,10 @@ if (!app.requestSingleInstanceLock()) {
     rendererGone = false,
     closeTimer,
     // Set while a quit waits for the active recording to save; runs once capture has ended.
-    afterCapture;
+    afterCapture,
+    // Auto language: decides between the candidate languages while a recording runs.
+    languageArbiter,
+    languageTick;
   const pendingPartials = new Map();
   let calendarWait;
   const emit = (event) => {
@@ -138,13 +141,45 @@ if (!app.requestSingleInstanceLock()) {
     starting = false;
     stopping = false;
     pendingPartials.clear();
+    languageArbiter = undefined;
+    clearInterval(languageTick);
+    languageTick = undefined;
     if (powerId !== undefined) {
       powerSaveBlocker.stop(powerId);
       powerId = undefined;
     }
   }
+  // Auto language: apply the live arbiter's decisions. Only these reach the transcript and the
+  // renderer; the raw candidate events never do.
+  function applyLanguage(actions) {
+    if (!recording) return;
+    for (const action of actions) {
+      if (action.type === 'discard') {
+        for (const id of action.segmentIds) pendingPartials.delete(id);
+        emit({
+          type: 'partial-discard',
+          recordingId: recording.recordingId,
+          segmentIds: action.segmentIds,
+        });
+        continue;
+      }
+      const e = action.type === 'segment' ? { ...action.segment, type: 'segment' } : action.event;
+      const segment = {
+        ...e,
+        recordingId: recording.recordingId,
+        timestamp: Math.max(0, Number(e.timestamp) || 0) + recording.baseDuration,
+      };
+      if (e.type === 'segment') {
+        store.append(recording.id, segment);
+        pendingPartials.delete(e.segmentId);
+        meetingUpdates.schedule(recording.id);
+      } else pendingPartials.set(e.segmentId, segment);
+      emit({ ...e, recordingId: recording.recordingId, recording });
+    }
+  }
   function finishCapture(status, event = {}) {
     if (!recording) return null;
+    if (languageArbiter) applyLanguage(languageArbiter.flush(Date.now()));
     const active = recording;
     for (const segment of pendingPartials.values())
       if (segment.text.trim()) store.append(active.id, segment);
@@ -220,6 +255,32 @@ if (!app.requestSingleInstanceLock()) {
         }
         if (e.type === 'transcription-progress') {
           emit(e);
+          return;
+        }
+        // Auto language: candidate phrases go through the arbiter instead of straight to the
+        // transcript (helpers without Auto send no locale and take the usual path).
+        if (
+          languageArbiter &&
+          recording &&
+          ['segment', 'partial', 'recognition-progress'].includes(e.type) &&
+          e.locale &&
+          (!e.recordingId || e.recordingId === recording.recordingId)
+        ) {
+          applyLanguage(languageArbiter.push(e, Date.now()));
+          return;
+        }
+        if (e.type === 'language-fallback' && recording) {
+          if (languageArbiter)
+            applyLanguage(languageArbiter.drop(e.source ?? 'microphone', e.locale, Date.now()));
+          const remaining = recording.locales?.find((locale) => locale !== e.locale);
+          if (!recording.languageFallback && remaining) {
+            recording = { ...recording, languageFallback: true };
+            emit({
+              type: 'warning',
+              recordingId: recording.recordingId,
+              message: `This Mac couldn't run both Auto languages for ${e.source === 'system' ? 'meeting audio' : 'your microphone'}, so it continues in ${new Intl.DisplayNames('en', { type: 'language' }).of(remaining.split('-')[0])} only.`,
+            });
+          }
           return;
         }
         if (
@@ -717,6 +778,7 @@ if (!app.requestSingleInstanceLock()) {
           id,
           recordingId,
           locale,
+          locales: plan.locales,
           startedAt,
           baseDuration: m.duration,
           systemAudio: false,
@@ -726,6 +788,13 @@ if (!app.requestSingleInstanceLock()) {
           },
         };
         pendingPartials.clear();
+        if (plan.locales.length > 1) {
+          languageArbiter = createLiveArbiter({ locales: plan.locales, startedAt: Date.now() });
+          languageTick = setInterval(
+            () => applyLanguage(languageArbiter?.tick(Date.now()) ?? []),
+            300,
+          );
+        }
         try {
           send({
             op: 'start',

@@ -252,8 +252,9 @@ function stitch(winners) {
 
 // Where a row in one language starts inside the previous row in another, its first words are
 // that model's version of speech the previous row already has (a garbled tail): drop them.
-function trimSeams(rows) {
-  const out = [];
+// `before` is the last row already in the transcript (live mode commits in batches).
+function trimSeams(rows, before = null) {
+  const out = before ? [before] : [];
   for (const row of rows) {
     const last = out.at(-1);
     if (!last || last.locale === row.locale || row.timestamp >= last.end - 0.05) {
@@ -277,7 +278,7 @@ function trimSeams(rows) {
         .trim(),
     });
   }
-  return out;
+  return before ? out.slice(1) : out;
 }
 
 // Offline arbitration (Retry, evaluation): every candidate segment is known up front. Segments
@@ -305,4 +306,189 @@ export function arbitrateOffline(segments, locales = [], weights = defaultWeight
     result.push(...trimSeams(stitch(winners)));
   }
   return result.sort((a, b) => a.timestamp - b.timestamp);
+}
+
+// Live arbitration. Candidate events arrive as each transcriber produces them; a stretch of speech
+// is judged once every active language has finalized past it, or a language has said nothing for
+// `settle` ms (it heard silence, or nothing it understands). Until then the leading language's text
+// is shown provisionally. Pure: the caller passes the clock and applies the returned actions:
+//   { type: 'partial', event }      show or update provisional text (renderer only)
+//   { type: 'segment', segment }    a decided transcript row
+//   { type: 'discard', segmentIds } remove provisional text that will not become a row
+export function createLiveArbiter({
+  locales,
+  startedAt = 0,
+  settle = 3500,
+  stall = 15000,
+  weights = defaultWeights,
+}) {
+  const sources = new Map();
+  const base = (id = '') => id.split(':')[0];
+  const state = (source) => {
+    if (!sources.has(source))
+      sources.set(source, {
+        pending: [],
+        heard: Object.fromEntries(locales.map((l) => [l, startedAt])),
+        through: {},
+        progress: {}, // finalized-through watermark per locale, from the helper
+        dropped: new Set(),
+        previous: null,
+        leading: locales[0],
+        lastRow: null,
+        shown: new Map(), // provisional segmentId → locale
+        volatile: new Map(), // latest partial per segmentId, every locale
+      });
+    return sources.get(source);
+  };
+  const show = (s, event) => {
+    s.shown.set(event.segmentId, event.locale);
+    return { type: 'partial', event: { ...event, type: 'partial', partial: true } };
+  };
+
+  function resolve(source, s, now, force) {
+    if (!s.pending.length) return [];
+    const active = locales.filter((l) => !s.dropped.has(l));
+    // How far each language has finalized. With the helper's watermarks that is exact, silence
+    // included; a language that has sent nothing for `stall` ms stops holding the others back
+    // (models can take seconds to load). Without watermarks: up to the start of a phrase still in
+    // progress, else its last final while it spoke recently.
+    const watermarks = Object.keys(s.progress).length > 0;
+    let horizon = Infinity;
+    for (const locale of active) {
+      if (force) break;
+      const quiet = now - s.heard[locale];
+      // A phrase still showing provisional text has not delivered its final yet, even if the
+      // watermark already moved past it.
+      const working = [...s.volatile.values()]
+        .filter((e) => e.locale === locale && now - e.seenAt < stall)
+        .map((e) => e.timestamp);
+      if (watermarks) {
+        if (quiet < stall)
+          horizon = Math.min(
+            horizon,
+            Math.max(s.progress[locale] ?? -Infinity, s.through[locale] ?? -Infinity),
+            ...working,
+          );
+        continue;
+      }
+      if (working.length && quiet < settle * 2) horizon = Math.min(horizon, ...working);
+      else if (!working.length && quiet < settle)
+        horizon = Math.min(horizon, s.through[locale] ?? -Infinity);
+    }
+    if (horizon === -Infinity) return [];
+    const cuts = boundaries(
+      Number.isFinite(horizon) ? [...s.pending, { timestamp: horizon, end: horizon }] : s.pending,
+      weights.merge,
+    );
+    const pieces = alignToBoundaries(s.pending, cuts, weights.merge).map((p) => ({
+      ...p,
+      start: p.timestamp,
+    }));
+    const winners = [],
+      kept = [],
+      consumed = new Set();
+    for (const group of groupBySlices(pieces, cuts)) {
+      if (group.end > horizon + 0.05) {
+        kept.push(...group.segments);
+        continue;
+      }
+      for (const piece of group.segments) consumed.add(base(piece.segmentId));
+      // With one language left there is nothing to choose: keep what it heard.
+      const winner =
+        active.length === 1
+          ? { locale: active[0], segments: group.segments.filter((p) => p.locale === active[0]) }
+          : judge(group, s.previous, active, weights);
+      if (!winner) continue;
+      s.previous = winner.locale;
+      winners.push(...winner.segments.sort((a, b) => a.start - b.start));
+    }
+    s.pending = kept;
+    const rows = trimSeams(stitch(winners), s.lastRow);
+    if (rows.length) s.lastRow = rows.at(-1);
+    const actions = [];
+    const emitted = new Set(rows.map((r) => r.segmentId));
+    const stale = [...s.shown.keys()].filter((id) => consumed.has(base(id)) && !emitted.has(id));
+    for (const id of [...stale, ...emitted]) s.shown.delete(id);
+    if (stale.length) actions.push({ type: 'discard', segmentIds: stale });
+    actions.push(...rows.map((row) => ({ type: 'segment', segment: row })));
+    // Speech the leading language finalized but that is not decided yet stays visible.
+    if (s.previous && s.previous !== s.leading) {
+      const old = [...s.shown].filter(([, locale]) => locale === s.leading).map(([id]) => id);
+      for (const id of old) s.shown.delete(id);
+      if (old.length) actions.push({ type: 'discard', segmentIds: old });
+      s.leading = s.previous;
+      for (const event of s.volatile.values())
+        if (event.locale === s.leading) actions.push(show(s, event));
+    }
+    for (const piece of kept)
+      if (piece.locale === s.leading && piece.segmentId !== base(piece.segmentId))
+        actions.push(show(s, { ...piece, timestamp: piece.start }));
+    return actions;
+  }
+
+  return {
+    push(event, now) {
+      const source = event.source ?? 'microphone';
+      const s = state(source);
+      if (!locales.includes(event.locale) || s.dropped.has(event.locale)) return [];
+      s.heard[event.locale] = now;
+      if (event.type === 'recognition-progress') {
+        s.progress[event.locale] = Math.max(s.progress[event.locale] ?? -Infinity, event.through);
+        return resolve(source, s, now, false);
+      }
+      if (event.type === 'partial') {
+        // A phrase's provisional start moves forward as it grows; it has finalized nothing until
+        // its final arrives, so keep the earliest start it reported.
+        const prior = s.volatile.get(event.segmentId);
+        s.volatile.set(event.segmentId, {
+          ...event,
+          seenAt: now,
+          timestamp: Math.min(prior?.timestamp ?? Infinity, event.timestamp),
+        });
+        return event.locale === s.leading ? [show(s, event)] : [];
+      }
+      s.volatile.delete(event.segmentId);
+      const end = Math.max(event.end ?? event.timestamp, event.timestamp);
+      s.pending.push({ ...event, end });
+      s.through[event.locale] = Math.max(s.through[event.locale] ?? -Infinity, end);
+      const actions = event.locale === s.leading ? [show(s, event)] : [];
+      return [...actions, ...resolve(source, s, now, false)];
+    },
+    tick(now) {
+      return [...sources].flatMap(([source, s]) => resolve(source, s, now, false));
+    },
+    // A language stopped working for this source: decide without it from now on.
+    drop(source, locale, now) {
+      const s = state(source);
+      if (s.dropped.has(locale)) return [];
+      s.dropped.add(locale);
+      s.pending = s.pending.filter((p) => p.locale !== locale);
+      const gone = [...s.shown].filter(([, l]) => l === locale).map(([id]) => id);
+      for (const id of gone) s.shown.delete(id);
+      const actions = gone.length ? [{ type: 'discard', segmentIds: gone }] : [];
+      if (s.leading === locale) {
+        s.leading = locales.find((l) => !s.dropped.has(l)) ?? locale;
+        for (const event of s.volatile.values())
+          if (event.locale === s.leading) actions.push(show(s, event));
+      }
+      return [...actions, ...resolve(source, s, now, false)];
+    },
+    // Recording stopped: decide everything still pending and clear provisional text.
+    flush(now) {
+      const actions = [];
+      for (const [source, s] of sources) {
+        for (const event of s.volatile.values())
+          if (!s.dropped.has(event.locale))
+            s.pending.push({
+              ...event,
+              end: Math.max(event.end ?? event.timestamp, event.timestamp),
+            });
+        s.volatile.clear();
+        actions.push(...resolve(source, s, now, true));
+        if (s.shown.size) actions.push({ type: 'discard', segmentIds: [...s.shown.keys()] });
+        s.shown.clear();
+      }
+      return actions;
+    },
+  };
 }

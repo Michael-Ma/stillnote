@@ -12,6 +12,29 @@ export const captureScenario = {
     { mode: 'normal', text: 'A second session appends without overwriting the first.' },
     { mode: 'system-unavailable', declined: true },
     { mode: 'normal', startOffsets: { microphone: 0.6, system: 1 } },
+    {
+      mode: 'script',
+      script: [
+        {
+          source: 'microphone',
+          at: 0,
+          afterMs: 300,
+          candidates: {
+            'zh-CN': { text: '今天开会讨论招聘。', confidence: 0.95 },
+            'en-US': { text: 'Jin tian kai hui tao lun.', confidence: 0.2 },
+          },
+        },
+        {
+          source: 'system',
+          at: 2.5,
+          afterMs: 600,
+          candidates: {
+            'zh-CN': { text: 'Sank you see you.', confidence: 0.4 },
+            'en-US': { text: 'Thank you, see you Friday.', confidence: 0.96 },
+          },
+        },
+      ],
+    },
   ],
 };
 
@@ -284,5 +307,28 @@ export async function capture(h) {
     { timeout: 4000 },
   );
   await h.page.getByRole('button', { name: 'Pause recording', exact: true }).click();
+
+  // Auto language: each sentence is kept in the language that transcribed it convincingly; the
+  // other language's version never reaches the transcript.
+  await h.call('setting', 'autoLocales', ['zh-CN', 'en-US']);
+  await h.call('setting', 'locale', 'auto');
+  const auto = await h.create('E2E auto language');
+  await start(h);
+  await h.waitForState(
+    (s, id) => s.meetings.find((m) => m.id === id).transcript.length === 2,
+    auto.id,
+  );
+  const autoSaved = await stop(h, auto.id, 1);
+  assert.deepEqual(
+    autoSaved.transcript.map((segment) => [segment.locale, segment.text]),
+    [
+      ['zh-CN', '今天开会讨论招聘。'],
+      ['en-US', 'Thank you, see you Friday.'],
+    ],
+  );
+  assert.equal(autoSaved.recordings[0].locale, 'auto');
+  await h.sheet('Recordings');
+  await h.page.getByText('Auto (Chinese + English)', { exact: false }).first().waitFor();
+  await h.call('setting', 'locale', 'en-US');
   h.assertNoRendererErrors();
 }

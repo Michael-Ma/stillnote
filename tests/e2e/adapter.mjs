@@ -274,23 +274,43 @@ export function createTestAdapter({ dataDir }) {
                 emit({ type: 'audio-level', recordingId, source, rms, peak: rms * 2 });
             }, 150),
           );
+          // Auto language: each line can carry one candidate per locale ({ text, confidence });
+          // every locale then reports its version and how far it has finalized.
+          const auto = (command.locales?.length ?? 0) > 1;
           fixture.script.forEach((line, index) => {
-            const event = {
-              recordingId,
-              segmentId: `script-${index}`,
-              source: line.source ?? 'microphone',
-              speaker: line.speaker ?? 'You',
-              timestamp: line.at ?? index * 4,
-            };
-            const words = line.text.split(' ');
-            const half = words.slice(0, Math.ceil(words.length / 2)).join(' ');
-            timers.push(
-              setTimeout(
-                () => emit({ type: 'partial', ...event, text: half }),
-                Math.max(0, line.afterMs - 700),
-              ),
-              setTimeout(() => emit({ type: 'segment', ...event, text: line.text }), line.afterMs),
-            );
+            const at = line.at ?? index * 4;
+            const versions =
+              auto && line.candidates ? Object.entries(line.candidates) : [[null, line]];
+            versions.forEach(([locale, version], order) => {
+              const event = {
+                recordingId,
+                segmentId: `script-${index}${locale ? `-${locale}` : ''}`,
+                source: line.source ?? 'microphone',
+                speaker: line.speaker ?? 'You',
+                timestamp: at,
+                ...(locale ? { locale, end: at + 2, confidence: version.confidence } : {}),
+              };
+              const words = version.text.split(' ');
+              const half = words.slice(0, Math.ceil(words.length / 2)).join(' ');
+              const finalAt = line.afterMs + order * 150;
+              timers.push(
+                setTimeout(
+                  () => emit({ type: 'partial', ...event, text: half }),
+                  Math.max(0, line.afterMs - 700),
+                ),
+                setTimeout(() => {
+                  emit({ type: 'segment', ...event, text: version.text });
+                  if (locale)
+                    emit({
+                      type: 'recognition-progress',
+                      recordingId,
+                      source: event.source,
+                      locale,
+                      through: at + 2,
+                    });
+                }, finalAt),
+              );
+            });
           });
         }
         if (fixture.mode === 'normal') {

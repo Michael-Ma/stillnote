@@ -170,6 +170,13 @@ function App() {
           return n;
         });
       if (e.type === 'stopped') setPartial({});
+      // Auto language: provisional text in a language that lost the sentence.
+      if (e.type === 'partial-discard')
+        setPartial((p) => {
+          const n = { ...p };
+          for (const id of e.segmentIds ?? []) delete n[id];
+          return n;
+        });
       if (e.type === 'error' || e.type === 'warning') {
         const message = cleanError(e.message);
         if (message === 'Stopped.' || message.startsWith('Timed out after 5 minutes.'))
