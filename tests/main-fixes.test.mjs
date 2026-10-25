@@ -330,14 +330,15 @@ test('stream parser ignores non-string text deltas', async () => {
   assert.equal(await consumeResponse(body, (delta) => deltas.push(delta)), 'valid');
   assert.deepEqual(deltas, ['valid']);
 });
-test('native requests guard concurrent operations, match replies, time out and recover', async () => {
+test('native requests share a reply on its way, match replies, time out and recover', async () => {
   const sent = [];
   const requests = helperRequests((command) => sent.push(command));
   const pending = requests.request('devices');
-  await assert.rejects(requests.request('devices'), /already/);
+  assert.equal(requests.request('devices'), pending, 'asking again shares the reply');
   requests.receive({ type: 'devices', inputs: [] });
   assert.deepEqual((await pending).inputs, []);
   const install = requests.request('install-language', { locale: 'zh-CN' });
+  await assert.rejects(requests.request('install-language', { locale: 'ja-JP' }), /already/);
   assert.equal(
     requests.receive({ type: 'language-installed', locale: 'en-US', installed: [] }),
     false,

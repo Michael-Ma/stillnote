@@ -354,6 +354,20 @@ export function createLiveArbiter({
     s.shown.set(event.segmentId, event.locale);
     return { type: 'partial', event: { ...event, type: 'partial', partial: true } };
   };
+  // Takes provisional text off the screen; it will not become a row of its own.
+  const withdraw = (s, ids) => {
+    for (const id of ids) s.volatile.delete(id);
+    const gone = ids.filter((id) => s.shown.has(id));
+    for (const id of gone) s.shown.delete(id);
+    return gone.length ? [{ type: 'discard', segmentIds: gone }] : [];
+  };
+  // Provisional text not updated for `stall` ms will never be finalized (its phrase was revised
+  // away): it stops holding decisions back, leaves the screen, and is not saved at stop.
+  const expire = (s, now) =>
+    withdraw(
+      s,
+      [...s.volatile.values()].filter((e) => now - e.seenAt >= stall).map((e) => e.segmentId),
+    );
 
   function resolve(source, s, now, force) {
     if (!s.pending.length) return [];
@@ -466,7 +480,16 @@ export function createLiveArbiter({
       return [...actions, ...resolve(source, s, now, false)];
     },
     tick(now) {
-      return [...sources].flatMap(([source, s]) => resolve(source, s, now, false));
+      return [...sources].flatMap(([source, s]) => [
+        ...expire(s, now),
+        ...resolve(source, s, now, false),
+      ]);
+    },
+    // The helper withdrew provisional text (revised to nothing, or covered by another final).
+    discard(event, now) {
+      const source = event.source ?? 'microphone';
+      const s = state(source);
+      return [...withdraw(s, event.segmentIds ?? []), ...resolve(source, s, now, false)];
     },
     // A language stopped working for this source: decide without it from now on.
     drop(source, locale, now) {
@@ -488,6 +511,7 @@ export function createLiveArbiter({
     flush(now) {
       const actions = [];
       for (const [source, s] of sources) {
+        expire(s, now);
         for (const event of s.volatile.values())
           if (!s.dropped.has(event.locale))
             s.pending.push({

@@ -18,14 +18,14 @@ const hook = registerHooks({
   },
 });
 test.after(() => hook.deregister());
-async function setup(t, name) {
+async function setup(t, name, sessions) {
   const dir = mkdtempSync(join(tmpdir(), 'stillnote-ipc-'));
   const scenario = join(dir, 'scenario.json');
   writeFileSync(
     scenario,
     JSON.stringify({
       responses: [{ text: 'Enhanced evidence [1]' }, { text: 'Answer [1]' }],
-      sessions: [
+      sessions: sessions ?? [
         {
           mode: 'normal',
           events: [
@@ -200,4 +200,35 @@ test('renderer process loss closes even during capture and persists interrupted 
   const state = await call('state');
   assert.equal(state.recording, null);
   assert.equal(state.meetings[0].recordings[0].status, 'interrupted');
+});
+test('withdrawn provisional text is not saved, and track offsets are kept while recording', async (t) => {
+  const { call } = await setup(t, 'withdrawn', [
+    {
+      mode: 'normal',
+      events: [
+        { type: 'partial', segmentId: 'cough', source: 'microphone', speaker: 'You', text: 'Hmm' },
+        { type: 'partial-discard', source: 'microphone', locale: 'en-US', segmentIds: ['cough'] },
+        { type: 'track-started', source: 'microphone', startOffset: 0.25 },
+      ],
+    },
+  ]);
+  const meeting = await call('create', { title: 'Withdrawn' });
+  await call('setting', 'autoEnhance', false);
+  await call('record', meeting.id);
+  const recordingOf = async () => (await call('state')).meetings.find((m) => m.id === meeting.id);
+  let during;
+  for (let i = 0; i < 100 && !during?.recordings[0]?.tracks?.length; i++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    during = await recordingOf();
+  }
+  assert.deepEqual(during.recordings[0].tracks, [{ source: 'microphone', startOffset: 0.25 }]);
+  await call('stop');
+  let after;
+  for (let i = 0; i < 100 && after?.recordings[0]?.status !== 'completed'; i++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    after = await recordingOf();
+  }
+  assert.equal(after.recordings[0].status, 'completed');
+  assert.ok(after.transcript.length > 0);
+  assert.ok(!after.transcript.some((s) => s.text === 'Hmm'), 'the withdrawn text is not saved');
 });

@@ -85,6 +85,21 @@ final class WAVWriter {
       try handle.synchronize()
     }
   }
+  // Silence for a long gap, written in blocks with one header update at the end.
+  func appendSilence(_ count: Int64) throws {
+    guard let handle, count > 0 else { return }
+    let block: Int64 = 10 * 16000
+    let zeros = Data(count: Int(block) * 2)
+    var left = count
+    while left > 0 {
+      let frames = min(left, block)
+      try handle.write(contentsOf: frames == block ? zeros : Data(count: Int(frames) * 2))
+      self.frames += frames
+      left -= frames
+    }
+    try writeHeader()
+    try handle.synchronize()
+  }
   func close() throws {
     guard let handle else { return }
     try writeHeader()
@@ -316,11 +331,13 @@ protocol SpeechChannel: AnyObject {
   var errors: Int { get }
   var timeouts: Int { get }
   func append(_ buffer: AVAudioPCMBuffer, offset: TimeInterval)
+  // The recording jumps ahead (the Mac slept): the next audio starts `seconds` later.
+  func skip(_ seconds: TimeInterval)
   func finish() async
 }
 
 var recognitionEngine: String {
-  if #available(macOS 26.0, *) { return "speechTranscriber" }
+  if #available(macOS 26.0, *), SpeechTranscriber.isAvailable { return "speechTranscriber" }
   return "legacy"
 }
 func contextHints(_ value: Any?) -> [String] {
@@ -330,7 +347,7 @@ func contextHints(_ value: Any?) -> [String] {
 func speechChannel(source: String, locale: String, recordingId: String, context: [String])
   async throws -> any SpeechChannel
 {
-  if #available(macOS 26.0, *) {
+  if #available(macOS 26.0, *), SpeechTranscriber.isAvailable {
     return try await ModernSpeechChannel(
       source: source, locale: locale, recordingId: recordingId, context: context)
   }
@@ -370,6 +387,9 @@ final class ModernSpeechChannel: SpeechChannel {
   var reportsProgress = false
   var through: Double = 0
   var lastProgress = Date.distantPast
+  // Long gaps (the Mac slept) are not fed to the analyzer as silence: its stream skips them, and
+  // `audioTime` maps stream time back to recording time.
+  var skips: [(at: Double, seconds: Double)] = []
   let live: Bool
   init(source: String, locale: String, recordingId: String, context: [String], live: Bool = true)
     async throws
@@ -432,7 +452,9 @@ final class ModernSpeechChannel: SpeechChannel {
       self?.resultsDone = true
     }
     if live {
-      let sequence = AsyncStream<AnalyzerInput>(bufferingPolicy: .bufferingOldest(256)) {
+      // About 20 s of system audio (ScreenCaptureKit's buffers are small) or 80 s of microphone
+      // audio may wait for the analyzer before it counts as falling behind.
+      let sequence = AsyncStream<AnalyzerInput>(bufferingPolicy: .bufferingOldest(1024)) {
         self.continuation = $0
       }
       analysisTask = Task { @MainActor [weak self, analyzer] in
@@ -467,29 +489,38 @@ final class ModernSpeechChannel: SpeechChannel {
   func receive(_ result: SpeechTranscriber.Result) {
     let start = result.range.start.seconds
     let end = CMTimeRangeGetEnd(result.range).seconds
+    guard start.isFinite, end.isFinite else { return }
     let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
-    guard start.isFinite, end.isFinite, !text.isEmpty else { return }
+    // Provisional phrases this result revises: the same start, or an overlapping range.
+    let revised = pending.keys.filter {
+      abs($0 - start) < 0.1 || (start < (pendingEnds[$0] ?? $0) && $0 < end)
+    }
+    guard !text.isEmpty else {
+      // Revised to nothing (a cough, noise): its provisional text must not linger or be saved.
+      discard(revised)
+      return
+    }
     // Revisions retain the phrase's ID even if its first word boundary shifts slightly.
-    let key =
-      pending.keys.filter {
-        abs($0 - start) < 0.1 || (start < (pendingEnds[$0] ?? $0) && $0 < end)
-      }.min { abs($0 - start) < abs($1 - start) } ?? start
+    let key = revised.min { abs($0 - start) < abs($1 - start) } ?? start
     let id = pending[key]?["segmentId"] as? String ?? UUID().uuidString
     var event: [String: Any] = [
       "type": result.isFinal ? "segment" : "partial", "recordingId": recordingId,
       "segmentId": id, "source": source,
       "speaker": source == "microphone" ? "You" : "Meeting audio",
-      "text": text, "timestamp": (baseOffset ?? 0) + start, "partial": !result.isFinal,
-      "end": (baseOffset ?? 0) + end, "locale": locale,
+      "text": text, "timestamp": audioTime(start), "partial": !result.isFinal,
+      "end": audioTime(end), "locale": locale,
     ]
     if let confidence = Self.confidence(of: result.text) { event["confidence"] = confidence }
     // Word timing lets Auto language split a long phrase at its pauses.
-    if result.isFinal { event["runs"] = Self.runs(of: result.text, offset: baseOffset ?? 0) }
+    if result.isFinal { event["runs"] = Self.runs(of: result.text) { self.audioTime($0) } }
     if result.isFinal {
+      // One final can cover several provisional phrases; the others never get one of their own.
+      discard(revised.filter { $0 != key })
       pending.removeValue(forKey: key)
       pendingEnds.removeValue(forKey: key)
-      segments.append(event)
-      through = max(through, (baseOffset ?? 0) + end)
+      // Live results go to the app as they arrive; only a file transcription returns them.
+      if !live { segments.append(event) }
+      through = max(through, audioTime(end))
     } else {
       pending[key] = event
       pendingEnds[key] = end
@@ -497,9 +528,30 @@ final class ModernSpeechChannel: SpeechChannel {
     if live { emit(event) }
     progress?(end)
   }
+  // Provisional phrases that will never get a final of their own leave the live transcript.
+  func discard(_ keys: [Double]) {
+    let ids = keys.compactMap { pending[$0]?["segmentId"] as? String }
+    for key in keys {
+      pending.removeValue(forKey: key)
+      pendingEnds.removeValue(forKey: key)
+    }
+    guard live, !ids.isEmpty else { return }
+    emit([
+      "type": "partial-discard", "recordingId": recordingId, "source": source, "locale": locale,
+      "segmentIds": ids,
+    ])
+  }
+  func audioTime(_ stream: Double) -> Double {
+    skips.reduce((baseOffset ?? 0) + stream) { $1.at <= stream ? $0 + $1.seconds : $0 }
+  }
+  func skip(_ seconds: TimeInterval) {
+    // Before the first audio there is nothing to shift: that audio's offset includes the gap.
+    guard seconds > 0, !closed, baseOffset != nil else { return }
+    skips.append((Double(frames) / format.sampleRate, seconds))
+  }
   func advance(to seconds: Double) {
     guard seconds.isFinite, !closed else { return }
-    through = max(through, (baseOffset ?? 0) + seconds)
+    through = max(through, audioTime(seconds))
     guard reportsProgress, Date().timeIntervalSince(lastProgress) >= 0.5 else { return }
     lastProgress = Date()
     emit([
@@ -522,7 +574,7 @@ final class ModernSpeechChannel: SpeechChannel {
     return count > 0 ? weighted / count : nil
   }
   // [start, end, confidence or -1, text] per timed run; untimed text joins the previous run.
-  static func runs(of text: AttributedString, offset: Double) -> [[Any]] {
+  static func runs(of text: AttributedString, time: (Double) -> Double) -> [[Any]] {
     var out: [[Any]] = []
     for run in text.runs {
       let piece = String(text[run.range].characters)
@@ -537,7 +589,7 @@ final class ModernSpeechChannel: SpeechChannel {
       }
       let round = { (value: Double) in (value * 1000).rounded() / 1000 }
       out.append([
-        round(offset + range.start.seconds), round(offset + CMTimeRangeGetEnd(range).seconds),
+        round(time(range.start.seconds)), round(time(CMTimeRangeGetEnd(range).seconds)),
         run[AttributeScopes.SpeechAttributes.ConfidenceAttribute.self] ?? -1, piece,
       ])
     }
@@ -595,8 +647,7 @@ final class ModernSpeechChannel: SpeechChannel {
       var event = pending[key]!
       event["type"] = "segment"
       event["partial"] = true
-      segments.append(event)
-      if live { emit(event) }
+      if live { emit(event) } else { segments.append(event) }
     }
     pending.removeAll()
     pendingEnds.removeAll()
@@ -675,19 +726,25 @@ func attachCandidate(
       await second.finish()
       return
     }
-    for (buffer, offset) in track.preRoll ?? [] { second.append(buffer, offset: offset) }
+    // Replayed in blocks: hundreds of small system-audio buffers at once would overrun the
+    // recognizer's input queue before it reads any.
+    for (buffer, offset) in merged(track.preRoll ?? [], seconds: 1) {
+      second.append(buffer, offset: offset)
+    }
     track.preRoll = nil
     if let first = track.speech as? ModernSpeechChannel {
       track.speech = CandidateSpeechChannel(
         source: track.source, recordingId: id, children: [first, second])
     } else if track.speech == nil {
       // The first language never started here; the second carries this source alone.
+      second.reportsProgress = true
       track.speech = second
     } else {
       await second.finish()
     }
   } catch {
     track.preRoll = nil
+    guard stillWanted() else { return }
     emit([
       "type": "language-fallback", "recordingId": id, "source": track.source, "locale": locale,
       "reason": error.localizedDescription,
@@ -713,6 +770,7 @@ final class CandidateSpeechChannel: SpeechChannel {
       child.reportsProgress = true
     }
   }
+  var warned = false
   var errors: Int { children.reduce(0) { $0 + $1.errors } }
   var timeouts: Int { children.reduce(0) { $0 + $1.timeouts } }
   func append(_ buffer: AVAudioPCMBuffer, offset: TimeInterval) {
@@ -724,6 +782,17 @@ final class CandidateSpeechChannel: SpeechChannel {
         "locale": child.locale, "reason": child.failure?.localizedDescription ?? "",
       ])
     }
+    // With every language gone this source has no transcription: say so, as without Auto.
+    if !warned, children.allSatisfy({ $0.failure != nil }), let failure = children.last?.failure {
+      warned = true
+      emit([
+        "type": "warning", "recordingId": recordingId, "source": source,
+        "message": "Recognition: \(failure.localizedDescription). Original audio is preserved.",
+      ])
+    }
+  }
+  func skip(_ seconds: TimeInterval) {
+    for child in children { child.skip(seconds) }
   }
   func finish() async {
     await withTaskGroup(of: Void.self) { group in
@@ -737,7 +806,7 @@ func localeNames(_ locales: [Locale]) -> [String] {
 }
 @MainActor
 func languages() async -> [String: Any] {
-  if #available(macOS 26.0, *) {
+  if #available(macOS 26.0, *), SpeechTranscriber.isAvailable {
     return [
       "type": "languages", "engine": recognitionEngine,
       "supported": localeNames(await SpeechTranscriber.supportedLocales),
@@ -764,7 +833,8 @@ func installLanguage(_ locale: String) async throws {
   let module = SpeechTranscriber(
     locale: supported, transcriptionOptions: [], reportingOptions: [],
     attributeOptions: [.audioTimeRange])
-  try await AssetInventory.reserve(locale: supported)
+  // A full reservation list is not fatal (see ModernSpeechChannel); the download says if it is.
+  _ = try? await AssetInventory.reserve(locale: supported)
   var lastProgress = Date.distantPast
   if let request = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
     let polling = Task { @MainActor in
@@ -823,6 +893,11 @@ final class LegacySpeechChannel: SpeechChannel {
         current = nil
       }
     }
+  }
+  func skip(_ seconds: TimeInterval) {
+    guard !finishing, let window = current else { return }
+    submit(window)
+    current = nil
   }
   func submit(_ window: RecognitionWindow) {
     guard window.buffer.frameLength > 0 else { return }
@@ -944,6 +1019,10 @@ final class AudioTrack {
         "type": "warning", "recordingId": recordingId, "source": source,
         "message": "Cannot save \(source) audio: \(error.localizedDescription)",
       ])
+      emit([
+        "type": "recording-status", "recordingId": recordingId,
+        "sources": [source: ["status": "unavailable", "message": error.localizedDescription]],
+      ])
       closed = true
       try? writer.close()
     }
@@ -956,7 +1035,16 @@ final class AudioTrack {
       padOnNextBuffer = false
     }
     lastBuffer = Date()
-    if startOffset == nil { startOffset = elapsed }
+    if startOffset == nil {
+      startOffset = elapsed
+      // Reported now, so a recording that never finishes cleanly still knows where it began.
+      if events {
+        emit([
+          "type": "track-started", "recordingId": recordingId, "source": source,
+          "startOffset": elapsed,
+        ])
+      }
+    }
     if inputFormat == nil || !inputFormat!.isEqual(buffer.format) {
       converter = AVAudioConverter(from: buffer.format, to: format)
       converter?.downmix = true
@@ -1038,14 +1126,26 @@ final class AudioTrack {
   func pad(to elapsed: TimeInterval) throws {
     if startOffset == nil { startOffset = 0 }
     var missing = max(0, Int64((elapsed - (startOffset ?? 0)) * 16000) - writer.frames)
-    while missing > 0 {
-      let count = AVAudioFrameCount(min(missing, 16000))
+    // Recognition hears up to two seconds of the gap, enough to end the phrase before it. A
+    // longer gap (the Mac slept) is skipped by recognition and written to the WAV in blocks.
+    var heard = min(missing, 2 * 16000)
+    while heard > 0 {
+      let count = AVAudioFrameCount(min(heard, 16000))
       let silence = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: count)!
       silence.frameLength = count
       memset(silence.floatChannelData![0], 0, Int(count) * MemoryLayout<Float>.size)
       try save(silence)
+      heard -= Int64(count)
       missing -= Int64(count)
     }
+    guard missing > 0 else { return }
+    speech?.skip(Double(missing) / 16000)
+    // A second language still starting begins after the gap.
+    if preRoll != nil {
+      preRoll = []
+      preRollFrames = 0
+    }
+    try writer.appendSilence(missing)
   }
   func closeAudio() throws {
     guard !closed else { return }
@@ -1079,6 +1179,40 @@ final class AudioTrack {
       "inputSampleRate": inputFormat?.sampleRate ?? 0, "captureError": captureError ?? "",
     ]
   }
+}
+
+// Joins consecutive buffers of one format into blocks of up to `seconds`; each block keeps the
+// offset of its first buffer.
+func merged(_ items: [(buffer: AVAudioPCMBuffer, offset: TimeInterval)], seconds: Double)
+  -> [(buffer: AVAudioPCMBuffer, offset: TimeInterval)]
+{
+  var out: [(buffer: AVAudioPCMBuffer, offset: TimeInterval)] = []
+  for item in items {
+    let buffer = item.buffer
+    guard buffer.frameLength > 0, let source = buffer.floatChannelData else { continue }
+    if let last = out.last?.buffer, last.format.isEqual(buffer.format),
+      last.frameLength + buffer.frameLength <= last.frameCapacity, let target = last.floatChannelData
+    {
+      for channel in 0..<Int(buffer.format.channelCount) {
+        memcpy(
+          target[channel].advanced(by: Int(last.frameLength)), source[channel],
+          Int(buffer.frameLength) * MemoryLayout<Float>.size)
+      }
+      last.frameLength += buffer.frameLength
+      continue
+    }
+    let capacity = max(
+      buffer.frameLength, AVAudioFrameCount(buffer.format.sampleRate * seconds))
+    guard let block = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: capacity),
+      let target = block.floatChannelData
+    else { continue }
+    for channel in 0..<Int(buffer.format.channelCount) {
+      memcpy(target[channel], source[channel], Int(buffer.frameLength) * MemoryLayout<Float>.size)
+    }
+    block.frameLength = buffer.frameLength
+    out.append((block, item.offset))
+  }
+  return out
 }
 
 func copyPCM(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
@@ -1176,6 +1310,18 @@ func inputDevices() -> [InputDevice] {
       transport: transport)
   }.sorted { $0.name < $1.name }
 }
+// At most three microphone rebuilds in any ten seconds. Refused attempts are not counted, so the
+// monitor's retries rebuild again once the window has passed.
+struct RestartLimiter {
+  var rebuilds: [Date] = []
+  mutating func allow(at now: Date = Date()) -> Bool {
+    rebuilds = rebuilds.filter { now.timeIntervalSince($0) < 10 }
+    guard rebuilds.count < 3 else { return false }
+    rebuilds.append(now)
+    return true
+  }
+}
+
 @MainActor
 final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   var engine: AVAudioEngine?
@@ -1196,7 +1342,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   var tapInstalled = false
   var microphoneGeneration = 0
   var tapFormat: AVAudioFormat?
-  var rebuilds: [Date] = []
+  var restarts = RestartLimiter()
+  var restartsPaused = false
   nonisolated let audioQueue = DispatchQueue(label: "local.stillnote.audio")
   nonisolated let pendingAudio = DispatchGroup()
   func start(
@@ -1219,8 +1366,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
     guard generation == operation else { throw CancellationError() }
     var speechAllowed = true
-    if #available(macOS 26.0, *) {
-    } else {
+    if recognitionEngine == "legacy" {
       var status = SFSpeechRecognizer.authorizationStatus()
       if status == .notDetermined {
         status = await withCheckedContinuation { c in
@@ -1239,7 +1385,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
       at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let start = Date()
     started = start
-    rebuilds = []
+    restarts = RestartLimiter()
     tracks = [:]
     let mic = try AudioTrack(
       source: "microphone", recordingId: id, directory: directory, start: start)
@@ -1253,13 +1399,22 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         (track.speech as? ModernSpeechChannel)?.reportsProgress = true
       }
     }
+    // In Auto a first language that cannot start leaves the source to the second one; the app
+    // stops waiting for it.
+    func speechFailed(_ source: String, _ error: Error) {
+      emit(["type": "warning", "recordingId": id, "message": error.localizedDescription])
+      if auto {
+        emit([
+          "type": "language-fallback", "recordingId": id, "source": source, "locale": locale,
+          "reason": error.localizedDescription,
+        ])
+      }
+    }
     if speechAllowed {
       do {
         mic.speech = try await speechChannel(
           source: "microphone", locale: locale, recordingId: id, context: context)
-      } catch {
-        emit(["type": "warning", "recordingId": id, "message": error.localizedDescription])
-      }
+      } catch { speechFailed("microphone", error) }
     }
     guard generation == operation else {
       await mic.speech?.finish()
@@ -1303,9 +1458,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             track.speech = try await speechChannel(
               source: "system", locale: locale, recordingId: id, context: context)
             reportProgress(track)
-          } catch {
-            emit(["type": "warning", "recordingId": id, "message": error.localizedDescription])
-          }
+          } catch { speechFailed("system", error) }
         }
         guard generation == operation else {
           await track.speech?.finish()
@@ -1329,6 +1482,12 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         if let failedStream = self.stream {
           self.stream = nil
           try? await failedStream.stopCapture()
+        }
+        // Meeting audio that never started is not a track: it would be reported as silent.
+        if let track = tracks.removeValue(forKey: "system") {
+          track.preRoll = nil
+          try? track.writer.close()
+          await track.speech?.finish()
         }
         sources["system"] = ["status": "unavailable", "message": error.localizedDescription]
         // A denial needs the user, not a retry: say what to change and let the app link to it.
@@ -1371,6 +1530,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     async
   {
     for source in ["microphone", "system"] {
+      guard generation == operation else { return }
       guard let track = tracks[source], track.preRoll != nil else { continue }
       await attachCandidate(track, locale: locale, id: id, context: context) {
         generation == self.operation && self.tracks[source] === track
@@ -1522,11 +1682,15 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   func restartMicrophone(announce: Bool = true) {
     guard !stopping, !restarting, started != nil else { return }
     // A device that keeps resetting must not turn into a rebuild loop that drops the audio.
-    rebuilds = rebuilds.filter { Date().timeIntervalSince($0) < 10 } + [Date()]
-    guard rebuilds.count <= 3 else {
-      if rebuilds.count == 4 {
+    guard restarts.allow() else {
+      if !restartsPaused {
+        restartsPaused = true
         warning(
           "The microphone keeps resetting. Check the input device in Settings › Recording.")
+        emit([
+          "type": "recording-status", "recordingId": recordingId,
+          "sources": ["microphone": ["status": "unavailable"]],
+        ])
       }
       return
     }
@@ -1546,13 +1710,18 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         warning(
           "Microphone input restarted on \(device.name). The capture gap is padded with silence.")
       }
+      restartsPaused = false
       emit([
         "type": "recording-status", "recordingId": recordingId,
         "sources": ["microphone": ["status": "recording", "device": device.identity]],
       ])
     } catch {
       removeMicrophone()
-      warning("Microphone restart failed: \(error.localizedDescription). Retrying in two seconds.")
+      // After the limit's warning, retries stay quiet until one succeeds.
+      if !restartsPaused {
+        warning(
+          "Microphone restart failed: \(error.localizedDescription). Retrying in two seconds.")
+      }
       emit([
         "type": "recording-status", "recordingId": recordingId,
         "sources": [
@@ -1569,9 +1738,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         for track in self.tracks.values where Date().timeIntervalSince(track.lastSignal) >= 6 {
           track.reportSilence()
         }
-        if self.engine?.isRunning != true
-          || self.tracks["microphone"].map({ Date().timeIntervalSince($0.lastBuffer) > 6 }) == true
-        {
+        // A microphone track that can no longer save (disk full) is not restarted in a loop.
+        guard let mic = self.tracks["microphone"], !mic.closed else { continue }
+        if self.engine?.isRunning != true || Date().timeIntervalSince(mic.lastBuffer) > 6 {
           self.restartMicrophone()
         }
       }
@@ -1587,7 +1756,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     monitoringTask?.cancel()
     monitoringTask = nil
     removeMicrophone()
-    if let stream { try? await stream.stopCapture() }
+    // ScreenCaptureKit can take long to confirm a stop; the audio received so far is saved.
+    if let stream { await waitAtMost(5) { try? await stream.stopCapture() } }
     // Drain the source callback queue, then every copied buffer enqueued on the
     // main actor. A fixed sleep can close the WAV before queued tail audio arrives.
     await withCheckedContinuation { continuation in
@@ -1683,6 +1853,32 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
 }
 
 @MainActor
+final class Flag {
+  var raised = false
+}
+// Runs `work`, returning when it finishes or after `seconds`, whichever comes first (the work
+// itself carries on).
+@MainActor
+func waitAtMost(_ seconds: Double, _ work: @escaping @MainActor () async -> Void) async {
+  let finished = Flag()
+  await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+    let finish = { @MainActor in
+      guard !finished.raised else { return }
+      finished.raised = true
+      continuation.resume()
+    }
+    Task { @MainActor in
+      await work()
+      finish()
+    }
+    Task { @MainActor in
+      try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+      finish()
+    }
+  }
+}
+
+@MainActor
 func recognizeFile(
   _ url: URL, recognizer: SFSpeechRecognizer, control: RecognitionCancellation? = nil,
   context: [String] = [], onPartial: ((String, TimeInterval) -> Void)? = nil
@@ -1752,6 +1948,13 @@ func recognizeFile(
   }
 }
 
+// A retry can be cancelled (the app gave up waiting, or quit), and a pass that stalls is stopped
+// after three times real time.
+var transcriptionCancelled = false
+var transcriptionCancel: (() -> Void)?
+let transcriptionStalled =
+  "Transcription stopped because it was taking too long. The existing transcript was preserved."
+
 // Several locales (Auto language) transcribe every track once per locale, one pass at a time to
 // stay inside the system's limit on simultaneous analyses; the app picks per sentence.
 @MainActor
@@ -1759,38 +1962,69 @@ func transcribe(_ input: [[String: Any]], id: String, locales: [String], context
   async throws
 {
   let locale = locales.first ?? "en-US"
-  if #available(macOS 26.0, *) {
+  if #available(macOS 26.0, *), SpeechTranscriber.isAvailable {
     var segments: [[String: Any]] = []
-    for (pass, candidate) in locales.enumerated() {
+    passes: for (pass, candidate) in locales.enumerated() {
       for track in input {
         guard let path = track["path"] as? String, let source = track["source"] as? String,
           ["microphone", "system"].contains(source)
         else { throw problem("Invalid recording track.") }
+        if transcriptionCancelled { throw CancellationError() }
         let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
         let duration = Double(file.length) / file.processingFormat.sampleRate
-        let channel = try await ModernSpeechChannel(
-          source: source, locale: candidate, recordingId: id, context: context, live: false)
-        var lastProgress = Date.distantPast
-        var completed = 0.0
-        let passes = Double(locales.count)
-        let progress = { (seconds: Double) in
-          (Double(pass) * duration + min(duration, seconds)) / passes
-        }
-        channel.progress = { seconds in
-          completed = max(completed, progress(seconds))
-          guard Date().timeIntervalSince(lastProgress) >= 0.25 else { return }
-          lastProgress = Date()
+        do {
+          let channel = try await ModernSpeechChannel(
+            source: source, locale: candidate, recordingId: id, context: context, live: false)
+          var lastProgress = Date.distantPast
+          var completed = 0.0
+          let passes = Double(locales.count)
+          let progress = { (seconds: Double) in
+            (Double(pass) * duration + min(duration, seconds)) / passes
+          }
+          channel.progress = { seconds in
+            completed = max(completed, progress(seconds))
+            guard Date().timeIntervalSince(lastProgress) >= 0.25 else { return }
+            lastProgress = Date()
+            emit([
+              "type": "transcription-progress", "recordingId": id, "source": source,
+              "completed": completed, "total": duration,
+            ])
+          }
+          let stalled = Flag()
+          transcriptionCancel = { Task { await channel.analyzer.cancelAndFinishNow() } }
+          let watchdog = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(max(60, 3 * duration) * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            stalled.raised = true
+            transcriptionCancel?()
+          }
+          defer {
+            watchdog.cancel()
+            transcriptionCancel = nil
+          }
+          let found: [[String: Any]]
+          do {
+            found = try await channel.transcribeFile(
+              file, offset: track["startOffset"] as? Double ?? 0)
+          } catch {
+            if stalled.raised { throw problem(transcriptionStalled) }
+            throw error
+          }
+          if stalled.raised { throw problem(transcriptionStalled) }
+          if transcriptionCancelled { throw CancellationError() }
+          segments += found
           emit([
             "type": "transcription-progress", "recordingId": id, "source": source,
-            "completed": completed, "total": duration,
+            "completed": progress(duration), "total": duration,
           ])
+        } catch where pass > 0 && !transcriptionCancelled && !(error is CancellationError) {
+          // A second Auto language that fails leaves the transcript in the first language.
+          emit([
+            "type": "warning", "recordingId": id, "source": source,
+            "message": "Recognition: \(error.localizedDescription). Original audio is preserved.",
+          ])
+          continue passes
         }
-        segments += try await channel.transcribeFile(
-          file, offset: track["startOffset"] as? Double ?? 0)
-        emit([
-          "type": "transcription-progress", "recordingId": id, "source": source,
-          "completed": progress(duration), "total": duration,
-        ])
       }
     }
     emit([
@@ -1836,6 +2070,7 @@ func transcribe(_ input: [[String: Any]], id: String, locales: [String], context
     var cursor: AVAudioFramePosition = 0
     var index = 0
     while cursor < file.length {
+      if transcriptionCancelled { throw CancellationError() }
       let count = AVAudioFrameCount(min(chunkFrames, file.length - cursor))
       let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: count)!
       file.framePosition = cursor
@@ -1848,8 +2083,11 @@ func transcribe(_ input: [[String: Any]], id: String, locales: [String], context
       try chunkTrack.closeAudio()
       // Silent input is not useful speech, and should not occupy a recognition request.
       if chunkTrack.peak > 0.001 {
+        let control = RecognitionCancellation()
+        transcriptionCancel = { control.cancel?() }
+        defer { transcriptionCancel = nil }
         let (text, firstWord) = try await recognizeFile(
-          chunkTrack.writer.url, recognizer: recognizer, context: context)
+          chunkTrack.writer.url, recognizer: recognizer, control: control, context: context)
         if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
           results.append([
             "segmentId": UUID().uuidString, "source": source,
@@ -1933,9 +2171,10 @@ func streamedRecognition(
     tracks.append(track)
   }
   // Like a recording, the second language joins a moment later and catches up from the buffer.
+  var attach: Task<Void, Never>?
   if locales.count > 1, #available(macOS 26.0, *) {
     let late = tracks
-    Task { @MainActor in
+    attach = Task { @MainActor in
       try? await Task.sleep(nanoseconds: 1_500_000_000)
       for track in late {
         await attachCandidate(track, locale: locales[1], id: id, context: []) { true }
@@ -1951,6 +2190,7 @@ func streamedRecognition(
       nanoseconds: UInt64(
         Double(buffer.frameLength) / file.processingFormat.sampleRate * 1_000_000_000))
   }
+  await attach?.value
   for track in tracks { try track.closeAudio() }
   await withTaskGroup(of: Void.self) { group in
     for track in tracks { group.addTask { @MainActor in await track.speech?.finish() } }
@@ -2014,10 +2254,63 @@ func captureSelfTest() throws {
   else {
     throw problem("Padded gap contains signal.")
   }
+  // A long gap (the Mac slept) is written in full; recognition hears two seconds and skips the rest.
+  let later = directory.appendingPathComponent("gap")
+  try FileManager.default.createDirectory(at: later, withIntermediateDirectories: true)
+  let sleeper = try AudioTrack(
+    source: "microphone", recordingId: "capture-self-test", directory: later, start: Date())
+  sleeper.events = false
+  sleeper.startOffset = 0
+  let speech = ObservedSpeech()
+  sleeper.speech = speech
+  try sleeper.save(signal)
+  try sleeper.pad(to: 601)
+  guard sleeper.writer.frames == 601 * 16000, speech.heard == 3 * 16000,
+    abs(speech.skipped - 598) < 0.001
+  else { throw problem("A long gap must be written in full and skipped by recognition.") }
+  try sleeper.closeAudio()
+  guard try AVAudioFile(forReading: sleeper.writer.url).length == 601 * 16000 else {
+    throw problem("Long-gap WAV header/frame count mismatch.")
+  }
+  // Buffered system audio is replayed in one-second blocks with every sample in order.
+  let small = (0..<470).map { i -> (buffer: AVAudioPCMBuffer, offset: TimeInterval) in
+    let buffer = AVAudioPCMBuffer(pcmFormat: track.format, frameCapacity: 341)!
+    buffer.frameLength = 341
+    for j in 0..<341 { buffer.floatChannelData![0][j] = Float(i * 341 + j) }
+    return (buffer, 5 + Double(i * 341) / 16000)
+  }
+  let blocks = merged(small, seconds: 1)
+  let joined = blocks.flatMap { block in
+    (0..<Int(block.buffer.frameLength)).map { block.buffer.floatChannelData![0][$0] }
+  }
+  guard blocks.count == 11, blocks[0].offset == 5, joined.count == 470 * 341,
+    joined.enumerated().allSatisfy({ $0.element == Float($0.offset) })
+  else { throw problem("Merged audio blocks lost or reordered samples.") }
+  // A microphone that keeps resetting is retried again once the limit's window has passed.
+  var limiter = RestartLimiter()
+  let t0 = Date()
+  let allowed = stride(from: 0.0, through: 30, by: 2).filter {
+    limiter.allow(at: t0.addingTimeInterval($0))
+  }
+  guard allowed == [0, 2, 4, 10, 12, 14, 20, 22, 24, 30] else {
+    throw problem("Microphone restarts never resume after the limit.")
+  }
   emit([
-    "type": "capture-self-test", "status": "passed", "checks": 7,
+    "type": "capture-self-test", "status": "passed", "checks": 10,
     "paddedFrames": 20000, "sampleCount": file.length, "liveAudioInvoked": false,
   ])
+}
+
+// Records what a track sends to recognition, for the self-test.
+@MainActor
+final class ObservedSpeech: SpeechChannel {
+  var errors = 0
+  var timeouts = 0
+  var heard: AVAudioFrameCount = 0
+  var skipped: TimeInterval = 0
+  func append(_ buffer: AVAudioPCMBuffer, offset: TimeInterval) { heard += buffer.frameLength }
+  func skip(_ seconds: TimeInterval) { skipped += seconds }
+  func finish() async {}
 }
 
 @MainActor
@@ -2043,10 +2336,12 @@ func audioSelfTest(input: URL, output: URL) throws {
   ])
 }
 
+// The app reading these events may be gone; writing must then fail quietly instead of ending the
+// helper before it has closed the recording.
+signal(SIGPIPE, SIG_IGN)
 let capture = MainActor.assumeIsolated { Capture() }
 let events = EKEventStore()
 var transcribing = false
-var pendingCommands = 0
 @MainActor
 func calendar() async throws {
   let allowed: Bool
@@ -2077,16 +2372,20 @@ func command(_ data: Data) {
   guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
     let op = obj["op"] as? String
   else { return }
-  pendingCommands += 1
   Task { @MainActor in
-    defer { pendingCommands -= 1 }
     do {
       switch op {
       case "start":
-        guard !transcribing, let directory = obj["audioDir"] as? String, directory.hasPrefix("/"),
-          let id = obj["recordingId"] as? String, UUID(uuidString: id) != nil
-        else { throw problem("Recording requires a valid local audio directory and session ID.") }
+        let id = obj["recordingId"] as? String ?? ""
         do {
+          guard !transcribing else {
+            throw problem("Wait for the transcription retry to finish, then start recording.")
+          }
+          guard let directory = obj["audioDir"] as? String, directory.hasPrefix("/"),
+            UUID(uuidString: id) != nil
+          else {
+            throw problem("Recording requires a valid local audio directory and session ID.")
+          }
           try await capture.start(
             locale: obj["locale"] as? String ?? "en-US",
             includeSystem: obj["systemAudio"] as? Bool ?? true,
@@ -2098,15 +2397,20 @@ func command(_ data: Data) {
           emit([
             "type": "error", "op": op, "recordingId": id, "message": error.localizedDescription,
           ])
-          await capture.stop(status: "failed")
+          // Only this start's own half-started capture is stopped, never a recording in progress.
+          if capture.recordingId == id { await capture.stop(status: "failed") }
         }
       case "stop": await capture.stop()
+      case "cancel-transcribe":
+        transcriptionCancelled = transcribing
+        transcriptionCancel?()
       case "transcribe":
         guard !transcribing, capture.started == nil, !capture.isStarting, !capture.stopping,
           let id = obj["recordingId"] as? String,
           let tracks = obj["tracks"] as? [[String: Any]]
         else { throw problem("Finish the current operation before retrying transcription.") }
         transcribing = true
+        transcriptionCancelled = false
         do {
           try await transcribe(
             tracks, id: id,
@@ -2236,9 +2540,18 @@ var input = Data()
 FileHandle.standardInput.readabilityHandler = { handle in
   let bytes = handle.availableData
   if bytes.isEmpty {
+    // The app quit or crashed: cancel a retry, let a stop in progress finish, save a recording.
+    handle.readabilityHandler = nil
     DispatchQueue.main.async {
       Task { @MainActor in
-        while pendingCommands > 0 { try? await Task.sleep(nanoseconds: 50_000_000) }
+        if transcribing {
+          transcriptionCancelled = true
+          transcriptionCancel?()
+        }
+        let deadline = Date().addingTimeInterval(45)
+        while capture.stopping || transcribing, Date() < deadline {
+          try? await Task.sleep(nanoseconds: 50_000_000)
+        }
         await capture.stop()
         exit(0)
       }

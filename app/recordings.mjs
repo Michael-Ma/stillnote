@@ -340,8 +340,14 @@ export function helperRequests(send) {
   };
   return {
     request(op, fields = {}, timeout = 10000) {
-      if (pending.has(op)) return Promise.reject(new Error(`${op} is already in progress.`));
-      return new Promise((resolve, reject) => {
+      // Asking again while the reply is on its way (Settings reopened) shares that reply.
+      const current = pending.get(op);
+      if (current)
+        return current.locale === fields.locale
+          ? current.promise
+          : Promise.reject(new Error(`${op} is already in progress.`));
+      let entry;
+      const promise = new Promise((resolve, reject) => {
         const settle = (fn) => (value) => {
           clearTimeout(timer);
           pending.delete(op);
@@ -351,17 +357,16 @@ export function helperRequests(send) {
           () => pending.get(op)?.reject(new Error(`${op} timed out. Please try again.`)),
           timeout,
         );
-        pending.set(op, {
-          resolve: settle(resolve),
-          reject: settle(reject),
-          locale: fields.locale,
-        });
+        entry = { resolve: settle(resolve), reject: settle(reject), locale: fields.locale };
+        pending.set(op, entry);
         try {
           send({ op, ...fields });
         } catch (error) {
           pending.get(op)?.reject(error);
         }
       });
+      entry.promise = promise;
+      return promise;
     },
     receive(event) {
       const op = event.type === 'error' ? event.op : replies[event.type];

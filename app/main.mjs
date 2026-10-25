@@ -202,39 +202,45 @@ if (!app.requestSingleInstanceLock()) {
   }
   function finishCapture(status, event = {}) {
     if (!recording) return null;
-    if (languageArbiter) applyLanguage(languageArbiter.flush(Date.now()));
     const active = recording;
-    for (const segment of pendingPartials.values())
-      if (segment.text.trim()) store.append(active.id, segment);
-    const dir = recordingDirectory(app.getPath('userData'), active.id, active.recordingId);
-    if (status === 'interrupted') repairRecordingTracks(dir);
-    const tracks = inspectRecordingTracks(dir, event.audio?.tracks);
-    const trackDuration = Math.max(
-      0,
-      ...tracks.map((track) => track.duration + (track.startOffset ?? 0)),
-    );
-    const seconds = Number.isFinite(event.duration) ? Math.max(0, event.duration) : trackDuration;
-    const m = store.get(active.id);
-    const segments = m.transcript.filter((segment) => segment.recordingId === active.recordingId);
-    const nativeDiagnostics = event.audio?.diagnostics ?? {};
-    const diagnostics = {
-      ...nativeDiagnostics,
-      ...assessCoverage(
-        segments,
-        Math.max(seconds, trackDuration),
-        nativeDiagnostics.sourceStats ?? {},
-      ),
-    };
-    const updated = store.finishRecording(active.id, active.recordingId, {
-      status,
-      duration: Math.max(seconds, trackDuration),
-      tracks,
-      diagnostics,
-      sources: active.sources,
-    });
-    releaseCapture();
-    meetingUpdates.flush(active.id, updated);
-    afterCapture?.();
+    let updated = null;
+    // A failed write (a full disk) must not leave Stillnote recording forever and unable to quit.
+    try {
+      if (languageArbiter) applyLanguage(languageArbiter.flush(Date.now()));
+      for (const segment of pendingPartials.values())
+        if (segment.text.trim()) store.append(active.id, segment);
+      const dir = recordingDirectory(app.getPath('userData'), active.id, active.recordingId);
+      if (status === 'interrupted') repairRecordingTracks(dir);
+      // Without the helper's final word, the track offsets it reported while recording.
+      const tracks = inspectRecordingTracks(dir, event.audio?.tracks ?? active.trackOffsets);
+      const trackDuration = Math.max(
+        0,
+        ...tracks.map((track) => track.duration + (track.startOffset ?? 0)),
+      );
+      const seconds = Number.isFinite(event.duration) ? Math.max(0, event.duration) : trackDuration;
+      const m = store.get(active.id);
+      const segments = m.transcript.filter((segment) => segment.recordingId === active.recordingId);
+      const nativeDiagnostics = event.audio?.diagnostics ?? {};
+      const diagnostics = {
+        ...nativeDiagnostics,
+        ...assessCoverage(
+          segments,
+          Math.max(seconds, trackDuration),
+          nativeDiagnostics.sourceStats ?? {},
+        ),
+      };
+      updated = store.finishRecording(active.id, active.recordingId, {
+        status,
+        duration: Math.max(seconds, trackDuration),
+        tracks,
+        diagnostics,
+        sources: active.sources,
+      });
+    } finally {
+      releaseCapture();
+      if (updated) meetingUpdates.flush(active.id, updated);
+      afterCapture?.();
+    }
     return updated;
   }
   function helper() {
@@ -248,6 +254,8 @@ if (!app.requestSingleInstanceLock()) {
       ? testAdapter.createNative()
       : spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'] });
     native = child;
+    // Writing to a helper that just died fails with EPIPE; its 'close' handler reports it.
+    child.stdin.on('error', () => {});
     createInterface({ input: child.stdout }).on('line', (line) => {
       try {
         const parsed = JSON.parse(line);
@@ -282,6 +290,29 @@ if (!app.requestSingleInstanceLock()) {
         }
         if (e.type === 'transcription-progress') {
           emit(e);
+          return;
+        }
+        // When each track's first audio arrived. Saved right away, so an interrupted recording
+        // (crash, quit deadline) still lines its tracks up on playback and Retry.
+        if (e.type === 'track-started' && recording) {
+          if (['microphone', 'system'].includes(e.source) && Number(e.startOffset) >= 0) {
+            const trackOffsets = [
+              ...(recording.trackOffsets ?? []).filter((track) => track.source !== e.source),
+              { source: e.source, startOffset: Number(e.startOffset) },
+            ];
+            recording = { ...recording, trackOffsets };
+            store.finishRecording(recording.id, recording.recordingId, { tracks: trackOffsets });
+          }
+          return;
+        }
+        // Provisional text the helper withdrew (revised to nothing, or covered by another final).
+        if (e.type === 'partial-discard' && recording) {
+          if (languageArbiter && e.locale) applyLanguage(languageArbiter.discard(e, Date.now()));
+          else {
+            const segmentIds = e.segmentIds ?? [];
+            for (const id of segmentIds) pendingPartials.delete(id);
+            emit({ type: 'partial-discard', recordingId: recording.recordingId, segmentIds });
+          }
           return;
         }
         // Auto language: candidate phrases go through the arbiter instead of straight to the
@@ -405,6 +436,8 @@ if (!app.requestSingleInstanceLock()) {
           calendarWait = undefined;
         }
         if (e.type === 'error') {
+          // Without calendar access, week-old events must not keep sending reminders.
+          if (e.op === 'calendar') calendarEvents = [];
           if (!e.op || e.op === 'calendar') {
             calendarWait?.reject(new Error(e.message));
             calendarWait = undefined;
@@ -476,7 +509,11 @@ if (!app.requestSingleInstanceLock()) {
         new Error('Transcription stopped unexpectedly. The existing transcript was preserved.'),
       );
       if (recording) {
-        finishCapture('interrupted');
+        try {
+          finishCapture('interrupted');
+        } catch (error) {
+          console.error('Could not finalize interrupted capture:', error.message);
+        }
         emit({
           type: 'error',
           message:
@@ -882,9 +919,30 @@ if (!app.requestSingleInstanceLock()) {
         if (recording && !stopping) {
           stopping = true;
           recording = { ...recording, stopping: true };
-          store.finishRecording(recording.id, recording.recordingId, { status: 'stopping' });
-          emit({ type: 'recording-status', recording });
+          // The helper stops first: a failed write here must not keep it recording.
           send({ op: 'stop' });
+          try {
+            store.finishRecording(recording.id, recording.recordingId, { status: 'stopping' });
+          } catch (error) {
+            console.error('Could not mark the recording as stopping:', error.message);
+          }
+          emit({ type: 'recording-status', recording });
+          // The helper confirms within about 35 s (5 s for meeting audio, 30 s for each
+          // recognizer to finish). A helper that never does is replaced, keeping the audio saved.
+          const stuck = recording.recordingId;
+          setTimeout(() => {
+            if (recording?.recordingId !== stuck || !stopping) return;
+            try {
+              finishCapture('interrupted');
+            } finally {
+              native?.kill();
+              emit({
+                type: 'error',
+                message:
+                  'Audio capture stopped unexpectedly. Review the saved audio and transcript, then start a new recording to continue.',
+              });
+            }
+          }, 45_000).unref?.();
         }
       };
       register('stop', () => {
@@ -902,13 +960,17 @@ if (!app.requestSingleInstanceLock()) {
           clearTimeout(deadline);
           setImmediate(() => app.quit());
         };
-        // A helper that never confirms must not keep Stillnote open: keep what is on disk.
+        // A helper that never confirms must not keep Stillnote open: keep what is on disk. It
+        // allows each recognizer 30 s to finish, so a slow one still delivers its last phrases.
         const deadline = setTimeout(() => {
-          if (recording) finishCapture('interrupted');
-          quit();
-        }, 15000);
+          try {
+            if (recording) finishCapture('interrupted');
+          } finally {
+            quit();
+          }
+        }, 40_000);
         afterCapture = quit;
-        win?.show();
+        if (win && !win.isDestroyed()) win.show();
         stopCapture();
       };
       register('recording-url', (meetingId, recordingId, source) => {
@@ -936,10 +998,13 @@ if (!app.requestSingleInstanceLock()) {
         const plan = recognitionPlan(store.settings());
         const candidates = await new Promise((resolve, reject) => {
           const timer = setTimeout(
-            () =>
+            () => {
               transcriptionWait?.reject(
                 new Error('Transcription timed out. The existing transcript was preserved.'),
-              ),
+              );
+              // The helper stops too, so recording or another retry can start right away.
+              if (native) send({ op: 'cancel-transcribe' });
+            },
             Math.max(90_000, session.duration * 3000) * plan.locales.length,
           );
           const settle = (fn) => (value) => {
@@ -1111,7 +1176,8 @@ if (!app.requestSingleInstanceLock()) {
           transcriptionWait?.reject(
             new Error('Renderer stopped. The existing transcript was preserved.'),
           );
-          native?.kill();
+          // End of input makes the helper close its audio files and exit, as on a normal quit.
+          native?.stdin.end();
           win.destroy();
         }
       });
@@ -1174,6 +1240,13 @@ if (!app.requestSingleInstanceLock()) {
       const announced = new Set(),
         shown = new Set();
       const openFromReminder = (event) => {
+        try {
+          openReminderNote(event);
+        } catch (error) {
+          console.error('Could not open the reminder note:', error.message);
+        }
+      };
+      const openReminderNote = (event) => {
         if (!win || win.isDestroyed()) return;
         if (win.isMinimized()) win.restore();
         win.show();
@@ -1182,8 +1255,8 @@ if (!app.requestSingleInstanceLock()) {
         const meeting =
           meetingForEvent(store.all(), key) ??
           store.create({
-            title: event.title,
-            participants: event.participants ?? '',
+            title: String(event.title ?? '').slice(0, 300),
+            participants: String(event.participants ?? '').slice(0, 2_000_000),
             notes: event.notes ? `Meeting context\n${event.notes}` : '',
             eventKey: key,
           });

@@ -41,6 +41,10 @@ const fixed = new Set([
   ),
   msg('The microphone keeps resetting. Check the input device in Settings › Recording.'),
   msg('Microphone permission denied.'),
+  msg('Wait for the transcription retry to finish, then start recording.'),
+  msg(
+    'Transcription stopped because it was taking too long. The existing transcript was preserved.',
+  ),
 ]);
 
 // [shape, translate(match, t)]

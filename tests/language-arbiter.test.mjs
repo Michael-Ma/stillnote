@@ -397,3 +397,40 @@ test('live: with watermarks, a slow language is waited for instead of assumed si
     ['z1'],
   );
 });
+
+test('live: provisional text the helper withdraws, or that goes stale, is never saved', () => {
+  const arbiter = createLiveArbiter({ locales: ['zh-CN', 'en-US'], startedAt: 0 });
+  const event = (type, locale, segmentId, text, timestamp, end, confidence) => ({
+    type,
+    source: 'microphone',
+    locale,
+    segmentId,
+    text,
+    timestamp,
+    end,
+    confidence,
+  });
+  const segments = (actions) =>
+    actions.filter((a) => a.type === 'segment').map((a) => a.segment.segmentId);
+  // A cough the Chinese model first heard as 嗯, then revised to nothing.
+  arbiter.push(event('partial', 'zh-CN', 'cough', '嗯', 0.5, 0.8), 1000);
+  arbiter.push(event('segment', 'zh-CN', 'z1', '今天开会', 1, 3, 0.95), 3000);
+  arbiter.push(event('segment', 'en-US', 'e1', 'Jin tian', 1, 3, 0.2), 3000);
+  for (const locale of ['zh-CN', 'en-US'])
+    arbiter.push({ type: 'recognition-progress', source: 'microphone', locale, through: 4 }, 3200);
+  assert.deepEqual(segments(arbiter.tick(3500)), [], 'the cough holds the decision back');
+  const withdrawn = arbiter.discard({ source: 'microphone', segmentIds: ['cough'] }, 3600);
+  assert.deepEqual(
+    withdrawn.filter((a) => a.type === 'discard').map((a) => a.segmentIds),
+    [['cough']],
+  );
+  assert.deepEqual(segments(withdrawn), ['z1'], 'decided as soon as it is withdrawn');
+  // Provisional text the helper never finalizes or withdraws expires after `stall`.
+  arbiter.push(event('partial', 'zh-CN', 'stale', '那个', 5, 5.4), 5000);
+  const expired = arbiter.tick(5000 + 15000);
+  assert.deepEqual(
+    expired.filter((a) => a.type === 'discard').map((a) => a.segmentIds),
+    [['stale']],
+  );
+  assert.deepEqual(segments(arbiter.flush(21000)), [], 'nothing withdrawn is saved at stop');
+});
