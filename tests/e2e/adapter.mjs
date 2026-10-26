@@ -326,6 +326,7 @@ export function createTestAdapter({ dataDir }) {
           timers.push(
             setInterval(() => {
               tick++;
+              if (fixture.levelsStopAfterMs && tick * 150 > fixture.levelsStopAfterMs) return;
               const rms = 0.03 + 0.12 * Math.abs(Math.sin(tick * 0.9) * Math.sin(tick * 0.31));
               for (const source of active.systemAudio ? ['microphone', 'system'] : ['microphone'])
                 emit({ type: 'audio-level', recordingId, source, rms, peak: rms * 2 });
