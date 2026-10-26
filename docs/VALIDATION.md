@@ -1,6 +1,14 @@
 # Validation
 
-Last checked: October 20, 2026, on an Apple Silicon Mac. This record distinguishes executed checks from code paths that still require the user's account or OS permissions.
+## October 25 repository review
+
+Revision `0b6568bd095562584ebd0c60e9f6b972cec7e38a`, reviewed in an isolated worktree. `npm test` passed **164 tests**, the native/renderer build passed, and all **seven** deterministic E2E suites passed. Native readiness, the 11-check capture self-test, and scheduler checks also passed without live audio or recognition. Independent synthetic probes nevertheless reproduced six uncovered behaviors; two additional native findings are based on static control flow. See [the audit](ai/2026-10-25-repository-audit.md) for seven prioritized code findings and a separate deletion-retention caveat. The runtime remains unchanged and these findings are open.
+
+No live microphone, system-audio capture, actual account inference, model download, signing setup, or installation was performed in this review. The installed Claude CLI was queried for status only with a temporary configuration and synthetic token. The probes are defect demonstrations, not new passing acceptance tests.
+
+## Historical October 20 validation
+
+The results below describe the earlier implementation on an Apple Silicon Mac. In particular, the serial legacy recognition results do not certify the later SpeechTranscriber/Auto-language path.
 
 ## Executed
 

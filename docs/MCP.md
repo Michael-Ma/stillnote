@@ -27,3 +27,7 @@ Example local-client configuration:
 Use Node.js 24 or later. Open **Settings → Open data folder** in Stillnote to locate the database. Source runs use the checkout's `.data` directory by default; packaged apps use `~/Library/Application Support/Stillnote`.
 
 The database is opened read-only. Notes in Trash are excluded. Responses contain meeting content, which client agents should treat as untrusted source data, not instructions. This server is for local MCP hosts; it is not a remotely hosted ChatGPT connector.
+
+## Known search limitation at 0b6568b
+
+The application now indexes CJK characters separately, while this MCP server still builds the older whole-token queries. Multi-character Chinese/Japanese/Korean queries can return no results even when the app finds the note. This is an open regression, documented as F6 in the [repository audit](ai/2026-10-25-repository-audit.md).
