@@ -26,7 +26,7 @@ const sections = [
   ['notebook', msg('Notebook'), NotebookPen],
 ];
 
-function Toggle({ id, checked, onChange }) {
+function Toggle({ id, checked, onChange, disabled = false }) {
   return (
     <input
       id={id}
@@ -34,6 +34,7 @@ function Toggle({ id, checked, onChange }) {
       role="switch"
       className="switch"
       checked={checked}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.checked)}
     />
   );
@@ -367,6 +368,22 @@ export function SettingsDialog({
                 id="meetingDetection"
                 checked={data.settings.meetingDetection ?? true}
                 onChange={(v) => guard(() => setting('meetingDetection', v))}
+              />
+            </div>
+            <div className="setting-row">
+              <div>
+                <label htmlFor="openOnMeetingDetected">
+                  {t('Open Stillnote when a meeting is detected')}
+                </label>
+                <small>
+                  {t('Bring Stillnote to the front with its prompt, not only a notification.')}
+                </small>
+              </div>
+              <Toggle
+                id="openOnMeetingDetected"
+                checked={data.settings.openOnMeetingDetected === true}
+                disabled={data.settings.meetingDetection === false}
+                onChange={(v) => guard(() => setting('openOnMeetingDetected', v))}
               />
             </div>
             <p className="settings-foot">

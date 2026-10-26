@@ -79,6 +79,7 @@ const portableSettings = new Set([
   'meetingReminders',
   'reminderAutoRecord',
   'meetingDetection',
+  'openOnMeetingDetected',
   'callService',
   'templates',
   'recipes',
@@ -670,6 +671,7 @@ export function validateSetting(key, value) {
       'meetingReminders',
       'reminderAutoRecord',
       'meetingDetection',
+      'openOnMeetingDetected',
       'calendarConnected',
     ].includes(key)
   ) {

@@ -63,7 +63,7 @@ Like Granola, a connected calendar produces a notification about a minute before
 
 ## Meeting detection
 
-When another app starts using the microphone and keeps it for a few seconds while Stillnote is not recording, Stillnote asks “Meeting detected — take notes?”: a notification and a pill above the dock in the dock's own shape, naming the calendar meeting under way when there is one. Take notes (or clicking the notification) records into that meeting's note, or a new “Meeting · 2:05 PM” note. Each call asks once at most, and a call Stillnote is already recording never asks. **Detect meetings** in Settings › Recording turns it off (on by default, as in Granola).
+When another app starts using the microphone and keeps it for a few seconds while Stillnote is not recording, Stillnote asks “Meeting detected — take notes?”: a notification and a pill above the dock in the dock's own shape, naming the calendar meeting under way when there is one. Take notes (or clicking the notification) records into that meeting's note, or a new “Meeting · 2:05 PM” note. Each call asks once at most, and a call Stillnote is already recording never asks. **Detect meetings** in Settings › Recording turns it off (on by default, as in Granola). **Open Stillnote when a meeting is detected** (off by default) also brings Stillnote forward onto the prompt, without starting a recording.
 
 ## AI providers in the UI
 

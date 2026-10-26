@@ -362,6 +362,9 @@ if (!app.requestSingleInstanceLock()) {
         console.error('Could not open the detected meeting:', error.message);
       }
     });
+    // Opt-in: Stillnote also comes forward by itself, onto its own prompt. Off by default, since
+    // it takes focus while someone is getting into a call.
+    if (store.settings().openOnMeetingDetected === true) showWindow();
   }
   function detect() {
     clearTimeout(detectTimer);

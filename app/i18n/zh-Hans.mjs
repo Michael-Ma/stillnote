@@ -325,6 +325,9 @@ export default {
   'No saved audio is available for this recording.': '这段录音没有保存的音频。',
   'No sound from {device}': '{device} 没有声音',
   'No sound from the microphone': '麦克风没有声音',
+  'Open Stillnote when a meeting is detected': '检测到会议时打开 Stillnote',
+  'Bring Stillnote to the front with its prompt, not only a notification.':
+    '把 Stillnote 连同提示一起切到前台，而不只是发通知。',
   'No transcript text was recovered. The existing transcript was preserved.':
     '没有转写出任何文字，现有转写已保留。',
   'No transcript yet': '还没有转写',

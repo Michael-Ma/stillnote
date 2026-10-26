@@ -275,6 +275,8 @@ test('calls open only fixed or calendar links; reminders join and detection prom
   await until(() => opened().length === 3);
 
   // Another app keeps the microphone busy: one prompt for the session, matched to the calendar.
+  let raised = 0;
+  win.show = () => raised++;
   await until(() => globalThis.__stillnoteMicrophone?.(false));
   globalThis.__stillnoteMicrophone(true);
   await until(() => globalThis.__stillnoteNotifications.some((n) => n.kind === 'detected'));
@@ -282,6 +284,7 @@ test('calls open only fixed or calendar links; reminders join and detection prom
   assert.equal(detected.title, 'Meeting detected — take notes?');
   assert.equal(detected.body, 'Click to record “Design call” in Stillnote.');
   assert.equal(win.events.findLast((e) => e.type === 'meeting-detected').event.id, 'call');
+  assert.equal(raised, 0, 'by default a detected meeting only prompts');
   globalThis.__stillnoteMicrophone(false);
   globalThis.__stillnoteMicrophone(true);
   await new Promise((resolve) => setTimeout(resolve, 500));
@@ -290,6 +293,17 @@ test('calls open only fixed or calendar links; reminders join and detection prom
   const notes = (await call('state')).meetings.filter((m) => m.eventKey === `call@${design.start}`);
   assert.equal(notes.length, 1, 'the detected call reuses the occurrence’s note');
   assert.equal(win.events.findLast((e) => e.type === 'open-meeting').id, notes[0].id);
+
+  // Opted in, the next call brings Stillnote forward by itself, onto its prompt.
+  await call('setting', 'openOnMeetingDetected', true);
+  globalThis.__stillnoteMicrophone(false);
+  await new Promise((resolve) => setTimeout(resolve, 1600));
+  const before = raised;
+  globalThis.__stillnoteMicrophone(true);
+  await until(
+    () => globalThis.__stillnoteNotifications.filter((n) => n.kind === 'detected').length === 2,
+  );
+  assert.equal(raised, before + 1);
 
   // Turning detection off stops the helper watching.
   await call('setting', 'meetingDetection', false);
