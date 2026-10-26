@@ -1,6 +1,14 @@
 # Validation
 
-Last checked: October 20, 2026, on an Apple Silicon Mac. This record distinguishes executed checks from code paths that still require the user's account or OS permissions.
+## Current regression checks
+
+The fixes and current verification evidence are recorded in [PR #1](https://github.com/Michael-Ma/stillnote/pull/1). The old defect-demonstration script has been replaced by regression tests in `tests/` and the deterministic `test:native-lifecycle` command. See [testing](TESTING.md) for commands and their boundaries.
+
+These synthetic checks do not certify live microphone/system-audio behavior, real notifications, account inference, language downloads, signing, or installation. Those require separate device/account acceptance testing.
+
+## Historical October 20 validation
+
+The results below describe the earlier implementation on an Apple Silicon Mac. In particular, the serial legacy recognition results do not certify the later SpeechTranscriber/Auto-language path.
 
 ## Executed
 

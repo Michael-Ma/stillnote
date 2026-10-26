@@ -71,6 +71,7 @@ test('every message the native helper can show is translated', () => {
   const internal = [
     'schedulerSelfTest',
     'captureSelfTest',
+    'recognitionLifecycleSelfTest',
     'audioSelfTest',
     'streamedRecognition',
   ].map((name) => {

@@ -4,7 +4,7 @@ A summary such as “only brief, disconnected fragments” can accurately descri
 
 Stillnote adds observable checkpoints between audio input, recognition, persistence, and enhancement. It does not use the quality of an AI summary as proof that audio capture succeeded.
 
-See [the recognition review](ai/2026-10-21-capture-recognition-review.md) and [shared interface contract](ai/2026-10-21-fix-contract.md) for the measured problems and native/main/renderer boundaries.
+See [architecture](ARCHITECTURE.md) for the native/main/renderer boundaries and [testing](TESTING.md) for repeatable regression checks.
 
 ## What changed
 

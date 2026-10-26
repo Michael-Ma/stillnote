@@ -5,6 +5,7 @@ import { accessSync, statSync, mkdirSync, constants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 
+import { checkConfiguration, ROUTING } from './claude-config.mjs';
 import { claudeModels } from '../ai-view.mjs';
 export { claudeModels };
 export const subscriptionMethods = ['claude.ai', 'oauth_token'];
@@ -123,8 +124,19 @@ export class ClaudeCode {
     shell = '/bin/zsh',
     executable = isExecutable,
     onChange = () => {},
+    configurationCheck = checkConfiguration,
   } = {}) {
-    Object.assign(this, { workDir, spawn, env, home, candidates, shell, executable, onChange });
+    Object.assign(this, {
+      workDir,
+      spawn,
+      env,
+      home,
+      candidates,
+      shell,
+      executable,
+      onChange,
+      configurationCheck,
+    });
     this.state = {
       installed: null,
       checking: false,
@@ -141,7 +153,7 @@ export class ClaudeCode {
   }
   status() {
     const s = this.state;
-    const ready = !!(s.loggedIn && subscriptionMethods.includes(s.authMethod));
+    const ready = !!(s.loggedIn && !s.error && subscriptionMethods.includes(s.authMethod));
     return {
       id: 'claude',
       label: 'Claude',
@@ -154,7 +166,13 @@ export class ClaudeCode {
       subscriptionType: s.subscriptionType,
       email: s.email,
       ready,
-      billing: s.loggedIn ? (ready ? 'subscription' : 'api') : null,
+      billing: s.loggedIn
+        ? ready
+          ? 'subscription'
+          : subscriptionMethods.includes(s.authMethod)
+            ? null
+            : 'api'
+        : null,
       usage: s.usage,
       signingIn: !!this.login,
       loginUrl: this.login ? s.loginUrl : null,
@@ -188,17 +206,17 @@ export class ClaudeCode {
     if (!this.found) this.missingUntil = Date.now() + 60000;
     return this.found ?? null;
   }
-  options(binary) {
+  options(binary, env = this.env) {
     if (this.workDir) mkdirSync(this.workDir, { recursive: true, mode: 0o700 });
     return {
       cwd: this.workDir,
-      env: cliEnv(this.env, binary, this.home),
+      env: cliEnv(env, binary, this.home),
       stdio: ['pipe', 'pipe', 'pipe'],
     };
   }
-  run(command, args, { timeout = 10000, input } = {}) {
+  run(command, args, { timeout = 10000, input, options } = {}) {
     return new Promise((resolve, reject) => {
-      const child = this.spawn(command, args, this.options(command));
+      const child = this.spawn(command, args, options ?? this.options(command));
       let stdout = '',
         stderr = '';
       const timer = setTimeout(() => {
@@ -231,22 +249,48 @@ export class ClaudeCode {
       });
     return this.refreshing;
   }
-  async check() {
+  async check(options, checkedPath) {
     this.update({ checking: true });
     try {
-      const path = await this.locate();
-      if (!path)
-        return this.update({ installed: false, path: null, loggedIn: false, authMethod: null });
+      const path = checkedPath ?? (await this.locate());
+      if (!path) {
+        this.update({ installed: false, path: null, loggedIn: false, authMethod: null });
+        return { ...this.status(), checking: false };
+      }
       if (!this.state.version || this.state.path !== path) {
-        const v = await this.run(path, ['--version']);
+        const v = await this.run(path, ['--version'], { options });
         this.state.version = v.stdout.trim().split(/\s/)[0] || null;
       }
-      const r = await this.run(path, ['auth', 'status', '--json']);
+      const effective = options ?? this.options(path);
+      this.configurationCheck({ env: effective.env, home: this.home, workDir: this.workDir });
+      const r = await this.run(path, ['--safe-mode', 'auth', 'status', '--json'], {
+        options: effective,
+      });
       let auth = null;
       try {
         auth = JSON.parse(r.stdout);
       } catch {}
-      // `auth status` exits 1 when signed out; only an unreadable reply is an error.
+      // A status probe carries no meeting text. Require the same effective environment and
+      // fresh, readable direct-plan status before every inference; the UI cache is not authority.
+      let configurationError = null;
+      if (auth?.loggedIn) {
+        try {
+          if (
+            r.code !== 0 ||
+            auth.apiProvider !== 'firstParty' ||
+            !['pro', 'max'].includes(auth.subscriptionType)
+          )
+            throw new Error(ROUTING);
+          this.configurationCheck({
+            env: effective.env,
+            home: this.home,
+            workDir: this.workDir,
+            configDirectory: auth.configDirectory,
+          });
+        } catch (error) {
+          configurationError = error.message;
+        }
+      }
       this.update({
         installed: true,
         path,
@@ -255,12 +299,19 @@ export class ClaudeCode {
         subscriptionType: auth?.subscriptionType ?? null,
         email: auth?.email ?? null,
         error:
-          auth || friendlyError(r.stderr) === SIGN_IN
+          configurationError ||
+          (auth && typeof auth.loggedIn === 'boolean'
             ? null
-            : 'Could not read the Claude Code sign-in status.',
+            : 'Could not read the Claude Code sign-in status.'),
       });
+      return { ...this.status(), checking: false };
     } catch (e) {
-      this.update({ error: e.code === 'ENOENT' ? INSTALL : e.message });
+      this.update({
+        loggedIn: false,
+        authMethod: null,
+        error: e.code === 'ENOENT' ? INSTALL : e.message,
+      });
+      return { ...this.status(), checking: false };
     } finally {
       this.update({ checking: false });
     }
@@ -323,12 +374,20 @@ export class ClaudeCode {
   }
   async respond({ model, input, instructions, onDelta = () => {}, signal }) {
     signal?.throwIfAborted();
-    if (this.state.installed === null || !this.state.loggedIn) await this.refresh();
+    // Finish an older UI check, then run a new one. Snapshot the environment so the auth
+    // probe and print process cannot see different inherited routing/credentials.
+    await this.refreshing;
     const path = await this.locate();
     if (!path) throw new Error(INSTALL);
-    if (!this.state.loggedIn && !this.state.error) throw new Error(SIGN_IN);
-    if (this.state.loggedIn && !subscriptionMethods.includes(this.state.authMethod))
+    const options = this.options(path, { ...this.env });
+    const verified = await this.check(options, path);
+    signal?.throwIfAborted();
+    if (verified.loggedIn && !subscriptionMethods.includes(verified.authMethod))
       throw new Error(API_BILLING);
+    if (verified.error) throw new Error(verified.error);
+    if (!verified.loggedIn) throw new Error(SIGN_IN);
+    // Detect a settings edit while auth was being queried, too.
+    this.configurationCheck({ env: options.env, home: this.home, workDir: this.workDir });
     const args = [
       '-p',
       '--output-format',
@@ -345,7 +404,6 @@ export class ClaudeCode {
       '1',
     ];
     if (instructions) args.push('--system-prompt', instructions);
-    const options = this.options(path);
     signal?.throwIfAborted();
     const child = this.spawn(path, args, options);
     let buffer = '',

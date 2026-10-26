@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Local, read-only stdio MCP server. No listener, remote tunnel, or write tools.
+import { searchQuery } from '../app/search.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { createInterface } from 'node:readline';
 import { resolve, join } from 'node:path';
@@ -66,23 +67,22 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         if (m.deletedAt) throw new Error('Meeting is in Trash.');
         output = result(m);
       } else if (name === 'search_meetings') {
-        const query = String(a.query ?? '')
-          .slice(0, 1000)
-          .trim();
-        const limit = Math.max(1, Math.min(50, Number(a.limit) || 20));
-        const rows = query
-          ? db
-              .prepare(
-                'SELECT id FROM meeting_search WHERE meeting_search MATCH ? ORDER BY rank LIMIT ?',
-              )
-              .all(
-                query
-                  .split(/\s+/)
-                  .map((w) => '"' + w.replaceAll('"', '""') + '"*')
-                  .join(' AND '),
-                limit,
-              )
-          : db.prepare('SELECT id FROM meetings ORDER BY rowid DESC LIMIT ?').all(limit);
+        const query = searchQuery(a.query);
+        const limit = Math.max(1, Math.min(50, Math.trunc(Number(a.limit) || 20)));
+        const rows =
+          query === null
+            ? db
+                .prepare(
+                  "SELECT id FROM meetings WHERE json_extract(data, '$.deletedAt') IS NULL ORDER BY rowid DESC LIMIT ?",
+                )
+                .all(limit)
+            : query
+              ? db
+                  .prepare(
+                    'SELECT id FROM meeting_search WHERE meeting_search MATCH ? ORDER BY rank LIMIT ?',
+                  )
+                  .all(query, limit)
+              : [];
         output = result(
           rows
             .map((row) =>

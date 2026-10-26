@@ -1,6 +1,27 @@
 // 简体中文. Keys are the English strings used in the code; see app/i18n/index.mjs.
 // Missing entries fall back to English; tests/i18n.test.mjs lists any that are missing.
 export default {
+  'Audio is recording while transcription prepares.': '音频正在录制，转录正在准备中。',
+  'Notebook and folder chats, and existing backups, may still contain quoted content.':
+    '笔记本和文件夹聊天，以及现有备份，仍可能保留引用的内容。',
+
+  'Recording ended before audio capture was ready.': '音频采集就绪前，录音已结束。',
+  'Native helper was restarted after a transcription timeout.': '转录超时，音频辅助进程已重启。',
+  'Calendar helper restarted.': '日历辅助进程已重启。',
+  'The meeting window could not open.': '无法打开会议窗口。',
+  'Audio capture did not start. Join the call when ready.':
+    '音频采集未启动。准备好后请手动加入通话。',
+  'Finish the current operation before joining and recording this meeting.':
+    '请先完成当前操作，再加入并录制此会议。',
+  'The previous recording could not finish. Start the next meeting when ready.':
+    '上一段录音未能正常结束。准备好后请启动下一场会议。',
+  'Could not verify Claude Code settings. Check the settings files before using Claude in Stillnote.':
+    '无法验证 Claude Code 配置。请检查配置文件后再在 Stillnote 中使用 Claude。',
+  'Stillnote requires a direct Claude Pro or Max connection. Custom endpoints, other providers, and managed Claude configurations are not supported; your Claude configuration has not been changed.':
+    'Stillnote 需要直连的 Claude Pro 或 Max 订阅。不支持自定义端点、其他服务商或受管理的 Claude 配置；您的 Claude 配置未被修改。',
+  'No language could transcribe this audio. The existing transcript was preserved.':
+    '所有候选语言均无法转录此音频。原转录已保留。',
+
   '1:1': '一对一',
   'A language installation is already in progress.': '已有语言正在安装。',
   'A meeting is already recording.': '已有会议正在录音。',
