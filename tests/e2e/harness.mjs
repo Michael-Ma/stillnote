@@ -100,11 +100,18 @@ export class Harness {
     await this.open(title);
     return state.meetings.find((m) => m.title === title);
   }
-  // Transcript and Recordings live in the sheet above the dock, opened from the listening pill.
+  // Transcript and Recordings live in the sheet above the dock, opened from their dock buttons.
+  // Recordings has a button only once a session is saved; before that, its tab is in the sheet.
   async sheet(tab) {
-    const show = this.page.getByRole('button', { name: 'Show transcript', exact: true });
-    if (await show.count()) await show.click();
-    await this.page.getByRole('tab', { name: new RegExp(`^${tab}`) }).click();
+    const name = new RegExp(`^${tab}`);
+    const dock = this.page.locator('.dock');
+    if (!(await this.page.getByRole('tab', { name }).count())) {
+      const button = dock.getByRole('button', { name });
+      await ((await button.count()) ? button : dock.getByRole('button', { name: /^Transcript/ }))
+        .first()
+        .click();
+    }
+    await this.page.getByRole('tab', { name }).click();
   }
   async open(title) {
     if (await this.page.getByRole('button', { name: 'Back to Home', exact: true }).count()) {

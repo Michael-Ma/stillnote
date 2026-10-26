@@ -21,7 +21,7 @@ const msg = (text) => text;
 
 const english = translator('en');
 const sourceName = (source, t) => (source === 'system' ? t('Meeting audio') : t('Microphone'));
-const isCapturing = (recording) =>
+export const isCapturing = (recording) =>
   ['starting', 'recording', 'capturing', 'stopping'].includes(recording.status);
 const playableTracks = (recording) =>
   (recording.tracks ?? []).filter((track) => track.fileName && track.bytes !== 0);

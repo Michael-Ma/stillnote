@@ -18,8 +18,8 @@ References were re-checked on October 20, 2026 against the current Granola macOS
 | Note: serif title, small chips for date, attendees and folder | Same chips. Attendees and folder are editable in place. |
 | Top-right switch between “My notes” and “Enhanced”, templates beside it | Segmented control plus a template menu in the top bar. Star, export and Trash sit next to it. |
 | Enhanced notes: `#` heading markers, generated text in gray, the user's own points in black | Same treatment. A pure, deterministic matcher (`app/own-lines.mjs`) marks enhanced lines that restate the user's rough notes. |
-| Bottom bar: listening pill on the left, “Ask anything” with a recipe chip | Same dock. The pill reads “Record”, “Resume” or shows live level bars and elapsed time. Its chevron opens the transcript. |
-| Transcript one click away from the listening pill | A sheet above the dock with Transcript and Recordings tabs. “You” bubbles sit on the right, meeting audio on the left. |
+| Bottom bar: listening pill on the left, “Ask anything” with a recipe chip | Same dock. The pill reads “Record”, “Resume” or shows live level bars and elapsed time. |
+| Transcript one click away from the listening pill | A bare chevron hid it, so the pill carries labelled **Transcript** (line count, `⌘⇧T`) and, once audio is saved, **Recordings** buttons. Each opens its tab of a sheet above the dock. “You” bubbles sit on the right, meeting audio on the left. |
 | “Analyzing transcript” progress with a Cancel pill | Same, while enhanced text streams in. |
 | Chat: “Ask anything” composer with a model picker | Scope and model chips in the composer. The model picker spans every connected provider. |
 

@@ -38,7 +38,7 @@ try {
     .fill(
       'Discuss onboarding. Alex will send the revised flow on Friday.\nKeep microphone capture local.',
     );
-  await page.getByRole('button', { name: 'Show transcript' }).click();
+  await page.getByRole('button', { name: 'Transcript', exact: true }).click();
   await page.getByRole('tab', { name: 'Transcript' }).click();
   await page.getByRole('button', { name: 'Paste a transcript', exact: true }).click();
   await page

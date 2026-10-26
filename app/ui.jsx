@@ -7,6 +7,7 @@ import { Sidebar } from './components/Sidebar.jsx';
 import { NoteToolbar, NoteView } from './components/NoteView.jsx';
 import { EnhancePill, RecordPill } from './components/Dock.jsx';
 import { TranscriptSheet } from './components/TranscriptSheet.jsx';
+import { isCapturing } from './components/RecordingAudio.jsx';
 import { ChatPanel } from './components/ChatPanel.jsx';
 import { SettingsDialog } from './components/SettingsDialog.jsx';
 import { aiView, claudeModels, modelKey } from './ai-view.mjs';
@@ -72,7 +73,7 @@ function App() {
   const setError = (message, permission) =>
     setErrorState(message ? { message: cleanError(message), owner: 'external', permission } : null);
   // `t` rides along so the once-registered event subscription speaks the current language.
-  current.current = { selected, view, recording: data?.recording, t };
+  current.current = { selected, view, recording: data?.recording, chatOpen, t };
   const call = async (name, ...args) => api.call(name, ...args);
   const updateMeeting = (m) =>
     setData((d) =>
@@ -247,6 +248,16 @@ function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
         e.preventDefault();
         newNote();
+      }
+      // ⌘⇧T toggles the open note's transcript like its Transcript button in the dock, and
+      // brings it back from behind the chat.
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key?.toLowerCase() === 't') {
+        e.preventDefault();
+        const { selected, chatOpen } = current.current;
+        if (selected && !dialogRef.current?.open) {
+          setChatOpen(false);
+          setSheet((s) => (s === 'transcript' && !chatOpen ? null : 'transcript'));
+        }
       }
       if (e.key === 'Escape' && !dialogRef.current?.open) setSheet(null);
     };
@@ -928,18 +939,21 @@ function App() {
                       />
                     )}
                   <div className="dock">
-                    {meeting && !meeting.deletedAt && (
+                    {meeting && (
                       <RecordPill
                         recording={{ ...data.recording, starting: data.starting }}
                         active={activeRecord}
+                        canRecord={!meeting.deletedAt}
                         hasAudio={meeting.recordings?.length > 0 || meeting.transcript.length > 0}
                         elapsed={elapsed}
                         level={level}
-                        sheetOpen={!!sheet}
+                        sheet={sheet}
+                        lines={meeting.transcript.length}
+                        saved={meeting.recordings?.filter((r) => !isCapturing(r)).length ?? 0}
                         disabled={!!data.recording || !!retryingRecording}
                         onStart={() => record()}
                         onStop={() => guard(() => call('stop'))}
-                        onToggleSheet={() => setSheet((s) => (s ? null : 'transcript'))}
+                        onSheet={(panel) => setSheet((s) => (s === panel ? null : panel))}
                       />
                     )}
                     <div className="dock-chat">

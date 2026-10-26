@@ -1313,20 +1313,55 @@ kbd {
   font-weight: 500;
 }
 .pill-main:not(:disabled):hover,
-.pill-toggle:hover {
+.pill-sheet:hover {
   background: var(--hover);
 }
 .pill-time {
   min-width: 34px;
   font-variant-numeric: tabular-nums;
 }
-.pill-toggle {
-  display: grid;
-  place-items: center;
-  width: 30px;
+.pill-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 3px;
+  background: var(--line);
+}
+/* Transcript and Recordings: labelled, with counts, each opening its tab of the sheet. */
+.pill-sheet {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   height: 36px;
+  padding: 0 10px 0 12px;
   border-radius: 999px;
+  font-size: var(--text-base);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pill-sheet[aria-expanded='true'] {
+  background: var(--hover-strong);
+}
+/* No transcript yet: still opens the sheet, which explains how to get one. */
+.pill-sheet.empty {
   color: var(--muted);
+}
+.pill-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: var(--hover-strong);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 17px;
+  text-align: center;
+}
+.pill-count.live {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.pill-chevron {
+  color: var(--faint);
 }
 .pill-stop {
   display: grid;
@@ -1367,6 +1402,7 @@ kbd {
   flex: 1;
   min-width: 0;
   padding: 0 5px 0 4px;
+  container-type: inline-size;
 }
 .dock-placeholder {
   display: flex;
@@ -1411,6 +1447,13 @@ kbd {
 }
 .dock-recipe:hover {
   background: var(--hover);
+}
+/* Next to a note's Transcript and Recordings the chat bar can get short; the question box
+   keeps its room and the suggestion steps aside. */
+@container (max-width: 370px) {
+  .dock-recipe {
+    display: none;
+  }
 }
 .float-pill {
   display: inline-flex;
