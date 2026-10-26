@@ -1310,6 +1310,52 @@ func inputDevices() -> [InputDevice] {
       transport: transport)
   }.sorted { $0.name < $1.name }
 }
+// Meeting detection: whether another app is using a microphone. macOS 14 lists the processes
+// running audio input, so Stillnote's own capture is left out; macOS 13 can only tell that the
+// default microphone is in use by someone, and the app ignores what starts while it records.
+// Reads CoreAudio state only; never opens an input.
+func othersUsingInput(_ processes: [(pid: Int32, input: Bool)], own: Int32) -> Bool {
+  processes.contains { $0.input && $0.pid != own }
+}
+func microphoneInUseElsewhere() -> Bool {
+  let system = AudioObjectID(kAudioObjectSystemObject)
+  if #available(macOS 14.0, *) {
+    let processes = audioIDs(system, kAudioHardwarePropertyProcessObjectList).map {
+      (
+        pid: Int32(bitPattern: audioNumber($0, kAudioProcessPropertyPID)),
+        input: audioNumber($0, kAudioProcessPropertyIsRunningInput) != 0
+      )
+    }
+    return othersUsingInput(processes, own: getpid())
+  }
+  let input = audioNumber(system, kAudioHardwarePropertyDefaultInputDevice)
+  return input != 0 && audioNumber(input, kAudioDevicePropertyDeviceIsRunningSomewhere) != 0
+}
+// Checks every two seconds and reports each change, starting with the current state.
+@MainActor
+final class MicrophoneWatch {
+  var task: Task<Void, Never>?
+  var active: Bool?
+  func start() {
+    guard task == nil else { return }
+    task = Task { @MainActor [weak self] in
+      while !Task.isCancelled {
+        guard let self else { break }
+        let now = microphoneInUseElsewhere()
+        if now != self.active {
+          self.active = now
+          emit(["type": "microphone-activity", "active": now])
+        }
+        do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { break }
+      }
+    }
+  }
+  func stop() {
+    task?.cancel()
+    task = nil
+    active = nil
+  }
+}
 // At most three microphone rebuilds in any ten seconds. Refused attempts are not counted, so the
 // monitor's retries rebuild again once the window has passed.
 struct RestartLimiter {
@@ -2295,8 +2341,15 @@ func captureSelfTest() throws {
   guard allowed == [0, 2, 4, 10, 12, 14, 20, 22, 24, 30] else {
     throw problem("Microphone restarts never resume after the limit.")
   }
+  // Meeting detection counts other apps' microphone use, never Stillnote's own capture, and reads
+  // the current state without opening an input.
+  let own = getpid()
+  guard !othersUsingInput([(pid: own, input: true), (pid: own + 1, input: false)], own: own),
+    othersUsingInput([(pid: own, input: true), (pid: own + 1, input: true)], own: own)
+  else { throw problem("Meeting detection counted Stillnote's own microphone use.") }
+  _ = microphoneInUseElsewhere()
   emit([
-    "type": "capture-self-test", "status": "passed", "checks": 10,
+    "type": "capture-self-test", "status": "passed", "checks": 11,
     "paddedFrames": 20000, "sampleCount": file.length, "liveAudioInvoked": false,
   ])
 }
@@ -2340,6 +2393,7 @@ func audioSelfTest(input: URL, output: URL) throws {
 // helper before it has closed the recording.
 signal(SIGPIPE, SIG_IGN)
 let capture = MainActor.assumeIsolated { Capture() }
+let microphoneWatch = MainActor.assumeIsolated { MicrophoneWatch() }
 let events = EKEventStore()
 var transcribing = false
 @MainActor
@@ -2363,7 +2417,8 @@ func calendar() async throws {
       "start": ISO8601DateFormatter().string(from: e.startDate),
       "end": ISO8601DateFormatter().string(from: e.endDate),
       "participants": (e.attendees ?? []).compactMap { $0.name }.joined(separator: ", "),
-      "location": e.location ?? "", "notes": e.notes ?? "", "allDay": e.isAllDay,
+      "location": e.location ?? "", "notes": e.notes ?? "", "url": e.url?.absoluteString ?? "",
+      "allDay": e.isAllDay,
     ]
   }
   emit(["type": "calendar", "events": rows])
@@ -2432,6 +2487,8 @@ func command(_ data: Data) {
           emit(["type": "error", "op": op, "locale": locale, "message": error.localizedDescription])
         }
       case "calendar": try await calendar()
+      case "watch-microphone":
+        if obj["enabled"] as? Bool ?? true { microphoneWatch.start() } else { microphoneWatch.stop() }
       case "status":
         emit([
           "type": "status", "microphone": AVCaptureDevice.authorizationStatus(for: .audio).rawValue,
