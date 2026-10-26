@@ -2442,6 +2442,10 @@ dialog.settings-dialog {
   padding: 5px 8px;
   font-size: var(--text-base);
 }
+/* A short choice beside a long description keeps its whole label. */
+.setting-row select.fit {
+  flex: none;
+}
 .switch {
   appearance: none;
   position: relative;

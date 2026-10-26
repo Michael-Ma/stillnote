@@ -1,6 +1,8 @@
 import {
   closeSync,
   existsSync,
+  fstatSync,
+  ftruncateSync,
   lstatSync,
   openSync,
   readdirSync,
@@ -191,6 +193,84 @@ export function resolveRecordingTrack(dataDir, meetingId, recording, source) {
   return realFile;
 }
 
+// The helper writes 16 kHz mono 16-bit PCM after a 44-byte header; nothing else is rewritten.
+const helperWav = (header, size) =>
+  !!header &&
+  size <= 0xffffffff &&
+  header.toString('ascii', 0, 4) === 'RIFF' &&
+  header.toString('ascii', 8, 16) === 'WAVEfmt ' &&
+  header.readUInt32LE(16) === 16 &&
+  header.readUInt16LE(20) === 1 &&
+  header.readUInt16LE(22) === 1 &&
+  header.readUInt32LE(24) === 16000 &&
+  header.readUInt32LE(28) === 32000 &&
+  header.readUInt16LE(32) === 2 &&
+  header.readUInt16LE(34) === 16 &&
+  header.toString('ascii', 36, 40) === 'data';
+
+// Where the last sustained sound in a helper track ends, in seconds of the file: scanning back in
+// one-second blocks, the first ten-second stretch with at least `needed` blocks louder than
+// `threshold` RMS. A click, a cough or the stop click is shorter than that. Only what follows
+// `after` seconds is read; 0 when nothing there is loud, null when it is not a helper track.
+export function lastSound(filePath, { after = 0, threshold = 0.006, needed = 4, span = 10 } = {}) {
+  const fd = openSync(filePath, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    if (!helperWav(readAt(fd, 44, 0), size)) return null;
+    const block = 16000,
+      blocks = Math.floor((size - 44) / 2 / block),
+      stop = Math.max(0, Math.floor(after)),
+      chunk = 60;
+    const loud = []; // loud[0] is the block being read; the ones after it follow
+    for (let end = blocks; end > stop; end -= chunk) {
+      const first = Math.max(stop, end - chunk);
+      const data = readAt(fd, (end - first) * block * 2, 44 + first * block * 2);
+      if (!data) return null;
+      const samples = new Int16Array(data.buffer, data.byteOffset, data.length / 2);
+      for (let b = end - first - 1; b >= 0; b--) {
+        let squares = 0;
+        for (let i = b * block; i < (b + 1) * block; i++) squares += (samples[i] / 32768) ** 2;
+        loud.unshift(Math.sqrt(squares / block) > threshold);
+        if (loud.length > span) loud.pop();
+        if (loud.filter(Boolean).length >= needed) return first + b + loud.lastIndexOf(true) + 1;
+      }
+    }
+    return 0;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Cuts each helper track at `keep` seconds of the recording (a track that started later keeps
+// what it has before then, at least a tenth of a second). Returns the most seconds removed from
+// a track.
+export function trimRecordingTail(dir, tracks, keep) {
+  let removed = 0;
+  for (const [source, fileName] of Object.entries(files)) {
+    const filePath = join(dir, fileName);
+    if (!existsSync(filePath) || !lstatSync(filePath).isFile()) continue;
+    const offset = Number(tracks?.find((track) => track.source === source)?.startOffset) || 0;
+    const fd = openSync(filePath, 'r+');
+    try {
+      const size = fstatSync(fd).size;
+      if (!helperWav(readAt(fd, 44, 0), size)) continue;
+      const frames = Math.floor((size - 44) / 2),
+        kept = Math.min(frames, Math.max(1600, Math.round((keep - offset) * 16000)));
+      if (kept >= frames) continue;
+      ftruncateSync(fd, 44 + kept * 2);
+      const length = Buffer.alloc(4);
+      length.writeUInt32LE(36 + kept * 2);
+      writeSync(fd, length, 0, 4, 4);
+      length.writeUInt32LE(kept * 2);
+      writeSync(fd, length, 0, 4, 40);
+      removed = Math.max(removed, (frames - kept) / 16000);
+    } finally {
+      closeSync(fd);
+    }
+  }
+  return removed;
+}
+
 export function repairRecordingTracks(dir) {
   if (!existsSync(dir) || !lstatSync(dir).isDirectory()) return [];
   for (const fileName of Object.values(files)) {
@@ -200,21 +280,7 @@ export function repairRecordingTracks(dir) {
     try {
       const header = readAt(fd, 44, 0),
         size = statSync(filePath).size;
-      if (
-        !header ||
-        size > 0xffffffff ||
-        header.toString('ascii', 0, 4) !== 'RIFF' ||
-        header.toString('ascii', 8, 16) !== 'WAVEfmt ' ||
-        header.readUInt32LE(16) !== 16 ||
-        header.readUInt16LE(20) !== 1 ||
-        header.readUInt16LE(22) !== 1 ||
-        header.readUInt32LE(24) !== 16000 ||
-        header.readUInt32LE(28) !== 32000 ||
-        header.readUInt16LE(32) !== 2 ||
-        header.readUInt16LE(34) !== 16 ||
-        header.toString('ascii', 36, 40) !== 'data'
-      )
-        continue;
+      if (!helperWav(header, size)) continue;
       const audioBytes = Math.floor((size - 44) / 2) * 2;
       if (header.readUInt32LE(4) !== size - 8 || header.readUInt32LE(40) !== audioBytes) {
         const length = Buffer.alloc(4);

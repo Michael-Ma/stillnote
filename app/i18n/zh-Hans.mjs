@@ -21,6 +21,24 @@ export default {
     'Stillnote 需要直连的 Claude Pro 或 Max 订阅。不支持自定义端点、其他服务商或受管理的 Claude 配置；您的 Claude 配置未被修改。',
   'No language could transcribe this audio. The existing transcript was preserved.':
     '所有候选语言均无法转录此音频。原转录已保留。',
+  'The meeting seems to be over': '会议好像结束了',
+  'The meeting seems to be over. Stopping in {n} s': '会议好像结束了，{n} 秒后停止录音',
+  'The call has ended and no one is speaking.': '通话已结束，也没有人在说话。',
+  'The calendar meeting has ended and no one is speaking.': '日历上的会议已结束，也没有人在说话。',
+  'No one has spoken for a while.': '已经很久没有人说话了。',
+  'Keep recording': '继续录音',
+  'Stop now': '现在停止',
+  'When a meeting seems over': '会议好像结束时',
+  'The call app stops using the microphone, the calendar meeting has ended, or no one has spoken for a long time. Long silence at the end of a recording is removed.':
+    '会议 App 不再使用麦克风、日历上的会议已结束，或长时间没有人说话。录音结尾的长静音会被去掉。',
+  'Stop after a countdown': '倒计时后自动停止',
+  'Only ask': '只提示',
+  'Recording stops in 60 seconds. Open Stillnote to keep recording.':
+    '60 秒后停止录音。打开 Stillnote 可继续录音。',
+  'Open Stillnote to stop or keep recording.': '打开 Stillnote 停止或继续录音。',
+  'Removed {time} of silence at the end.': '已去掉结尾 {time} 的静音。',
+  'Recording stopped: the meeting seemed to be over.': '会议好像结束了，已停止录音。',
+  'Resume recording': '继续录音',
 
   '1:1': '一对一',
   'A language installation is already in progress.': '已有语言正在安装。',

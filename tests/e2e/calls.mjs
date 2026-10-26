@@ -188,6 +188,9 @@ export async function calls(h) {
   await toggle.click();
   await until(async () => !(await toggle.isChecked()), 'the switch did not turn off');
   assert.equal((await h.state()).settings.meetingDetection, false);
+  // Noticing that a meeting ended still watches the microphone, until it is off too.
+  assert.equal(await microphone(false), true);
+  await page.getByLabel('When a meeting seems over', { exact: true }).selectOption('off');
   await until(async () => (await microphone(true)) === false, 'the helper kept watching');
   await page.keyboard.press('Escape');
   await page.waitForTimeout(700);
@@ -195,6 +198,7 @@ export async function calls(h) {
 
   // The same screens in 简体中文.
   await h.call('setting', 'meetingDetection', true);
+  await h.call('setting', 'meetingEnd', 'auto');
   await h.call('setting', 'uiLanguage', 'zh-Hans');
   await page.reload();
   await page.getByRole('button', { name: '发起 Zoom', exact: true }).waitFor();

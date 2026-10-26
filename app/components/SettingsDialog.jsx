@@ -386,6 +386,26 @@ export function SettingsDialog({
                 onChange={(v) => guard(() => setting('openOnMeetingDetected', v))}
               />
             </div>
+            <div className="setting-row">
+              <div>
+                <label htmlFor="meetingEnd">{t('When a meeting seems over')}</label>
+                <small>
+                  {t(
+                    'The call app stops using the microphone, the calendar meeting has ended, or no one has spoken for a long time. Long silence at the end of a recording is removed.',
+                  )}
+                </small>
+              </div>
+              <select
+                id="meetingEnd"
+                className="fit"
+                value={data.settings.meetingEnd ?? 'auto'}
+                onChange={(e) => guard(() => setting('meetingEnd', e.target.value))}
+              >
+                <option value="auto">{t('Stop after a countdown')}</option>
+                <option value="prompt">{t('Only ask')}</option>
+                <option value="off">{t('Off')}</option>
+              </select>
+            </div>
             <p className="settings-foot">
               {t(
                 'Your microphone is labeled “You” and other apps “Meeting audio”. Individual remote speakers are not identified. Let participants know when you record.',

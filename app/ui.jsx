@@ -7,6 +7,7 @@ import { StartMeeting } from './components/StartMeeting.jsx';
 import { Sidebar } from './components/Sidebar.jsx';
 import { NoteToolbar, NoteView } from './components/NoteView.jsx';
 import { EnhancePill, RecordPill } from './components/Dock.jsx';
+import { MeetingEndPrompt } from './components/MeetingEndPrompt.jsx';
 import { TranscriptSheet } from './components/TranscriptSheet.jsx';
 import { isCapturing, playableTracks } from './components/RecordingAudio.jsx';
 import { ChatPanel } from './components/ChatPanel.jsx';
@@ -67,6 +68,8 @@ function App() {
     [drafts, setDrafts] = useState({}),
     // "Meeting detected": the in-app twin of the notification, until acted on or dismissed.
     [detected, setDetected] = useState(null),
+    // "The meeting seems to be over" for the recording in progress: { reason, deadline, … }.
+    [endPrompt, setEndPrompt] = useState(null),
     // A Start, Join or Take notes click in progress: the buttons wait, so a double click opens
     // one call and one note.
     [callPending, setCallPending] = useState(false);
@@ -104,7 +107,7 @@ function App() {
   const setError = (message, permission) =>
     setErrorState(message ? { message: cleanError(message), owner: 'external', permission } : null);
   // `t` rides along so the once-registered event subscription speaks the current language.
-  current.current = { selected, view, recording: data?.recording, chatOpen, t };
+  current.current = { selected, view, recording: data?.recording, chatOpen, t, record };
   const call = async (name, ...args) => api.call(name, ...args);
   const updateMeeting = (m) =>
     setData((d) =>
@@ -180,6 +183,34 @@ function App() {
             : d,
         );
       if (e.type === 'meeting-detected') setDetected({ event: e.event, at: Date.now() });
+      if (e.type === 'meeting-end') setEndPrompt(e);
+      if (['meeting-end-cleared', 'stopped'].includes(e.type)) setEndPrompt(null);
+      // Stopped by meeting-end detection, or a long silence at the end removed: say so, with a way
+      // to carry on recording into the same note.
+      if (e.type === 'meeting-end-stopped' || e.type === 'silence-trimmed') {
+        const { t } = current.current;
+        const trimmed = e.removed
+          ? t('Removed {time} of silence at the end.', { time: duration(e.removed) })
+          : '';
+        setNotice(
+          e.type === 'silence-trimmed'
+            ? trimmed
+            : {
+                text: [t('Recording stopped: the meeting seemed to be over.'), trimmed]
+                  .filter(Boolean)
+                  .join(' '),
+                action: {
+                  label: t('Resume recording'),
+                  run: () => {
+                    setSelected(e.id);
+                    setView('all');
+                    setTab('notes');
+                    void current.current.record(e.id);
+                  },
+                },
+              },
+        );
+      }
       if (['open-meeting', 'started'].includes(e.type)) setDetected(null);
       // A clicked meeting reminder: open its note and, if enabled, start recording.
       if (e.type === 'open-meeting')
@@ -1129,6 +1160,20 @@ function App() {
                   </IconButton>
                 </div>
               )}
+              {endPrompt &&
+                data.recording?.recordingId === endPrompt.recordingId &&
+                !data.recording.stopping && (
+                  <MeetingEndPrompt
+                    prompt={endPrompt}
+                    onKeep={() =>
+                      guard(async () => {
+                        await call('keep-recording');
+                        setEndPrompt(null);
+                      })
+                    }
+                    onStop={() => guard(() => call('stop'))}
+                  />
+                )}
               {data.recording && (silent.microphone || silent.system) && (
                 <div className="capture-warnings" role="status">
                   {silent.microphone && (

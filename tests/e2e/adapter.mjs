@@ -15,7 +15,8 @@ import { basename, join } from 'node:path';
 import { consumeResponse } from '../../app/stream.mjs';
 import { claudeModels } from '../../app/providers/claude-code.mjs';
 
-export function wav(seconds = 2, frequency = 440) {
+// A tone; with `silentAfter`, digital silence from that second on (a meeting that ended).
+export function wav(seconds = 2, frequency = 440, silentAfter = Infinity) {
   const rate = 16000;
   const samples = Math.round(rate * seconds);
   const buffer = Buffer.alloc(44 + samples * 2);
@@ -31,7 +32,7 @@ export function wav(seconds = 2, frequency = 440) {
   buffer.writeUInt16LE(16, 34);
   buffer.write('data', 36);
   buffer.writeUInt32LE(samples * 2, 40);
-  for (let index = 0; index < samples; index++)
+  for (let index = 0; index < Math.min(samples, rate * silentAfter); index++)
     buffer.writeInt16LE(
       Math.round(Math.sin((2 * Math.PI * frequency * index) / rate) * 1200),
       44 + index * 2,
@@ -114,6 +115,8 @@ export function createTestAdapter({ dataDir }) {
     },
     // Meeting detection settles and ends within a second, so E2E need not wait minutes.
     detection: { settle: 300, gap: 1500 },
+    // Meeting-end detection keeps its real thresholds unless a scenario shortens them.
+    ...(scenario.meetingEnd ? { meetingEnd: scenario.meetingEnd } : {}),
     createAuth() {
       writeFileSync(join(dataDir, 'adapter-auth-ready.json'), JSON.stringify({ synthetic: true }));
       let connected = scenario.connected !== false;
@@ -419,7 +422,10 @@ export function createTestAdapter({ dataDir }) {
           (source) => {
             const fileName = source + '.wav';
             const path = join(active.audioDir, fileName);
-            writeFileSync(path, wav(duration, source === 'system' ? 660 : 440));
+            writeFileSync(
+              path,
+              wav(duration, source === 'system' ? 660 : 440, active.fixture.silentAfter),
+            );
             return {
               source,
               fileName,

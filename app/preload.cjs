@@ -11,6 +11,7 @@ const channels = [
   'messages',
   'record',
   'stop',
+  'keep-recording',
   'recording-url',
   'transcribe-recording',
   'restore-transcript',

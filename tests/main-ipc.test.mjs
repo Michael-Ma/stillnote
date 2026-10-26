@@ -307,8 +307,13 @@ test('calls open only fixed or calendar links; reminders join and detection prom
   );
   assert.equal(raised, before + 1);
 
-  // Turning detection off stops the helper watching.
+  // Meeting-end detection still watches the microphone; turning both off stops the helper watching.
   await call('setting', 'meetingDetection', false);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok(
+    !events().some((e) => e.type === 'native-command' && e.op === 'watch-microphone' && !e.enabled),
+  );
+  await call('setting', 'meetingEnd', 'off');
   await until(() =>
     events().some((e) => e.type === 'native-command' && e.op === 'watch-microphone' && !e.enabled),
   );
@@ -569,4 +574,84 @@ test('quitting while A saves cancels the pending B handoff', async (t) => {
   await waitFor(() => events().some((e) => e.type === 'stopped'));
   assert.equal(events().filter((e) => e.type === 'native-command' && e.op === 'start').length, 1);
   assert.ok(!events().some((e) => e.type === 'open-external'));
+});
+test('a meeting that seems over asks, keeps recording on request, then stops and trims the silence', async (t) => {
+  const session = { mode: 'normal', duration: 100, silentAfter: 20 };
+  const { call, win, events } = await setup(t, 'meeting-end', [session, session], {
+    meetingEnd: { held: 200, callQuiet: 300, countdown: 500 },
+  });
+  const until = async (check, tries = 300) => {
+    for (let i = 0; i < tries && !check(); i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(check());
+  };
+  const prompts = () => win.events.filter((e) => e.type === 'meeting-end');
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  await call('setting', 'autoEnhance', false);
+  const meeting = await call('create', { title: 'Weekly sync' });
+  // The call app is on the microphone when recording starts; Stillnote is in the background.
+  win.isFocused = () => false;
+  await until(() => globalThis.__stillnoteMicrophone?.(false));
+  globalThis.__stillnoteMicrophone(true);
+  await call('record', meeting.id);
+  await until(() => win.events.some((e) => e.type === 'started'));
+  await wait(300);
+  globalThis.__stillnoteMicrophone(false);
+  await until(() => prompts().length === 1);
+  assert.equal(prompts()[0].reason, 'call');
+  assert.ok(prompts()[0].deadline > Date.now());
+  const notice = globalThis.__stillnoteNotifications.find((n) => n.kind === 'meeting-end');
+  assert.equal(notice.title, 'The meeting seems to be over');
+  assert.match(notice.body, /Recording stops in 60 seconds/);
+
+  // Keep recording: no stop at the deadline, and no new prompt until the call app is used again.
+  assert.equal(await call('keep-recording'), true);
+  assert.ok(win.events.some((e) => e.type === 'meeting-end-cleared'));
+  await wait(800);
+  assert.equal(prompts().length, 1);
+  assert.ok((await call('state')).recording, 'still recording');
+  globalThis.__stillnoteMicrophone(true);
+  await wait(300);
+  globalThis.__stillnoteMicrophone(false);
+  await until(() => prompts().length === 2);
+  // The countdown runs out: the recording stops, and the 80 s of silence after 20 s of sound go.
+  await until(() => win.events.some((e) => e.type === 'meeting-end-stopped'));
+  const stopped = win.events.find((e) => e.type === 'meeting-end-stopped');
+  assert.equal(stopped.reason, 'call');
+  assert.equal(stopped.removed, 70);
+  let saved = (await call('state')).meetings.find((m) => m.id === meeting.id);
+  assert.equal(saved.recordings[0].duration, 30);
+  assert.equal(saved.recordings[0].diagnostics.trailingSilenceRemoved, 70);
+  assert.deepEqual(
+    saved.recordings[0].tracks.map((track) => track.duration),
+    [30, 30],
+  );
+
+  // Only ask: the prompt has no countdown and waits; a manual stop still trims.
+  await call('setting', 'meetingEnd', 'prompt');
+  globalThis.__stillnoteMicrophone(true);
+  await call('record', meeting.id);
+  await until(() => win.events.filter((e) => e.type === 'started').length === 2);
+  await wait(300);
+  globalThis.__stillnoteMicrophone(false);
+  await until(() => prompts().length === 3);
+  assert.equal(prompts()[2].deadline, null);
+  await wait(800);
+  assert.ok((await call('state')).recording, 'only asked, still recording');
+  await call('stop');
+  await until(() => win.events.some((e) => e.type === 'silence-trimmed'));
+  assert.equal(win.events.find((e) => e.type === 'silence-trimmed').removed, 70);
+  saved = (await call('state')).meetings.find((m) => m.id === meeting.id);
+  assert.equal(saved.duration, 60, 'both recordings, trimmed');
+  assert.ok(events().some((e) => e.type === 'native-command' && e.op === 'stop'));
+});
+test('the renderer can call exactly the operations main registers', () => {
+  const read = (file) => readFileSync(new URL(`../app/${file}`, import.meta.url), 'utf8');
+  const registered = [...read('main.mjs').matchAll(/register\(\s*'([\w-]+)'/g)].map((m) => m[1]);
+  const allowed = [
+    ...read('preload.cjs')
+      .match(/const channels = \[([\s\S]*?)\]/)[1]
+      .matchAll(/'([\w-]+)'/g),
+  ].map((m) => m[1]);
+  assert.deepEqual([...registered].sort(), [...allowed].sort());
 });

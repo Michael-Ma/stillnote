@@ -56,6 +56,7 @@ import {
 import { ClaudeCode } from './providers/claude-code.mjs';
 import { enhanceInstructions, enhanceRequest } from './enhance.mjs';
 import { arbitrateOffline, createLiveArbiter, recognitionPlan } from './language-arbiter.mjs';
+import { meetingEndDetector, sustainedSound, trailingCut } from './meeting-end.mjs';
 import { resolveLanguage, translator } from './i18n/index.mjs';
 import { helperMessage } from './helper-messages.mjs';
 import {
@@ -72,6 +73,8 @@ import {
   resolveRecordingTrack,
   audioResponse,
   assessCoverage,
+  lastSound,
+  trimRecordingTail,
   contextHints,
   meetingEvents,
   helperRequests,
@@ -142,6 +145,14 @@ if (!app.requestSingleInstanceLock()) {
     detectedNotice,
     // Back-to-back meetings: what to do once the recording in progress has stopped and saved.
     afterStop,
+    // Meeting-end detection for the recording in progress: the detector, the sound of sources
+    // that are not transcribed, where the last speech ended (seconds into the recording), the
+    // "Meeting seems over" prompt on screen ({ reason, deadline, notice }) and its timer.
+    meetingEnd,
+    endSounds = {},
+    speechEnd = 0,
+    endPrompt,
+    endTimer,
     notificationsBlocked = false;
   const pendingPartials = new Map();
   // Notifications on screen; a reference keeps each click handler from being garbage collected.
@@ -211,6 +222,10 @@ if (!app.requestSingleInstanceLock()) {
     languageArbiter = undefined;
     clearInterval(languageTick);
     languageTick = undefined;
+    clearEndPrompt();
+    clearInterval(endTimer);
+    endTimer = undefined;
+    meetingEnd = undefined;
     if (powerId !== undefined) {
       powerSaveBlocker.stop(powerId);
       powerId = undefined;
@@ -256,17 +271,27 @@ if (!app.requestSingleInstanceLock()) {
       const dir = recordingDirectory(app.getPath('userData'), active.id, active.recordingId);
       if (status === 'interrupted') repairRecordingTracks(dir);
       // Without the helper's final word, the track offsets it reported while recording.
-      const tracks = inspectRecordingTracks(dir, event.audio?.tracks ?? active.trackOffsets);
+      const offsets = event.audio?.tracks ?? active.trackOffsets;
+      let tracks = inspectRecordingTracks(dir, offsets);
+      const m = store.get(active.id);
+      const segments = m.transcript.filter((segment) => segment.recordingId === active.recordingId);
+      let removed = 0;
+      if (status === 'completed' && store.settings().meetingEnd !== 'off') {
+        const lastLine = Math.max(0, ...segments.map((s) => s.timestamp - active.baseDuration));
+        removed = trimSilence(dir, tracks, Math.max(speechEnd, lastLine));
+        if (removed) tracks = inspectRecordingTracks(dir, offsets);
+      }
       const trackDuration = Math.max(
         0,
         ...tracks.map((track) => track.duration + (track.startOffset ?? 0)),
       );
-      const seconds = Number.isFinite(event.duration) ? Math.max(0, event.duration) : trackDuration;
-      const m = store.get(active.id);
-      const segments = m.transcript.filter((segment) => segment.recordingId === active.recordingId);
+      // A trimmed recording is as long as what is left of it.
+      const seconds =
+        Number.isFinite(event.duration) && !removed ? Math.max(0, event.duration) : trackDuration;
       const nativeDiagnostics = event.audio?.diagnostics ?? {};
       const diagnostics = {
         ...nativeDiagnostics,
+        ...(removed ? { trailingSilenceRemoved: removed } : {}),
         ...assessCoverage(
           segments,
           Math.max(seconds, trackDuration),
@@ -280,6 +305,9 @@ if (!app.requestSingleInstanceLock()) {
         diagnostics,
         sources: active.sources,
       });
+      if (updated && active.endedBy)
+        emit({ type: 'meeting-end-stopped', id: active.id, reason: active.endedBy, removed });
+      else if (updated && removed) emit({ type: 'silence-trimmed', id: active.id, removed });
     } finally {
       releaseCapture();
       if (updated) meetingUpdates.flush(active.id, updated);
@@ -295,6 +323,45 @@ if (!app.requestSingleInstanceLock()) {
         });
     }
     return updated;
+  }
+  // A recording that ran on after the meeting loses its long trailing silence: everything ten
+  // seconds after the last speech, when that is a minute or more and no track has sustained sound
+  // there. Returns the seconds removed. A failure keeps the audio whole and never stops the
+  // recording from being saved.
+  function trimSilence(dir, tracks, speech) {
+    try {
+      const sounds = tracks.map((track) => {
+        const offset = track.startOffset ?? 0;
+        const end = lastSound(join(dir, track.fileName), { after: speech - offset });
+        return end ? end + offset : 0;
+      });
+      const duration = Math.max(
+        0,
+        ...tracks.map((track) => track.duration + (track.startOffset ?? 0)),
+      );
+      const keep = trailingCut({ duration, speech, sounds });
+      return keep === null ? 0 : trimRecordingTail(dir, tracks, keep);
+    } catch (error) {
+      console.error('Could not trim the trailing silence:', error.message);
+      return 0;
+    }
+  }
+  function clearEndPrompt() {
+    if (!endPrompt) return;
+    endPrompt.notice?.close();
+    endPrompt = undefined;
+    emit({ type: 'meeting-end-cleared' });
+  }
+  // When the recording's calendar meeting ends: the occurrence its note was made for, or for a
+  // note of its own, the meeting under way when recording started.
+  function recordingEventEnd() {
+    if (!recording) return null;
+    const key = store.get(recording.id).eventKey;
+    const event = key
+      ? calendarEvents.find((item) => eventKey(item) === key)
+      : currentEvent(calendarEvents, recording.startedAt);
+    const end = Date.parse(event?.end);
+    return Number.isFinite(end) ? end : null;
   }
   const idle = () => !recording && !starting && !stopping && !transcriptionWait;
   // Web links open in the user's browser or meeting app; the test adapter records them instead.
@@ -416,7 +483,13 @@ if (!app.requestSingleInstanceLock()) {
   function watchMicrophone({ retry = false } = {}) {
     // A scripted run without the fake helper (smoke tests) must not prompt about real calls.
     if (scripted && !testAdapter) return;
-    if (quitting || store.settings().meetingDetection === false || (native && watching === native))
+    // Meeting-end detection uses it too, to see the call app let go of the microphone.
+    const settings = store.settings();
+    if (
+      quitting ||
+      (settings.meetingDetection === false && settings.meetingEnd === 'off') ||
+      (native && watching === native)
+    )
       return;
     if (retry && !native && Date.now() - watchedAt < 5 * 60_000) return;
     watchedAt = Date.now();
@@ -455,6 +528,7 @@ if (!app.requestSingleInstanceLock()) {
         }
         if (e.type === 'microphone-activity') {
           detector.observe(e.active === true, Date.now());
+          meetingEnd?.microphone(e.active === true, Date.now());
           detect();
           return;
         }
@@ -485,6 +559,24 @@ if (!app.requestSingleInstanceLock()) {
         if (e.type === 'transcription-progress') {
           emit(e);
           return;
+        }
+        // Meeting-end detection hears speech in what the helper transcribes (every candidate
+        // language), and sustained sound in meeting audio (silent when nobody talks, so a
+        // recognizer that stopped cannot make a call seem over) or in an untranscribed microphone.
+        if (
+          meetingEnd &&
+          recording &&
+          (!e.recordingId || e.recordingId === recording.recordingId)
+        ) {
+          if (['segment', 'partial'].includes(e.type) && String(e.text ?? '').trim()) {
+            meetingEnd.heard(Date.now());
+            speechEnd = Math.max(speechEnd, Number(e.end) || 0, Number(e.timestamp) || 0);
+          } else if (
+            e.type === 'audio-level' &&
+            (e.source === 'system' || recording.sources?.[e.source]?.recognition !== 'ready') &&
+            (endSounds[e.source] ??= sustainedSound())(e.rms, Date.now())
+          )
+            meetingEnd.heard(Date.now());
         }
         // When each track's first audio arrived. Saved right away, so an interrupted recording
         // (crash, quit deadline) still lines its tracks up on playback and Retry.
@@ -566,6 +658,10 @@ if (!app.requestSingleInstanceLock()) {
         }
         if (e.type === 'started' && recording) {
           starting = false;
+          meetingEnd?.start(Date.now(), {
+            microphone: detector.active(),
+            end: recordingEventEnd(),
+          });
           recording = {
             ...recording,
             systemAudio: e.systemAudio,
@@ -627,6 +723,7 @@ if (!app.requestSingleInstanceLock()) {
           completed = finishCapture(e.status === 'failed' ? 'failed' : 'completed', e);
         if (e.type === 'calendar') {
           calendarEvents = e.events;
+          meetingEnd?.calendar(recordingEventEnd());
           if (!store.settings().calendarConnected) store.setting('calendarConnected', true);
           calendarWait?.resolve(e.events);
           calendarWait = undefined;
@@ -1052,11 +1149,16 @@ if (!app.requestSingleInstanceLock()) {
       register('setting', (key, value) => {
         const settings = store.setting(key, value);
         if (key === 'uiLanguage') buildMenu();
-        if (key === 'meetingDetection' && value) watchMicrophone();
-        else if (key === 'meetingDetection') {
-          if (native) send({ op: 'watch-microphone', enabled: false });
-          watching = undefined;
+        if (['meetingDetection', 'meetingEnd'].includes(key)) {
+          if (settings.meetingDetection !== false || settings.meetingEnd !== 'off')
+            watchMicrophone();
+          else {
+            if (native) send({ op: 'watch-microphone', enabled: false });
+            watching = undefined;
+          }
         }
+        // A prompt shown under the previous choice is asked again under the new one.
+        if (key === 'meetingEnd') clearEndPrompt();
         return settings;
       });
       register('transcript', (id, segment) => store.append(id, segment));
@@ -1083,6 +1185,41 @@ if (!app.requestSingleInstanceLock()) {
           installingLanguage = false;
         }
       });
+      // "The meeting seems to be over", while its signal lasts: someone speaking or the call app
+      // taking the microphone again withdraws it. Automatic mode stops the recording when the
+      // countdown runs out; away from Stillnote (in the call app) a notification says so too.
+      const countdown = testAdapter?.meetingEnd?.countdown ?? 60_000;
+      const endTick = () => {
+        if (!recording || !meetingEnd || starting || stopping) return;
+        const mode = store.settings().meetingEnd ?? 'auto',
+          now = Date.now();
+        const reason = mode === 'off' ? null : meetingEnd.check(now);
+        if (!reason) clearEndPrompt();
+        else if (!endPrompt) {
+          const { id, recordingId } = recording;
+          endPrompt = { reason, deadline: mode === 'auto' ? now + countdown : null };
+          emit({ type: 'meeting-end', id, recordingId, reason, deadline: endPrompt.deadline });
+          if (!win || win.isDestroyed() || !win.isFocused())
+            endPrompt.notice = notify(
+              {
+                kind: 'meeting-end',
+                title: t('The meeting seems to be over'),
+                body:
+                  mode === 'auto'
+                    ? t('Recording stops in 60 seconds. Open Stillnote to keep recording.')
+                    : t('Open Stillnote to stop or keep recording.'),
+              },
+              () => {
+                if (showWindow() && recording?.id === id)
+                  emit({ type: 'open-meeting', id, record: false });
+              },
+            );
+        } else if (endPrompt.deadline !== null && now >= endPrompt.deadline) {
+          recording = { ...recording, endedBy: endPrompt.reason };
+          clearEndPrompt();
+          stopCapture();
+        }
+      };
       const startRecording = (id) => {
         if (recording || starting) throw new Error('A meeting is already recording.');
         if (transcriptionWait)
@@ -1120,6 +1257,10 @@ if (!app.requestSingleInstanceLock()) {
           },
         };
         pendingPartials.clear();
+        meetingEnd = meetingEndDetector(testAdapter?.meetingEnd);
+        endSounds = {};
+        speechEnd = 0;
+        endTimer = setInterval(endTick, testAdapter ? 100 : 1000);
         // A call already under way is being recorded now: it never prompts "Meeting detected".
         detect();
         if (plan.locales.length > 1) {
@@ -1186,6 +1327,13 @@ if (!app.requestSingleInstanceLock()) {
       };
       register('stop', () => {
         stopCapture();
+        return true;
+      });
+      // "Keep recording" on the meeting-end prompt.
+      register('keep-recording', () => {
+        if (!recording || !meetingEnd) return false;
+        meetingEnd.dismiss(Date.now());
+        clearEndPrompt();
         return true;
       });
       // Quitting mid-recording (⌘Q, closing the window, Quit & Reopen in System Settings,

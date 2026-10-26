@@ -81,6 +81,7 @@ const portableSettings = new Set([
   'reminderAutoRecord',
   'meetingDetection',
   'openOnMeetingDetected',
+  'meetingEnd',
   'callService',
   'templates',
   'recipes',
@@ -724,6 +725,9 @@ export function validateSetting(key, value) {
   } else if (key === 'claudePath') {
     if (value !== null && !(typeof value === 'string' && /^\/.{1,999}$/s.test(value)))
       throw new Error('Invalid Claude Code path.');
+  } else if (key === 'meetingEnd') {
+    // When a meeting seems over: stop after a countdown, only ask, or do nothing.
+    if (!['auto', 'prompt', 'off'].includes(value)) throw new Error('Invalid preference.');
   } else if (key === 'callService') {
     // The service the Start meeting button opens.
     if (!startableServices.includes(value)) throw new Error('Invalid meeting service.');

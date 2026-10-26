@@ -10,6 +10,7 @@ import { recovery } from '../tests/e2e/recovery.mjs';
 import { language, languageScenario } from '../tests/e2e/language.mjs';
 import { reminders, remindersScenario } from '../tests/e2e/reminders.mjs';
 import { calls, callsScenario } from '../tests/e2e/calls.mjs';
+import { meetingEnd, meetingEndScenario } from '../tests/e2e/meeting-end.mjs';
 
 const args = process.argv.slice(2);
 const option = (name) => {
@@ -64,6 +65,18 @@ const suites = {
       'no prompt while or after recording the same call',
       'detection can be turned off',
       'Start meeting, Join & record and the prompt in Chinese',
+    ],
+  },
+  'meeting-end': {
+    run: meetingEnd,
+    scenario: meetingEndScenario,
+    checks: [
+      'the call app letting go of the microphone prompts with a countdown',
+      'Keep recording carries on past the countdown',
+      'the countdown stops the recording and trims the trailing silence',
+      'Resume recording continues in the same note; a manual stop trims too',
+      'Only ask waits for Stop now',
+      'the prompt in Chinese',
     ],
   },
   recovery: {
