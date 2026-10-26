@@ -28,6 +28,18 @@ export const date = (x, locale) =>
   dateFormat(locale, { month: 'short', day: 'numeric' }).format(new Date(x));
 export const time = (x, locale) =>
   dateFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(new Date(x));
+// "320 MB", "1.2 GB": decimal units, as Finder counts them.
+export function fileSize(bytes, locale) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = Math.max(0, Number(bytes) || 0),
+    unit = 0;
+  while (size >= 1000 && unit < units.length - 1) {
+    size /= 1000;
+    unit++;
+  }
+  const digits = unit > 0 && size < 10 ? 1 : 0;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: digits }).format(size)} ${units[unit]}`;
+}
 export const duration = (x) =>
   `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
 export function dayLabel(value, t = english) {

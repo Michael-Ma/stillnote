@@ -25,7 +25,16 @@ import { useT } from '../i18n/react.jsx';
 const builtInTemplates = ['general', 'one-on-one', 'customer', 'standup', 'interview'];
 
 // Granola's top-right switch between the user's notes and the enhanced version.
-export function NoteToolbar({ meeting, tab, setTab, templates, patch, activeRecord, onExport }) {
+export function NoteToolbar({
+  meeting,
+  tab,
+  setTab,
+  templates,
+  patch,
+  activeRecord,
+  onExport,
+  onDeleteForever,
+}) {
   const t = useT();
   return (
     <div className="note-toolbar">
@@ -75,9 +84,14 @@ export function NoteToolbar({ meeting, tab, setTab, templates, patch, activeReco
         <Download size={15} />
       </IconButton>
       {meeting.deletedAt ? (
-        <IconButton label={t('Restore note')} onClick={() => patch({ deletedAt: null })}>
-          <RotateCcw size={15} />
-        </IconButton>
+        <>
+          <IconButton label={t('Restore note')} onClick={() => patch({ deletedAt: null })}>
+            <RotateCcw size={15} />
+          </IconButton>
+          <IconButton label={t('Delete forever')} className="danger" onClick={onDeleteForever}>
+            <Trash2 size={15} />
+          </IconButton>
+        </>
       ) : (
         <IconButton
           label={t('Move to Trash')}
@@ -112,6 +126,7 @@ export function NoteView({
   ai,
   aiActions,
   onTidyContext,
+  onDeleteForever,
 }) {
   const t = useT();
   const isOwn = useMemo(() => ownLineMatcher(meeting.notes), [meeting.notes]);
@@ -163,6 +178,9 @@ export function NoteView({
           {t('This note is in Trash.')}{' '}
           <button className="text-button" onClick={() => patch({ deletedAt: null })}>
             {t('Restore it')}
+          </button>{' '}
+          <button className="text-button danger" onClick={onDeleteForever}>
+            {t('Delete forever')}
           </button>
         </div>
       )}

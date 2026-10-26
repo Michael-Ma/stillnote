@@ -128,8 +128,8 @@ export default {
   'Customer discovery': '客户访谈',
   Cut: '剪切',
   'Delete segment': '删除这段',
-  'Deleted notes will appear here until you restore them.':
-    '删除的笔记会显示在这里，直到你恢复它们。',
+  'Deleted notes stay here until you restore them or delete them forever.':
+    '删除的笔记会留在这里，直到你恢复或永久删除。',
   Details: '详情',
   'Detect meetings': '检测会议',
   Dismiss: '忽略',
@@ -332,6 +332,23 @@ export default {
   'Tidy it': '整理一下',
   'Meeting context tidied.': '会议信息已整理。',
   'Transcribe again?': '重新转写？',
+  'Delete forever': '永久删除',
+  'Empty Trash': '清空废纸篓',
+  'Empty Trash?': '清空废纸篓？',
+  'Delete “{title}” forever?': '永久删除“{title}”？',
+  'Its notes, transcript and chat are deleted from Stillnote.':
+    '它的笔记、转写和对话会从 Stillnote 中删除。',
+  'The note in Trash is deleted from Stillnote, with its transcript and chat.':
+    '废纸篓里的这条笔记会连同转写和对话从 Stillnote 中删除。',
+  'All {n} notes in Trash are deleted from Stillnote, with their transcripts and chats.':
+    '废纸篓里的 {n} 条笔记会连同转写和对话从 Stillnote 中删除。',
+  '{size} of saved audio moves to the macOS Trash.': '{size} 录音会移到 macOS 的废纸篓。',
+  'Deleted {n} note forever.': '已永久删除 {n} 条笔记。',
+  'Deleted {n} notes forever.': '已永久删除 {n} 条笔记。',
+  'Move a note to Trash before deleting it forever.': '请先把笔记移到废纸篓，再永久删除。',
+  'Choose notes in Trash to delete.': '请选择废纸篓里要删除的笔记。',
+  'Stop recording before deleting this note.': '请先停止录音再删除这条笔记。',
+  'Wait for transcription to finish first.': '请等转写完成。',
   'You edited this transcript. Transcribing again replaces your edits; the current version is kept, and Restore previous transcript brings it back.':
     '你改过这段转写。重新转写会替换你的修改；当前版本会保留，用“恢复上一版转写”可以找回。',
   'Transcribe again': '重新转写',

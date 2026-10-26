@@ -3,6 +3,7 @@ import {
   existsSync,
   lstatSync,
   openSync,
+  readdirSync,
   readSync,
   realpathSync,
   statSync,
@@ -25,6 +26,28 @@ export function recordingDirectory(dataDir, meetingId, recordingId) {
   )
     throw new Error('Invalid recording location.');
   return join(resolve(dataDir), 'recordings', meetingId, recordingId);
+}
+
+// Every recording of one meeting, in one folder.
+export function meetingAudioDirectory(dataDir, meetingId) {
+  if (typeof dataDir !== 'string' || !dataDir || !UUID.test(String(meetingId)))
+    throw new Error('Invalid recording location.');
+  return join(resolve(dataDir), 'recordings', meetingId);
+}
+
+// Bytes in a folder and below; links are not followed.
+export function directorySize(dir) {
+  let total = 0;
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) total += directorySize(path);
+      else if (entry.isFile()) total += lstatSync(path).size;
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  return total;
 }
 
 function readAt(fd, length, position) {

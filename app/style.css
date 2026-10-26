@@ -218,6 +218,9 @@ kbd {
 .text-button.danger {
   color: var(--danger);
 }
+.icon-button.danger:not(:disabled):hover {
+  color: var(--danger);
+}
 .icon-button {
   display: inline-grid;
   place-items: center;
@@ -941,6 +944,12 @@ kbd {
 .feed-heading,
 .search-heading {
   margin-top: 8px;
+}
+.feed-heading {
+  gap: 12px;
+}
+.feed-heading .empty-trash {
+  margin-left: auto;
 }
 .note-group h2 {
   margin: 26px 0 6px;

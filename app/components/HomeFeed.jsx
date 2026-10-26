@@ -43,6 +43,7 @@ export function HomeFeed({
   data,
   visible,
   view,
+  onEmptyTrash,
   query,
   title,
   calendarBusy,
@@ -177,6 +178,11 @@ export function HomeFeed({
         <div className="section-heading feed-heading">
           <h1>{title}</h1>
           <span>{t.count(visible.length, '{n} note', '{n} notes')}</span>
+          {view === 'trash' && visible.length > 0 && (
+            <button className="text-button danger empty-trash" onClick={onEmptyTrash}>
+              {t('Empty Trash')}
+            </button>
+          )}
         </div>
       )}
       <div className="meeting-feed">
@@ -230,7 +236,7 @@ export function HomeFeed({
             {query
               ? t('Try another word from a title, your notes, or a transcript.')
               : view === 'trash'
-                ? t('Deleted notes will appear here until you restore them.')
+                ? t('Deleted notes stay here until you restore them or delete them forever.')
                 : t('Start a note, press record, and stay in the conversation.')}
           </p>
           {!query && view !== 'trash' && (

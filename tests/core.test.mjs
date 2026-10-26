@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store, context, markdown } from '../app/store.mjs';
@@ -98,6 +98,41 @@ test('search finds words inside Chinese text, CJK phrases, and any word of a que
   assert.deepEqual(ids(s.search('회의')), [korean.id]);
   assert.equal(s.search('When does interview training start?', { any: true })[0].id, training.id);
   assert.equal(s.search('定价页面什么时候上线？', { any: true })[0].id, pricing.id);
+});
+test('delete forever removes a trashed note with its search entry, history and chat', (t) => {
+  const { s } = fixture(t);
+  const keep = s.create({ title: 'Keep', notes: 'shared word' });
+  const gone = s.create({ title: 'Gone', notes: 'shared word' });
+  s.message(`meeting:${gone.id}`, 'user', 'About this meeting');
+  s.message('all', 'user', 'Across notes');
+  s.db
+    .prepare('INSERT INTO transcript_versions(meeting_id, data) VALUES(?,?)')
+    .run(gone.id, JSON.stringify({ recordingId: 'r', at: 'x', segments: [] }));
+  assert.throws(() => s.deleteForever([gone.id]), /Trash before deleting/);
+  s.update(gone.id, { deletedAt: true });
+  assert.equal(s.deleteForever([gone.id]), 1);
+  assert.throws(() => s.get(gone.id), /not found/);
+  assert.deepEqual(
+    s.search('shared').map((r) => r.id),
+    [keep.id],
+  );
+  assert.equal(s.messages(`meeting:${gone.id}`).length, 0);
+  assert.equal(s.messages('all').length, 1, 'chats across notes stay');
+  assert.equal(s.transcriptVersions(gone.id).length, 0);
+  assert.equal(s.all(true).length, 1);
+});
+test('a note deleted forever leaves no trace of its text in the database files', (t) => {
+  const { s, dir } = fixture(t);
+  const note = s.create({ title: 'Secret', notes: 'zebracornflakes first draft' });
+  s.update(note.id, { notes: 'zebracornflakes second draft' });
+  s.append(note.id, { text: 'zebracornflakes said aloud', speaker: 'You', timestamp: 0 });
+  s.update(note.id, { deletedAt: true });
+  s.deleteForever([note.id]);
+  for (const name of readdirSync(dir))
+    assert.ok(
+      !readFileSync(join(dir, name)).includes('zebracornflakes'),
+      `${name} still holds the deleted text`,
+    );
 });
 test('context is bounded without silent truncation and uses stable source ids', (t) => {
   const { s } = fixture(t);

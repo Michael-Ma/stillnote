@@ -5,12 +5,13 @@ import { PassThrough, Writable } from 'node:stream';
 import {
   readFileSync,
   mkdirSync,
+  renameSync,
   writeFileSync,
   statSync,
   appendFileSync,
   existsSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { consumeResponse } from '../../app/stream.mjs';
 import { claudeModels } from '../../app/providers/claude-code.mjs';
 
@@ -102,6 +103,13 @@ export function createTestAdapter({ dataDir }) {
     async openExternal(url) {
       log({ type: 'open-external', url });
       opened.push(url);
+    },
+    // "Move to the Trash": the folder moves to a .Trash folder in the test's own data directory.
+    async trashItem(path) {
+      log({ type: 'trash-item', path });
+      const trash = join(dataDir, '.Trash');
+      mkdirSync(trash, { recursive: true });
+      renameSync(path, join(trash, `${Date.now()}-${basename(path)}`));
     },
     // Meeting detection settles and ends within a second, so E2E need not wait minutes.
     detection: { settle: 300, gap: 1500 },

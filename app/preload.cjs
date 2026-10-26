@@ -14,6 +14,8 @@ const channels = [
   'recording-url',
   'transcribe-recording',
   'restore-transcript',
+  'deletion-size',
+  'delete-forever',
   'calendar',
   'start-call',
   'join-call',

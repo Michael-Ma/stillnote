@@ -75,6 +75,8 @@ import {
   contextHints,
   meetingEvents,
   helperRequests,
+  meetingAudioDirectory,
+  directorySize,
 } from './recordings.mjs';
 protocol.registerSchemesAsPrivileged([
   {
@@ -1257,6 +1259,44 @@ if (!app.requestSingleInstanceLock()) {
         );
         emit({ type: 'meeting', meeting: updated });
         return updated;
+      });
+      // Delete forever, from Trash: saved audio moves to the macOS Trash first (still recoverable
+      // there); a note whose audio cannot be moved is not deleted.
+      const trashedNotes = (ids) => {
+        if (!Array.isArray(ids) || !ids.length || ids.length > 10_000)
+          throw new Error('Choose notes in Trash to delete.');
+        const notes = ids.map((id) => store.get(String(id)));
+        if (notes.some((m) => !m.deletedAt))
+          throw new Error('Move a note to Trash before deleting it forever.');
+        if (notes.some((m) => m.id === recording?.id))
+          throw new Error('Stop recording before deleting this note.');
+        return notes;
+      };
+      register('deletion-size', (ids) =>
+        trashedNotes(ids).reduce(
+          (sum, m) => sum + directorySize(meetingAudioDirectory(app.getPath('userData'), m.id)),
+          0,
+        ),
+      );
+      register('delete-forever', async (ids) => {
+        const notes = trashedNotes(ids);
+        if (transcriptionWait) throw new Error('Wait for transcription to finish first.');
+        const trashItem = testAdapter?.trashItem ?? ((path) => shell.trashItem(path));
+        const deleted = [];
+        try {
+          for (const m of notes) {
+            const audio = meetingAudioDirectory(app.getPath('userData'), m.id);
+            if (existsSync(audio)) await trashItem(audio);
+            deleted.push(m.id);
+          }
+        } finally {
+          // Notes whose audio moved are deleted even if a later one failed; the window is told.
+          if (deleted.length) {
+            store.deleteForever(deleted);
+            emit({ type: 'meetings-deleted', ids: deleted });
+          }
+        }
+        return deleted;
       });
       register('restore-transcript', (meetingId, recordingId) => {
         if (recording?.id === meetingId || transcriptionWait)

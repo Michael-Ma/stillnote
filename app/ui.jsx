@@ -20,6 +20,7 @@ import {
   time,
   duration,
   silentState,
+  fileSize,
   speakerLabel,
   storedSpeaker,
 } from './format.mjs';
@@ -167,6 +168,10 @@ function App() {
       }
       if (e.type === 'ai') setData((d) => (d ? { ...d, ai: e.ai } : d));
       if (e.type === 'meeting') updateMeeting(e.meeting);
+      if (e.type === 'meetings-deleted')
+        setData((d) =>
+          d ? { ...d, meetings: d.meetings.filter((m) => !e.ids.includes(m.id)) } : d,
+        );
       // A calendar that loads is connected; Settings words the reminder switch from that.
       if (e.type === 'calendar')
         setData((d) =>
@@ -651,6 +656,47 @@ function App() {
       setRetryingRecording(null);
     }
   }
+  // Delete forever, from Trash, after a confirmation that says what goes with the notes.
+  async function deleteForever(notes) {
+    const ids = notes.map((m) => m.id);
+    const bytes = await guard(() => call('deletion-size', ids));
+    if (bytes === undefined) return;
+    const one = notes.length === 1;
+    const message = [
+      one
+        ? t('Its notes, transcript and chat are deleted from Stillnote.')
+        : t.count(
+            notes.length,
+            'The note in Trash is deleted from Stillnote, with its transcript and chat.',
+            'All {n} notes in Trash are deleted from Stillnote, with their transcripts and chats.',
+          ),
+      bytes > 0 &&
+        t('{size} of saved audio moves to the macOS Trash.', { size: fileSize(bytes, t.locale) }),
+    ]
+      .filter(Boolean)
+      .join(t.locale.startsWith('zh') ? '' : ' ');
+    setModal({
+      kind: 'confirm',
+      destructive: true,
+      title: one
+        ? t('Delete “{title}” forever?', { title: notes[0].title || t('New note') })
+        : t('Empty Trash?'),
+      message,
+      confirmLabel: one ? t('Delete forever') : t('Empty Trash'),
+      onConfirm: () =>
+        guard(async () => {
+          const deleted = await call('delete-forever', ids);
+          setData((d) => ({ ...d, meetings: d.meetings.filter((m) => !deleted.includes(m.id)) }));
+          if (deleted.includes(current.current.selected)) {
+            setSelected(null);
+            setView('trash');
+          }
+          setNotice(
+            t.count(deleted.length, 'Deleted {n} note forever.', 'Deleted {n} notes forever.'),
+          );
+        }),
+    });
+  }
   // Swaps the transcript back to the one the last Retry replaced; doing it again undoes it.
   async function restoreTranscript(recordingId) {
     const meetingId = selected;
@@ -911,6 +957,7 @@ function App() {
                   templates={templates}
                   patch={patch}
                   activeRecord={activeRecord}
+                  onDeleteForever={() => deleteForever([meeting])}
                   onExport={() =>
                     guard(async () => {
                       await flushAll();
@@ -998,6 +1045,7 @@ function App() {
                   folders={data.folders}
                   tab={tab}
                   draft={draft}
+                  onDeleteForever={() => deleteForever([meeting])}
                   onTidyContext={() => {
                     // The invite as it arrived comes back with Undo.
                     const before = meeting.notes,
@@ -1042,6 +1090,7 @@ function App() {
                   startMeeting={(input) => oneCall(() => startMeeting(input))}
                   joinMeeting={joinMeeting}
                   callPending={callPending}
+                  onEmptyTrash={() => deleteForever(data.meetings.filter((m) => m.deletedAt))}
                   openNote={openNote}
                   importFile={importFile}
                   setQuery={setQuery}

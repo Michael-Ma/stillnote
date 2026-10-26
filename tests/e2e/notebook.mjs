@@ -147,6 +147,42 @@ export async function notebook(h) {
   await page.getByRole('button', { name: 'Tidy it', exact: true }).waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   assert.equal(await notesBox.inputValue(), raw);
+  // Delete forever, from Trash: a confirmation first, then the note is gone for good.
+  await page
+    .locator('.note-toolbar')
+    .getByRole('button', { name: 'Move to Trash', exact: true })
+    .click();
+  await page
+    .locator('.note-toolbar')
+    .getByRole('button', { name: 'Delete forever', exact: true })
+    .click();
+  await page
+    .getByRole('heading', { name: 'Delete “Old invite note” forever?', exact: true })
+    .waitFor();
+  await h.screenshot('delete-forever');
+  await page
+    .locator('.confirm-body')
+    .getByRole('button', { name: 'Delete forever', exact: true })
+    .click();
+  await h.waitForState((s) => !s.meetings.some((m) => m.title === 'Old invite note'));
+  // Empty Trash takes every note in it.
+  for (const name of ['Trash one', 'Trash two']) {
+    const id = (await h.call('create', { title: name })).id;
+    await h.call('update', id, { deletedAt: true });
+  }
+  page = await h.restart();
+  await page.getByRole('button', { name: 'Trash', exact: true }).click();
+  await page.getByRole('button', { name: 'Empty Trash', exact: true }).click();
+  await page.getByRole('heading', { name: 'Empty Trash?', exact: true }).waitFor();
+  await h.screenshot('empty-trash');
+  await page
+    .locator('.confirm-body')
+    .getByRole('button', { name: 'Empty Trash', exact: true })
+    .click();
+  await page.getByText('Nothing in Trash', { exact: true }).waitFor();
+  assert.equal((await h.state()).meetings.filter((m) => m.deletedAt).length, 0);
+  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await h.open(title);
   await h.desktop.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setSize(1024, 768),
   );

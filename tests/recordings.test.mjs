@@ -23,6 +23,8 @@ import {
   resolveRecordingTrack,
   audioResponse,
   assessCoverage,
+  directorySize,
+  meetingAudioDirectory,
 } from '../app/recordings.mjs';
 
 function fixture(t) {
@@ -435,4 +437,20 @@ test('JSON backups and AI context exclude recording files; imported metadata can
   assert.deepEqual(imported.recordings, []);
   assert.equal(imported.audioPath, undefined);
   assert.equal(imported.transcript[0].recordingId, undefined);
+});
+
+test('a meeting’s audio folder is found by id and measured without following links', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'stillnote-size-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const id = randomUUID();
+  const audio = meetingAudioDirectory(dir, id);
+  assert.equal(audio, join(dir, 'recordings', id));
+  assert.throws(() => meetingAudioDirectory(dir, '../escape'), /Invalid recording location/);
+  assert.equal(directorySize(audio), 0, 'a meeting without audio');
+  const session = join(audio, randomUUID());
+  mkdirSync(session, { recursive: true });
+  writeFileSync(join(audio, 'a.wav'), Buffer.alloc(1000));
+  writeFileSync(join(session, 'b.wav'), Buffer.alloc(500));
+  symlinkSync('/etc/hosts', join(session, 'link'));
+  assert.equal(directorySize(audio), 1500);
 });

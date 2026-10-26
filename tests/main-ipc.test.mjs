@@ -355,3 +355,27 @@ test('one note per calendar event, and a reminder during a recording switches to
     events().some((e) => e.type === 'open-external' && e.url.startsWith('https://meet.google.com')),
   );
 });
+test('delete forever moves a trashed note’s audio to the Trash, then deletes the note', async (t) => {
+  const { call, events } = await setup(t, 'delete-forever');
+  await call('setting', 'autoEnhance', false);
+  const note = await call('create', { title: 'Old call' });
+  await call('record', note.id);
+  const until = async (check) => {
+    for (let i = 0; i < 300 && !(await check()); i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(await check());
+  };
+  await until(async () => (await call('state')).recording?.id === note.id);
+  await assert.rejects(call('delete-forever', [note.id]), /Trash before deleting/);
+  await call('stop');
+  await until(async () => (await call('state')).recording === null);
+  await call('update', note.id, { deletedAt: true });
+  assert.ok((await call('deletion-size', [note.id])) > 0, 'the saved audio is counted');
+  assert.deepEqual(await call('delete-forever', [note.id]), [note.id]);
+  assert.equal((await call('state')).meetings.length, 0);
+  const trashed = events().filter((e) => e.type === 'trash-item');
+  assert.equal(trashed.length, 1);
+  assert.match(trashed[0].path, new RegExp(`recordings/${note.id}$`));
+  await assert.rejects(call('delete-forever', [note.id]), /not found/);
+  await assert.rejects(call('delete-forever', []), /Choose notes/);
+});
