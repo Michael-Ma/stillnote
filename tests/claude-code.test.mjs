@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -23,7 +23,14 @@ function fixture(t, vars = {}, options = {}) {
   const changes = [];
   const claude = new ClaudeCode({
     workDir: join(dir, 'work'),
-    env: { ...process.env, ANTHROPIC_API_KEY: 'sk-fixture', ...vars, FAKE_CLAUDE_LOG: log },
+    home: dir,
+    env: {
+      ...process.env,
+      ANTHROPIC_API_KEY: 'sk-fixture',
+      ...vars,
+      CLAUDE_CONFIG_DIR: join(dir, 'config'),
+      FAKE_CLAUDE_LOG: log,
+    },
     candidates: [binary],
     executable: (path) => path === binary,
     shell: null,
@@ -235,7 +242,7 @@ test('abort during authentication never starts inference', async (t) => {
   const { claude, calls } = fixture(t, { FAKE_CLAUDE_STATUS_DELAY: '80' });
   const controller = new AbortController();
   const request = ask(claude, { signal: controller.signal }).promise;
-  while (!calls().some((call) => call.args[1] === 'status'))
+  while (!calls().some((call) => call.args.includes('status')))
     await new Promise((r) => setTimeout(r, 5));
   controller.abort();
   await assert.rejects(request, (error) => error.name === 'AbortError');
@@ -264,7 +271,7 @@ test('abort in the spawn/listener gap kills the child immediately', async (t) =>
   let child;
   claude.spawn = (...args) => {
     child = spawnCLI(...args);
-    controller.abort();
+    if (args[1][0] === '-p') controller.abort();
     return child;
   };
   await assert.rejects(
@@ -288,4 +295,92 @@ test('missing Claude discovery backs off for at least sixty seconds', async (t) 
   claude.missingUntil = Date.now() - 1;
   assert.equal(await claude.locate(), null);
   assert.equal(calls, 2);
+});
+
+for (const auth of ['api_key', 'logged-out', 'unreadable', 'failed']) {
+  test(`each inference rejects changed external auth: ${auth}`, async (t) => {
+    const { claude, calls } = fixture(t);
+    await claude.refresh();
+    assert.equal(claude.status().ready, true);
+    claude.env.FAKE_CLAUDE_AUTH = auth;
+    await assert.rejects(ask(claude).promise);
+    assert.equal(calls().filter((c) => c.args.includes('status')).length, 2);
+    assert.equal(calls().filter((c) => c.args[0] === '-p').length, 0);
+    assert.equal(claude.status().ready, false);
+  });
+}
+
+test('custom endpoints, provider flags, settings routing and managed plans never receive prompts', async (t) => {
+  for (const vars of [
+    { ANTHROPIC_BASE_URL: 'https://gateway.example.invalid' },
+    { CLAUDE_CODE_USE_BEDROCK: '1' },
+    { CLAUDE_CODE_USE_VERTEX: 'true' },
+    { CLAUDE_CODE_USE_FOUNDRY: '1' },
+    { CLAUDE_CODE_USE_ANTHROPIC_AWS: '1' },
+    { FAKE_CLAUDE_PROVIDER: 'bedrock' },
+    { FAKE_CLAUDE_PLAN: 'enterprise' },
+  ]) {
+    const { claude, calls } = fixture(t, vars);
+    await assert.rejects(ask(claude).promise, /direct Claude Pro or Max/);
+    assert.ok(!calls().some((c) => c.args[0] === '-p'));
+  }
+  for (const settings of [
+    { env: { ANTHROPIC_BASE_URL: 'https://gateway.example.invalid' } },
+    { env: { ANTHROPIC_API_KEY: 'fixture' } },
+    { apiKeyHelper: 'fixture command' },
+    { policyHelper: 'fixture command' },
+  ]) {
+    const { claude, calls } = fixture(t);
+    await claude.refresh();
+    mkdirSync(claude.env.CLAUDE_CONFIG_DIR);
+    writeFileSync(join(claude.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify(settings));
+    await assert.rejects(ask(claude).promise, /direct Claude Pro or Max/);
+    assert.ok(!calls().some((c) => c.args[0] === '-p'));
+  }
+});
+
+test('an unreadable settings file fails closed without changing it', async (t) => {
+  const { claude, calls } = fixture(t);
+  mkdirSync(claude.env.CLAUDE_CONFIG_DIR);
+  const path = join(claude.env.CLAUDE_CONFIG_DIR, 'settings.json');
+  writeFileSync(path, '{invalid');
+  await assert.rejects(ask(claude).promise, /Could not verify Claude Code settings/);
+  assert.equal(readFileSync(path, 'utf8'), '{invalid');
+  assert.ok(!calls().some((c) => c.args[0] === '-p'));
+});
+
+test('inference uses the exact binary verified by its own auth probe', async (t) => {
+  const { claude, calls } = fixture(t);
+  let locates = 0;
+  claude.locate = async () => (++locates === 1 ? binary : '/unexpected/changed-claude');
+  assert.equal(await ask(claude).promise, '会议 ✅ Alex ships');
+  assert.equal(locates, 1);
+  assert.ok(
+    calls()
+      .find((c) => c.args.includes('status'))
+      .args.includes('--safe-mode'),
+  );
+});
+
+test('a later UI status update cannot approve a failed inference auth probe', async (t) => {
+  const { claude, calls } = fixture(t, { FAKE_CLAUDE_AUTH: 'unreadable' });
+  const check = claude.check.bind(claude);
+  claude.check = async (...args) => {
+    const verified = await check(...args);
+    claude.update({ loggedIn: true, authMethod: 'claude.ai', error: null });
+    return verified;
+  };
+  await assert.rejects(ask(claude).promise, /Could not read/);
+  assert.ok(!calls().some((c) => c.args[0] === '-p'));
+});
+
+test('managed configuration is rejected without overwriting organizational policy', async (t) => {
+  const { claude, calls } = fixture(t);
+  mkdirSync(claude.env.CLAUDE_CONFIG_DIR);
+  const policy = join(claude.env.CLAUDE_CONFIG_DIR, 'remote-settings.json');
+  const original = '{"permissions":{"deny":["Read(secrets)"]}}';
+  writeFileSync(policy, original);
+  await assert.rejects(ask(claude).promise, /managed Claude configurations are not supported/);
+  assert.equal(readFileSync(policy, 'utf8'), original);
+  assert.ok(!calls().some((c) => c.args[0] === '-p'));
 });

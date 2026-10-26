@@ -91,6 +91,7 @@ export function createTestAdapter({ dataDir }) {
   ];
   // Notifications are recorded instead of shown; E2E clicks one through these main-process hooks.
   const reminders = (globalThis.__stillnoteReminders = []);
+  const natives = (globalThis.__stillnoteNatives = []);
   const notifications = (globalThis.__stillnoteNotifications = []);
   // Links are recorded instead of opened in the browser or a meeting app.
   const opened = (globalThis.__stillnoteOpened = []);
@@ -222,7 +223,10 @@ export function createTestAdapter({ dataDir }) {
       log(value);
       child.stdout.write(JSON.stringify(value) + '\n');
     };
+    natives.push({ emit });
+    log({ type: 'native-created' });
     let active;
+    let transcribing;
     let installed = ['en-US'];
     let input = '';
     child.stdin = new Writable({
@@ -243,19 +247,27 @@ export function createTestAdapter({ dataDir }) {
         callback();
       },
     });
-    child.kill = () => child.emit('close', 0);
+    child.kill = (signal) => {
+      log({ type: 'native-killed', signal });
+      child.emit('close', 0);
+    };
     // Another app starting or stopping microphone use, as the helper reports it while watching.
     let watching = false;
     globalThis.__stillnoteMicrophone = (active) => {
       if (watching) emit({ type: 'microphone-activity', active });
       return watching;
     };
-    function handle(command) {
+    async function handle(command) {
       if (command.op === 'watch-microphone') {
         watching = command.enabled !== false;
         if (watching) emit({ type: 'microphone-activity', active: false });
       }
       if (command.op === 'start') {
+        if (transcribing) {
+          emit({ type: 'error', op: 'start', message: 'Fixture helper still transcribing.' });
+          return;
+        }
+        if (scenario.startDelay) await sleep(scenario.startDelay);
         const fixture = scenario.sessions?.[next('session')] ?? { mode: 'normal' };
         if (fixture.mode === 'start-error') {
           emit({ type: 'error', message: 'Fixture microphone permission denied.' });
@@ -268,6 +280,7 @@ export function createTestAdapter({ dataDir }) {
         };
         emit({
           type: 'started',
+          recordingId: command.recordingId,
           systemAudio: active.systemAudio,
           engine: 'speechTranscriber',
           echoCancellation: command.echoCancellation !== 'off',
@@ -391,6 +404,7 @@ export function createTestAdapter({ dataDir }) {
         for (const event of active.fixture.events ?? [])
           emit({ ...event, recordingId: command.recordingId });
       if (command.op === 'stop') {
+        if (scenario.stopDelay) await sleep(scenario.stopDelay);
         if (!active) {
           emit({ type: 'stopped', duration: 0 });
           return;
@@ -423,7 +437,23 @@ export function createTestAdapter({ dataDir }) {
         active = undefined;
         emit({ type: 'stopped', duration, audio: { tracks, diagnostics: { fixture: true } } });
       }
+      if (command.op === 'cancel-transcribe' && scenario.transcribeMode === 'hang-acknowledge') {
+        transcribing = undefined;
+        emit({ type: 'transcription-cancelled', recordingId: command.recordingId });
+      }
       if (command.op === 'transcribe') {
+        if (scenario.transcribeMode?.startsWith('hang-')) {
+          transcribing = command.recordingId;
+          return;
+        }
+        if (scenario.transcribeMode === 'fail') {
+          emit({
+            type: 'retranscription-error',
+            recordingId: command.recordingId,
+            message: 'No candidate for system audio.',
+          });
+          return;
+        }
         const locales = command.locales ?? [command.locale ?? 'en-US'];
         // Several locales (Auto): one candidate per locale; scenario.transcribeCandidates gives
         // each locale's text and confidence, otherwise the first locale is the confident one.
@@ -447,7 +477,12 @@ export function createTestAdapter({ dataDir }) {
                   timestamp: 0,
                 },
               ];
-        emit({ type: 'retranscription-completed', recordingId: command.recordingId, segments });
+        emit({
+          type: 'retranscription-completed',
+          recordingId: command.recordingId,
+          segments,
+          fallbacks: scenario.transcribeFallbacks ?? [],
+        });
       }
       if (command.op === 'devices')
         emit({

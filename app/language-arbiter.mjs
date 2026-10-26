@@ -537,7 +537,7 @@ export function createLiveArbiter({
     flush(now) {
       const actions = [];
       for (const [source, s] of sources) {
-        expire(s, now);
+        actions.push(...expire(s, now));
         for (const event of s.volatile.values())
           if (!s.dropped.has(event.locale))
             s.pending.push({

@@ -1,10 +1,10 @@
 # Validation
 
-## October 25 repository review
+## Current regression checks
 
-Revision `0b6568bd095562584ebd0c60e9f6b972cec7e38a`, reviewed in an isolated worktree. `npm test` passed **164 tests**, the native/renderer build passed, and all **seven** deterministic E2E suites passed. Native readiness, the 11-check capture self-test, and scheduler checks also passed without live audio or recognition. Independent synthetic probes nevertheless reproduced six uncovered behaviors; two additional native findings are based on static control flow. See [the audit](ai/2026-10-25-repository-audit.md) for seven prioritized code findings and a separate deletion-retention caveat. The runtime remains unchanged and these findings are open.
+The fixes and current verification evidence are recorded in [PR #1](https://github.com/Michael-Ma/stillnote/pull/1). The old defect-demonstration script has been replaced by regression tests in `tests/` and the deterministic `test:native-lifecycle` command. See [testing](TESTING.md) for commands and their boundaries.
 
-No live microphone, system-audio capture, actual account inference, model download, signing setup, or installation was performed in this review. The installed Claude CLI was queried for status only with a temporary configuration and synthetic token. The probes are defect demonstrations, not new passing acceptance tests.
+These synthetic checks do not certify live microphone/system-audio behavior, real notifications, account inference, language downloads, signing, or installation. Those require separate device/account acceptance testing.
 
 ## Historical October 20 validation
 

@@ -33,6 +33,7 @@ export function claudeSummary(claude, t = english) {
   if (claude.checking && claude.installed === undefined)
     return t('Looking for Claude Code on this Mac…');
   if (claude.signingIn) return t('Finish signing in to Claude in your browser…');
+  if (claude.error) return t(claude.error);
   if (!claude.installed) return t('Claude Code is not installed on this Mac.');
   if (!claude.loggedIn) return t('Claude Code is installed. Sign in once to use your plan.');
   if (!claude.ready)

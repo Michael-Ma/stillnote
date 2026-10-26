@@ -3,6 +3,7 @@
 import { appendFileSync } from 'node:fs';
 
 const args = process.argv.slice(2);
+const commandArgs = args[0] === '--safe-mode' ? args.slice(1) : args;
 const env = process.env;
 const out = (value) => process.stdout.write(JSON.stringify(value) + '\n');
 const delta = (text) => ({
@@ -51,11 +52,19 @@ function log(extra) {
 if (args[0] === '--version') {
   log({});
   console.log('2.1.299 (Claude Code)');
-} else if (args[0] === 'auth' && args[1] === 'status') {
+} else if (commandArgs[0] === 'auth' && commandArgs[1] === 'status') {
   log({});
   if (env.FAKE_CLAUDE_STATUS_DELAY)
     await new Promise((resolve) => setTimeout(resolve, Number(env.FAKE_CLAUDE_STATUS_DELAY)));
   const auth = env.FAKE_CLAUDE_AUTH ?? 'subscription';
+  if (auth === 'unreadable') {
+    console.log('broken status');
+    process.exit(1);
+  }
+  if (auth === 'failed') {
+    process.stderr.write('auth service unavailable');
+    process.exit(1);
+  }
   if (auth === 'logged-out') {
     out({ loggedIn: false, authMethod: 'none', apiProvider: 'firstParty' });
     process.exitCode = 1;
@@ -63,11 +72,11 @@ if (args[0] === '--version') {
     out({
       loggedIn: true,
       authMethod: auth === 'api_key' ? 'api_key' : 'claude.ai',
-      apiProvider: 'firstParty',
+      apiProvider: env.FAKE_CLAUDE_PROVIDER ?? 'firstParty',
       email: 'fixture@example.invalid',
-      subscriptionType: auth === 'api_key' ? null : 'max',
+      subscriptionType: auth === 'api_key' ? null : (env.FAKE_CLAUDE_PLAN ?? 'max'),
     });
-} else if (args[0] === 'auth' && args[1] === 'login') {
+} else if (commandArgs[0] === 'auth' && commandArgs[1] === 'login') {
   log({});
   const mode = env.FAKE_CLAUDE_LOGIN ?? 'success';
   console.log('Opening https://claude.ai/oauth/authorize?fixture=1 in your browser…');

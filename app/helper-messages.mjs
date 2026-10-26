@@ -6,6 +6,7 @@ import { languageName } from './format.mjs';
 
 const msg = (text) => text;
 const fixed = new Set([
+  msg('No language could transcribe this audio. The existing transcript was preserved.'),
   msg('Allow Calendar access in System Settings → Privacy & Security.'),
   msg('Already recording or finishing a recording.'),
   msg('Audio normalization failed.'),

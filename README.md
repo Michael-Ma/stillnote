@@ -83,7 +83,7 @@ If Claude Code is installed and signed in with a Claude Pro or Max plan, Stillno
 3. If it is installed but signed out, choose **Sign in to Claude**. Sign-in completes in your browser through Anthropic's own flow. You can also run `claude auth login` yourself.
 4. Choose a model (Sonnet by default).
 
-Stillnote runs your own, unmodified `claude` program in print mode with built-in tools disabled and safe mode disabling user customizations, from an empty working folder. Stillnote itself never reads Claude credentials or the keychain and stores no Claude tokens. The CLI retains its own authentication and managed-policy behavior. `ANTHROPIC_API_KEY` is removed from the program's environment, and non-plan sign-ins are refused when their status is checked. **Known limitation:** status is cached and endpoint/provider overrides are not fully isolated, so this is not yet a per-request billing or destination guarantee. See [the repository audit](docs/ai/2026-10-25-repository-audit.md#f2--p1-claudes-subscription-only-and-provider-routing-boundary-is-not-enforced-per-request). See Anthropic's [legal and compliance](https://code.claude.com/docs/en/legal-and-compliance) notes on subscription sign-in.
+Stillnote runs your own, unmodified `claude` program in print mode with built-in tools disabled and safe mode disabling user customizations, from a private working folder. Stillnote never reads Claude credential files or the keychain and stores no Claude tokens. Before each request it checks fresh CLI authentication under the same environment used for inference and verifies routing settings. Only direct Claude Pro/Max connections are supported. Unreadable status/settings, API sign-ins, custom endpoints, other providers, and managed configurations are rejected before sending meeting text; organizational policy is never disabled or rewritten. Inherited `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed, and settings that would restore them are rejected. Claude still controls account eligibility, plan limits, and any extra usage enabled on that account. See Anthropic's [CLI reference](https://code.claude.com/docs/en/cli-reference) and [legal and compliance](https://code.claude.com/docs/en/legal-and-compliance) notes.
 
 ## Take your first note
 
@@ -107,7 +107,7 @@ Choose the microphone and meeting language in **Settings › Recording**. **Auto
 
 Notes, transcripts, and chat history are stored locally in `notebook.sqlite`. This notebook database is not application-encrypted; macOS account access and FileVault are the disk protection boundary. ChatGPT credentials are separately encrypted with Electron's macOS `safeStorage` mechanism and are never included in notebook backups or renderer state. Stillnote holds no Claude credentials; Claude Code keeps its own sign-in.
 
-**AI is online:** selected notes, transcripts, and recent chat context are sent to the chosen provider when you enhance or chat. OpenAI and Anthropic are the intended destinations; Claude CLI endpoint overrides are a known unresolved routing limitation, described above. Automatic enhancement is enabled by default once an AI plan is connected; it can be disabled in Settings. Audio is saved as separate 16 kHz mono PCM WAV files under `recordings/<meeting-id>/<session-id>/`, and is never sent to an AI provider. It remains until you delete the note forever (its audio folder then moves to the macOS Trash) or remove the local files; moving a note to Trash does not remove audio. Delete forever removes the note and its meeting-scoped chat; quoted content can remain in notebook/folder chat and subsequent backups (see the audit's retention caveat). Storage is approximately 110 MiB per hour per source. JSON notebook backups explicitly exclude these audio files; copy the data folder separately to preserve audio.
+**AI is online:** selected notes, transcripts, and recent chat context are sent to the chosen provider when you enhance or chat. ChatGPT requests use OpenAI; the supported Claude configuration uses Anthropic directly, as described above. Automatic enhancement is enabled by default once an AI plan is connected; it can be disabled in Settings. Audio is saved as separate 16 kHz mono PCM WAV files under `recordings/<meeting-id>/<session-id>/`, and is never sent to an AI provider. It remains until you delete the note forever (its audio folder then moves to the macOS Trash) or remove the local files; moving a note to Trash does not remove audio. Delete forever removes the note and its meeting-scoped chat; quoted content can remain in notebook/folder chat and subsequent backups. Storage is approximately 110 MiB per hour per source. JSON notebook backups explicitly exclude these audio files; copy the data folder separately to preserve audio.
 
 ## Development and verification
 
@@ -117,6 +117,7 @@ npm run test:claude      # opt-in: one tiny live request through your own Claude
 npm run test:ui          # original notebook smoke checks
 npm run test:e2e         # reusable notebook/capture/playback/AI/crash-recovery suites
 npm run test:native-scheduler # deterministic native scheduling regression
+npm run test:native-lifecycle # delayed model startup, Stop, and per-source language fallback
 npm run test:native      # real native audio writer with synthetic speech
 npm run test:native -- --long # 60+ second native audio regression
 npm run test:native:recognize # opt-in on-device recognition; macOS permission may be needed
@@ -134,7 +135,6 @@ See [validation results and remaining checks](docs/VALIDATION.md) for the eviden
 
 ## Documentation
 
-- [October 25 repository audit: open findings and reproduction steps](docs/ai/2026-10-25-repository-audit.md)
 - [How it was built, architecture, and core components](docs/ARCHITECTURE.md)
 - [UI/UX decisions and reference mapping](docs/DESIGN.md)
 - [Icon design, source assets, and generation prompt](docs/ICON.md)

@@ -28,6 +28,6 @@ Use Node.js 24 or later. Open **Settings → Open data folder** in Stillnote to 
 
 The database is opened read-only. Notes in Trash are excluded. Responses contain meeting content, which client agents should treat as untrusted source data, not instructions. This server is for local MCP hosts; it is not a remotely hosted ChatGPT connector.
 
-## Known search limitation at 0b6568b
+## Search behavior
 
-The application now indexes CJK characters separately, while this MCP server still builds the older whole-token queries. Multi-character Chinese/Japanese/Korean queries can return no results even when the app finds the note. This is an open regression, documented as F6 in the [repository audit](ai/2026-10-25-repository-audit.md).
+The server and desktop app share query normalization in `app/search.mjs`. Chinese, Japanese and Korean characters are searched as adjacent-token phrases; Latin terms retain prefix search, including mixed-language queries. Quotation marks are escaped for FTS, punctuation-only queries return no results, and empty queries return recent active notes. Limits are clamped to 1–50; Trash is excluded before the empty-query limit is applied. `tests/mcp.test.mjs` exercises the actual stdio protocol against a database written by the current Store.

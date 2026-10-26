@@ -197,7 +197,10 @@ function App() {
       if (e.type === 'audio-level')
         audioLevels.set((levels) => ({ ...levels, [e.source]: { ...e, receivedAt: Date.now() } }));
       if (e.type === 'recording-status') {
-        if (e.recording) setData((d) => (d ? { ...d, recording: e.recording } : d));
+        if (e.recording)
+          setData((d) =>
+            d ? { ...d, recording: e.recording, starting: e.starting ?? d.starting } : d,
+          );
         if (e.recording?.sources) setCaptureSources(e.recording.sources);
         else if (e.source) setCaptureSources((sources) => ({ ...sources, [e.source]: e }));
       }
@@ -670,6 +673,7 @@ function App() {
             'The note in Trash is deleted from Stillnote, with its transcript and chat.',
             'All {n} notes in Trash are deleted from Stillnote, with their transcripts and chats.',
           ),
+      t('Notebook and folder chats, and existing backups, may still contain quoted content.'),
       bytes > 0 &&
         t('{size} of saved audio moves to the macOS Trash.', { size: fileSize(bytes, t.locale) }),
     ]

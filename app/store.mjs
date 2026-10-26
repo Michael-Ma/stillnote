@@ -1,3 +1,4 @@
+import { searchable, searchQuery } from './search.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join, basename, extname } from 'node:path';
@@ -472,37 +473,12 @@ export class Store {
   // unfinished); `any` is for questions, where any word or pair of CJK characters may match and
   // relevance decides.
   search(query, { any = false } = {}) {
-    const terms = text(query, 1000).trim().split(/\s+/).filter(Boolean);
-    if (!terms.length) return this.all().map(({ id }) => ({ id }));
-    const phrase = (tokens, prefix) =>
-      '"' + tokens.join(' ').replaceAll('"', '""') + '"' + (prefix ? '*' : '');
-    const parts = terms.flatMap((term) => {
-      const tokens = searchable(term)
-        .trim()
-        .split(/\s+/)
-        .filter((token) => /[\p{L}\p{N}]/u.test(token));
-      if (!tokens.length) return [];
-      if (!any) return [phrase(tokens, !cjkCharacter.test(tokens.at(-1)))];
-      const out = [];
-      let run = [];
-      const pairs = () => {
-        if (run.length === 1) out.push(phrase(run, false));
-        for (let i = 0; i + 1 < run.length; i++) out.push(phrase(run.slice(i, i + 2), false));
-        run = [];
-      };
-      for (const token of tokens)
-        if (cjkCharacter.test(token)) run.push(token);
-        else {
-          pairs();
-          out.push(phrase([token], true));
-        }
-      pairs();
-      return out;
-    });
-    if (!parts.length) return [];
+    const match = searchQuery(query, { any });
+    if (match === null) return this.all().map(({ id }) => ({ id }));
+    if (!match) return [];
     return this.db
       .prepare('SELECT id FROM meeting_search WHERE meeting_search MATCH ? ORDER BY rank LIMIT 500')
-      .all(parts.join(any ? ' OR ' : ' AND '))
+      .all(match)
       .map(({ id }) => ({ id }));
   }
   folders() {
@@ -710,14 +686,6 @@ const isLocale = (value) =>
 export function validateLocale(value) {
   if (!isLocale(value)) throw new Error('Invalid recognition language.');
 }
-// Chinese, Japanese and Korean text has no spaces between words, so each character is indexed as
-// a token of its own and searched as a phrase; "React" inside a Chinese sentence is then a word.
-const cjkCharacter = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
-const searchable = (value) =>
-  value.replace(
-    /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu,
-    ' $& ',
-  );
 // A backup holds the whole notebook; any other import is one transcript. Checked against the file
 // size before reading, and against the text after.
 export function checkImportSize(path, size) {

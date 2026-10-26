@@ -611,3 +611,30 @@ test('live: a late phrase trimmed away at a seam does not switch the leading lan
   );
   assert.deepEqual([...view.shown.values()], ['Next'], 'English still leads');
 });
+
+test('flush returns expired partial discards even without an intervening timer tick', () => {
+  const arbiter = createLiveArbiter({ locales: ['en-US', 'zh-CN'], startedAt: 0 });
+  const pending = new Map();
+  const apply = (actions) => {
+    for (const action of actions) {
+      if (action.type === 'discard') for (const id of action.segmentIds) pending.delete(id);
+      else if (action.event) pending.set(action.event.segmentId, action.event);
+    }
+  };
+  apply(
+    arbiter.push(
+      {
+        type: 'partial',
+        source: 'microphone',
+        locale: 'en-US',
+        segmentId: 'expired',
+        text: 'obsolete',
+        timestamp: 0,
+      },
+      0,
+    ),
+  );
+  assert.equal(pending.size, 1);
+  apply(arbiter.flush(16_000));
+  assert.equal(pending.size, 0);
+});

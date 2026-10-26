@@ -116,6 +116,7 @@ if (!app.requestSingleInstanceLock()) {
     activeAI,
     testAdapter,
     transcriptionWait,
+    captureReady,
     recording = null,
     starting = false,
     stopping = false,
@@ -202,6 +203,7 @@ if (!app.requestSingleInstanceLock()) {
     systemLanguages: systemLanguages(),
   });
   function releaseCapture() {
+    captureReady?.reject(new Error('Recording ended before audio capture was ready.'));
     recording = null;
     starting = false;
     stopping = false;
@@ -284,7 +286,13 @@ if (!app.requestSingleInstanceLock()) {
       afterCapture?.();
       const then = afterStop;
       afterStop = undefined;
-      then?.();
+      if (then && status === 'completed' && updated && !afterCapture && !quitting && !closing)
+        queueMicrotask(then);
+      else if (then)
+        emit({
+          type: 'error',
+          message: 'The previous recording could not finish. Start the next meeting when ready.',
+        });
     }
     return updated;
   }
@@ -357,6 +365,7 @@ if (!app.requestSingleInstanceLock()) {
       : store.create({ title });
     emit({ type: 'meeting', meeting });
     emit({ type: 'open-meeting', id: meeting.id, record: record && idle() });
+    return meeting;
   }
   // Granola-style meeting detection: another app has used the microphone for a while and
   // Stillnote is not recording. A click records into the calendar meeting under way, or a new note.
@@ -432,6 +441,7 @@ if (!app.requestSingleInstanceLock()) {
     // Writing to a helper that just died fails with EPIPE; its 'close' handler reports it.
     child.stdin.on('error', () => {});
     createInterface({ input: child.stdout }).on('line', (line) => {
+      if (native !== child) return;
       try {
         const parsed = JSON.parse(line);
         // The helper writes English; everything downstream sees the interface language.
@@ -454,9 +464,13 @@ if (!app.requestSingleInstanceLock()) {
           e.recordingId !== transcriptionWait?.recordingId
         )
           return;
+        if (e.type === 'transcription-cancelled') {
+          if (transcriptionWait?.recordingId === e.recordingId) transcriptionWait.cancelled?.();
+          return;
+        }
         if (e.type === 'retranscription-completed') {
           if (transcriptionWait?.recordingId === e.recordingId)
-            transcriptionWait.resolve(e.segments ?? []);
+            transcriptionWait.resolve({ segments: e.segments ?? [], fallbacks: e.fallbacks ?? [] });
           return;
         }
         if (e.type === 'retranscription-error') {
@@ -564,6 +578,8 @@ if (!app.requestSingleInstanceLock()) {
             status: 'recording',
             sources: recording.sources,
           });
+          if (!stopping && captureReady?.recordingId === recording.recordingId)
+            captureReady.resolve();
         }
         if (e.type === 'device-changed' && recording && e.source === 'microphone') {
           recording = {
@@ -668,6 +684,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     child.stderr.on('data', () => {});
     child.on('error', (error) => {
+      if (native !== child) return;
       requests.reject(
         new Error(t('Native helper could not start: {error}', { error: error.message })),
       );
@@ -1066,7 +1083,7 @@ if (!app.requestSingleInstanceLock()) {
           installingLanguage = false;
         }
       });
-      register('record', (id) => {
+      const startRecording = (id) => {
         if (recording || starting) throw new Error('A meeting is already recording.');
         if (transcriptionWait)
           throw new Error('Wait for transcription to finish before recording.');
@@ -1130,7 +1147,8 @@ if (!app.requestSingleInstanceLock()) {
           finishCapture('startfailed');
           throw error;
         }
-      });
+      };
+      register('record', startRecording);
       const stopCapture = () => {
         if (recording && !stopping) {
           stopping = true;
@@ -1148,10 +1166,15 @@ if (!app.requestSingleInstanceLock()) {
           const stuck = recording.recordingId;
           setTimeout(() => {
             if (recording?.recordingId !== stuck || !stopping) return;
+            const stuckHelper = native;
+            native = undefined;
+            stuckHelper?.kill('SIGKILL');
+            requests.reject(new Error('Native helper stopped. Please try again.'));
+            calendarWait?.reject(new Error('Calendar helper stopped.'));
+            calendarWait = undefined;
             try {
               finishCapture('interrupted');
             } finally {
-              native?.kill();
               emit({
                 type: 'error',
                 message:
@@ -1212,44 +1235,81 @@ if (!app.requestSingleInstanceLock()) {
         if (!tracks.length) throw new Error('No saved audio is available for this recording.');
         // Retry uses the current language setting, so it is also how a wrong language is fixed.
         const plan = recognitionPlan(store.settings());
-        const candidates = await new Promise((resolve, reject) => {
-          const timer = setTimeout(
-            () => {
-              transcriptionWait?.reject(
-                new Error('Transcription timed out. The existing transcript was preserved.'),
-              );
-              // The helper stops too, so recording or another retry can start right away.
-              if (native) send({ op: 'cancel-transcribe' });
-            },
-            Math.max(90_000, session.duration * 3000) * plan.locales.length,
-          );
-          const settle = (fn) => (value) => {
+        const result = await new Promise((resolve, reject) => {
+          let grace;
+          const child = helper();
+          const settle = (fn, value) => {
+            if (transcriptionWait !== wait) return;
             clearTimeout(timer);
+            clearTimeout(grace);
             transcriptionWait = undefined;
             fn(value);
           };
-          transcriptionWait = { recordingId, resolve: settle(resolve), reject: settle(reject) };
+          let cancellation;
+          const wait = {
+            recordingId,
+            resolve: (value) => {
+              if (!cancellation) settle(resolve, value);
+            },
+            reject: (error) => {
+              if (!cancellation) settle(reject, error);
+            },
+            cancelled: () => {
+              if (cancellation) settle(reject, cancellation);
+            },
+          };
+          const timer = setTimeout(
+            () => {
+              cancellation = new Error(
+                'Transcription timed out. The existing transcript was preserved.',
+              );
+              // Keep the operation busy until the helper confirms it has exited, or replace that
+              // helper. A delayed completion can no longer replace the previous transcript.
+              grace = setTimeout(() => {
+                if (transcriptionWait !== wait) return;
+                if (native === child) {
+                  native = undefined;
+                  requests.reject(
+                    new Error('Native helper was restarted after a transcription timeout.'),
+                  );
+                  calendarWait?.reject(new Error('Calendar helper restarted.'));
+                  calendarWait = undefined;
+                  child.kill('SIGKILL');
+                }
+                settle(reject, cancellation);
+              }, 2000);
+              try {
+                child.stdin.write(JSON.stringify({ op: 'cancel-transcribe', recordingId }) + '\n');
+              } catch {
+                /* Grace deadline still guarantees recovery. */
+              }
+            },
+            Math.max(90_000, session.duration * 3000) * plan.locales.length,
+          );
+          transcriptionWait = wait;
           try {
-            send({
-              op: 'transcribe',
-              recordingId,
-              context: hints(meeting),
-              locale: plan.locales[0],
-              locales: plan.locales,
-              tracks,
-            });
+            child.stdin.write(
+              JSON.stringify({
+                op: 'transcribe',
+                recordingId,
+                context: hints(meeting),
+                locale: plan.locales[0],
+                locales: plan.locales,
+                tracks,
+              }) + '\n',
+            );
           } catch (error) {
-            transcriptionWait.reject(error);
+            settle(reject, error);
           }
         });
+        const candidates = result.segments;
         // Auto: every track came back once per language; keep the better one per sentence.
         const segments =
           plan.locales.length > 1 ? arbitrateOffline(candidates, plan.locales) : candidates;
-        const diagnostics = assessCoverage(
-          segments,
-          session.duration,
-          session.diagnostics?.sourceStats,
-        );
+        const diagnostics = {
+          ...assessCoverage(segments, session.duration, session.diagnostics?.sourceStats),
+          languageFallbacks: result.fallbacks,
+        };
         const updated = store.replaceRecordingTranscript(
           meetingId,
           recordingId,
@@ -1534,26 +1594,58 @@ if (!app.requestSingleInstanceLock()) {
       // occurrence shortly before it starts, and on click open (or create) its note, record, and
       // join the call it links to.
       const announced = new Set();
+      let reminderOpening = false;
       const openFromReminder = (event) => {
-        try {
-          const settings = store.settings();
-          const action = reminderAction(event, Date.now(), settings.reminderAutoRecord !== false);
-          const other =
-            recording && meetingForEvent(store.all(), eventKey(event))?.id !== recording.id;
-          if (other && action.record) {
-            // Back-to-back meetings: save the meeting being recorded, then record this one.
-            afterStop = () => showMeeting({ event, record: true });
-            showWindow();
-            stopCapture();
-          } else showMeeting({ event, record: action.record });
-          // The call opens last, in front: the meeting app is where Join has to be clicked.
-          if (action.join)
-            openCall(action.join.url).catch((error) =>
-              emit({ type: 'error', message: error.message }),
-            );
-        } catch (error) {
-          console.error('Could not open the reminder note:', error.message);
-        }
+        if (reminderOpening || afterStop) return;
+        const settings = store.settings();
+        const action = reminderAction(event, Date.now(), settings.reminderAutoRecord !== false);
+        const openNext = async () => {
+          if (quitting || closing || rendererGone || afterCapture) return;
+          reminderOpening = true;
+          try {
+            const meeting = showMeeting({ event, record: false });
+            if (!meeting) throw new Error('The meeting window could not open.');
+            if (action.record && idle()) {
+              const active = startRecording(meeting.id);
+              emit({ type: 'recording-status', recording, starting });
+              await new Promise((resolve, reject) => {
+                const settle = (fn) => (value) => {
+                  clearTimeout(timer);
+                  captureReady = undefined;
+                  fn(value);
+                };
+                const timer = setTimeout(() => {
+                  captureReady?.reject(
+                    new Error('Audio capture did not start. Join the call when ready.'),
+                  );
+                  stopCapture();
+                }, 30_000);
+                captureReady = {
+                  recordingId: active.recordingId,
+                  resolve: settle(resolve),
+                  reject: settle(reject),
+                };
+              });
+            } else if (action.record && (starting || stopping || recording?.id !== meeting.id)) {
+              throw new Error(
+                'Finish the current operation before joining and recording this meeting.',
+              );
+            }
+            // Only confirmed raw capture readiness permits the automatic handoff to the call.
+            if (action.join) await openCall(action.join.url);
+          } catch (error) {
+            emit({ type: 'error', message: error.message });
+          } finally {
+            reminderOpening = false;
+          }
+        };
+        const other =
+          recording && meetingForEvent(store.all(), eventKey(event))?.id !== recording.id;
+        if (other && action.record) {
+          afterStop = () => void openNext();
+          showWindow();
+          stopCapture();
+        } else void openNext();
       };
       const remind = () => {
         const settings = store.settings();

@@ -11,6 +11,7 @@ These tests establish application behavior; they do not measure native recogniti
 ```sh
 npm test
 npm run test:native-scheduler # after npm run build; no speech/device permission
+npm run test:native-lifecycle # delayed/failing/pending models, raw WAV persistence and language fallback
 node scripts/e2e.mjs
 node scripts/e2e.mjs --suite notebook --no-build
 node scripts/e2e.mjs --suite capture --no-build
@@ -44,6 +45,8 @@ app's reported `dataDir` before doing work. The runner deletes that disposable d
 and fixture audio after shutdown; report files remain. It does not use `.data`, a packaged
 app's notebook, or existing account credentials. Audio elements are muted when testing
 the playback clock, so synthetic tones do not play through the user's speakers.
+
+Unit/IPC regressions also exercise changed or unreadable Claude auth, rejected custom/managed routing, actual read-only MCP CJK search, expired Auto partials at Stop, retry cancellation acknowledgements and forced helper replacement, stale-process output, and delayed reminder stop/start ordering. The native lifecycle check injects model factories and candidate failures without using Speech services; both synthetic audio sources must persist while initialization is pending and Stop must complete before those factories return.
 
 ## Coverage and boundaries
 

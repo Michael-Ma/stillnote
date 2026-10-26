@@ -144,6 +144,10 @@ export function CaptureDiagnostics({
           </div>
         );
       })}
+      {!starting &&
+        Object.values(sources ?? {}).some((source) => source?.recognition === 'starting') && (
+          <p role="status">{t('Audio is recording while transcription prepares.')}</p>
+        )}
       <p>
         {engine === 'speechTranscriber'
           ? t('On-device · Apple SpeechTranscriber. Levels show incoming audio.')

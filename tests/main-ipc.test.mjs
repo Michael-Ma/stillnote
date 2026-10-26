@@ -76,7 +76,7 @@ async function setup(t, name, sessions, extra = {}) {
   });
   const events = () =>
     readFileSync(join(dir, 'adapter-events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-  return { call, win, events };
+  return { call, win, events, dir };
 }
 test('main IPC consumes the native contract, bounds chat, and closes after 5 seconds', async (t) => {
   const { call, win, events } = await setup(t, 'ipc');
@@ -270,9 +270,11 @@ test('calls open only fixed or calendar links; reminders join and detection prom
   assert.match(reminder.body, /Click to join, take notes and start recording\.$/);
   reminder.open();
   const opening = win.events.findLast((e) => e.type === 'open-meeting');
-  assert.equal(opening.record, true);
+  assert.equal(opening.record, false); // main owns reminder recording and waits for raw capture
   assert.equal(win.events.findLast((e) => e.type === 'meeting').meeting.title, 'Design call');
   await until(() => opened().length === 3);
+  await call('stop');
+  await new Promise((resolve) => setImmediate(resolve));
 
   // Another app keeps the microphone busy: one prompt for the session, matched to the calendar.
   let raised = 0;
@@ -313,6 +315,8 @@ test('calls open only fixed or calendar links; reminders join and detection prom
 });
 test('one note per calendar event, and a reminder during a recording switches to the next', async (t) => {
   const { call, win, events } = await setup(t, 'back-to-back', undefined, {
+    startDelay: 80,
+    stopDelay: 80,
     calendar: [
       {
         id: 'next',
@@ -344,16 +348,30 @@ test('one note per calendar event, and a reminder during a recording switches to
   const [reminder] = globalThis.__stillnoteReminders;
   assert.match(reminder.body, /Click to save “Weekly sync”, then join and record this meeting\.$/);
   reminder.open();
-  // The recording in progress is saved first, then the next meeting is opened to record.
-  await until(async () => (await call('state')).recording === null);
+  assert.equal(events().filter((e) => e.type === 'open-external').length, 0);
+  assert.equal((await call('state')).recording.id, current.id);
+  await until(() => events().some((e) => e.type === 'stopped'));
+  assert.equal(
+    events().filter((e) => e.type === 'open-external').length,
+    0,
+    'B must wait for its own raw capture',
+  );
   const saved = (await call('state')).meetings.find((m) => m.id === current.id);
   assert.equal(saved.recordings[0].status, 'completed');
-  await until(() => win.events.findLast((e) => e.type === 'open-meeting')?.record === true);
+  await until(() => events().some((e) => e.type === 'open-external'));
   const next = (await call('state')).meetings.find((m) => m.title === 'Next call');
+  assert.equal((await call('state')).recording.id, next.id);
   assert.equal(win.events.findLast((e) => e.type === 'open-meeting').id, next.id);
-  assert.ok(
-    events().some((e) => e.type === 'open-external' && e.url.startsWith('https://meet.google.com')),
+  const timeline = events();
+  const stopped = timeline.findIndex((e) => e.type === 'stopped');
+  const secondStart = timeline.findIndex(
+    (e, i) => i > stopped && e.type === 'native-command' && e.op === 'start',
   );
+  const ready = timeline.findIndex((e, i) => i > secondStart && e.type === 'started');
+  const joined = timeline.findIndex((e) => e.type === 'open-external');
+  assert.ok(stopped < secondStart && secondStart < ready && ready < joined);
+  await call('stop');
+  await until(async () => !(await call('state')).recording);
 });
 test('delete forever moves a trashed note’s audio to the Trash, then deletes the note', async (t) => {
   const { call, events } = await setup(t, 'delete-forever');
@@ -378,4 +396,177 @@ test('delete forever moves a trashed note’s audio to the Trash, then deletes t
   assert.match(trashed[0].path, new RegExp(`recordings/${note.id}$`));
   await assert.rejects(call('delete-forever', [note.id]), /not found/);
   await assert.rejects(call('delete-forever', []), /Choose notes/);
+});
+
+const waitFor = async (check) => {
+  for (let i = 0; i < 300 && !(await check()); i++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(await check());
+};
+for (const mode of ['hang-ignore-cancel', 'hang-acknowledge']) {
+  test(`transcription timeout ${mode} recovers before allowing a new recording`, async (t) => {
+    const { call, events } = await setup(t, mode, undefined, { transcribeMode: mode });
+    await call('setting', 'autoEnhance', false);
+    const note = await call('create', { title: 'Timeout recovery' });
+    await call('record', note.id);
+    await waitFor(async () => !(await call('state')).starting);
+    await call('stop');
+    await waitFor(async () => !(await call('state')).recording);
+    const before = (await call('state')).meetings.find((m) => m.id === note.id);
+    const oldHelper = globalThis.__stillnoteNatives[0];
+    const setTimer = globalThis.setTimeout;
+    const mock = t.mock.method(globalThis, 'setTimeout', (fn, ms, ...args) =>
+      setTimer(fn, ms === 90_000 ? 25 : ms === 2000 ? 40 : ms, ...args),
+    );
+    const pending = call('transcribe-recording', note.id, before.recordings[0].id);
+    const rejected = assert.rejects(pending, /timed out.*preserved/);
+    await assert.rejects(call('record', note.id), /Wait for transcription/);
+    await rejected;
+    mock.mock.restore();
+    assert.ok(
+      events().some(
+        (e) => e.op === 'cancel-transcribe' && e.recordingId === before.recordings[0].id,
+      ),
+    );
+    assert.equal(
+      events().some((e) => e.type === 'native-killed'),
+      mode === 'hang-ignore-cancel',
+    );
+    assert.deepEqual(
+      (await call('state')).meetings.find((m) => m.id === note.id).transcript,
+      before.transcript,
+    );
+    await call('record', note.id);
+    await waitFor(async () => !(await call('state')).starting);
+    if (mode === 'hang-ignore-cancel') {
+      oldHelper.emit({ type: 'error', message: 'Stale error from a retired helper' });
+      oldHelper.emit({ type: 'stopped', duration: 999 });
+      oldHelper.emit({
+        type: 'retranscription-completed',
+        recordingId: before.recordings[0].id,
+        segments: [{ text: 'late replacement' }],
+      });
+      assert.ok((await call('state')).recording);
+      assert.equal(events().filter((e) => e.type === 'native-created').length, 2);
+    }
+    await call('stop');
+    await waitFor(async () => !(await call('state')).recording);
+    assert.ok(
+      !(await call('state')).meetings
+        .find((m) => m.id === note.id)
+        .transcript.some((s) => s.text === 'late replacement'),
+    );
+  });
+}
+
+test('Stop discards an expired Auto partial when periodic ticks have not run', async (t) => {
+  const { call, win } = await setup(t, 'stop-expiry', [
+    {
+      mode: 'silent',
+      events: [
+        {
+          type: 'partial',
+          segmentId: 'expired-stop',
+          source: 'microphone',
+          locale: 'en-US',
+          text: 'Obsolete provisional phrase',
+          timestamp: 0,
+        },
+      ],
+    },
+  ]);
+  await call('setting', 'autoEnhance', false);
+  await call('setting', 'autoLocales', ['en-US', 'zh-CN']);
+  await call('setting', 'locale', 'auto');
+  const note = await call('create', { title: 'Expiry at Stop' });
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  await call('record', note.id);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(win.events.some((e) => e.type === 'partial' && e.segmentId === 'expired-stop'));
+  now += 16_000;
+  await call('stop');
+  await new Promise((resolve) => setImmediate(resolve));
+  const saved = (await call('state')).meetings.find((m) => m.id === note.id);
+  assert.deepEqual(saved.transcript, []);
+  assert.ok(
+    win.events.some((e) => e.type === 'partial-discard' && e.segmentIds.includes('expired-stop')),
+  );
+});
+
+test('a reminder never opens the call when its new capture fails', async (t) => {
+  const { call, events, win } = await setup(t, 'handoff-failure', [{ mode: 'start-error' }], {
+    calendar: [
+      {
+        id: 'fail-next',
+        title: 'Unavailable microphone',
+        startIn: 30_000,
+        notes: 'https://meet.google.com/abc-defg-hij',
+      },
+    ],
+  });
+  await call('calendar');
+  await waitFor(() => globalThis.__stillnoteReminders.length === 1);
+  globalThis.__stillnoteReminders[0].open();
+  await waitFor(() => win.events.some((e) => e.type === 'error'));
+  assert.ok(!events().some((e) => e.type === 'open-external'));
+  assert.equal((await call('state')).recording, null);
+});
+
+test('a failed retry preserves old text', async (t) => {
+  const { call } = await setup(t, 'retry-failure', undefined, { transcribeMode: 'fail' });
+  await call('setting', 'autoEnhance', false);
+  const note = await call('create', { title: 'No replacement for one source' });
+  await call('record', note.id);
+  await waitFor(async () => !(await call('state')).starting);
+  await call('stop');
+  await waitFor(async () => !(await call('state')).recording);
+  const before = (await call('state')).meetings.find((m) => m.id === note.id);
+  await assert.rejects(
+    call('transcribe-recording', note.id, before.recordings[0].id),
+    /No candidate/,
+  );
+  assert.deepEqual(
+    (await call('state')).meetings.find((m) => m.id === note.id).transcript,
+    before.transcript,
+  );
+});
+
+test('successful retry keeps explicit language fallback diagnostics', async (t) => {
+  const fallback = { source: 'microphone', locale: 'zh-CN', reason: 'Injected missing language' };
+  const { call } = await setup(t, 'retry-fallback', undefined, { transcribeFallbacks: [fallback] });
+  await call('setting', 'autoEnhance', false);
+  const note = await call('create', { title: 'Fallback metadata' });
+  await call('record', note.id);
+  await waitFor(async () => !(await call('state')).starting);
+  await call('stop');
+  await waitFor(async () => !(await call('state')).recording);
+  const before = (await call('state')).meetings.find((m) => m.id === note.id);
+  const updated = await call('transcribe-recording', note.id, before.recordings[0].id);
+  assert.deepEqual(updated.recordings[0].diagnostics.languageFallbacks, [fallback]);
+});
+
+test('quitting while A saves cancels the pending B handoff', async (t) => {
+  const { call, events } = await setup(t, 'quit-handoff', undefined, {
+    stopDelay: 50,
+    calendar: [
+      {
+        id: 'quit-next',
+        title: 'Next call',
+        startIn: 30_000,
+        notes: 'https://meet.google.com/abc-defg-hij',
+      },
+    ],
+  });
+  await call('setting', 'autoEnhance', false);
+  const note = await call('create', { title: 'Current call' });
+  await call('record', note.id);
+  await waitFor(async () => !(await call('state')).starting);
+  await call('calendar');
+  await waitFor(() => globalThis.__stillnoteReminders.length === 1);
+  globalThis.__stillnoteReminders[0].open();
+  app.emit('before-quit', { preventDefault() {} });
+  await waitFor(() => events().some((e) => e.type === 'stopped'));
+  assert.equal(events().filter((e) => e.type === 'native-command' && e.op === 'start').length, 1);
+  assert.ok(!events().some((e) => e.type === 'open-external'));
 });
