@@ -16,6 +16,7 @@ node scripts/e2e.mjs --suite notebook --no-build
 node scripts/e2e.mjs --suite capture --no-build
 node scripts/e2e.mjs --suite ai --no-build
 node scripts/e2e.mjs --suite recovery --no-build
+node scripts/e2e.mjs --suite calls --no-build
 node scripts/native-audio-test.mjs
 node scripts/native-audio-test.mjs --long
 # Explicit opt-in: can prompt for macOS Speech Recognition permission.
@@ -51,6 +52,7 @@ the playback clock, so synthetic tones do not play through the user's speakers.
 | `notebook`          | Editing/autosave, transcript entry, folders, star, export bytes, backup, duplicate restore, invalid-import atomicity, transcript import, Trash/restore, CJK search, immediate-close persistence, compact chat layout                                                                           | Every native file-picker interaction; OS dialogs are replaced but real handlers write/read files                                |
 | `capture`           | Start/stop state, closing during capture, per-source WAV structure, persisted session metadata/transcripts, decoded audio playback before/after restart, latest-partial flush once, empty/failed recognition retaining audio, sparse coverage, retry, failed-start recovery, multiple sessions | Native device access, actual audio content, speech accuracy, diarization, echo, real-time continuity, native writer correctness |
 | `ai`                | Failed/empty/incomplete stream rejection, cancellation, unchanged prior summary/notes, retry, revisions, citations and persistence                                                                                                                                                             | OAuth, real plan eligibility, usage limits, model quality, remote network reliability                                           |
+| `calls`             | Start Google Meet/Zoom opens the fixed address and records a new note, remembered service, Join & record only for linked events, reminder join copy and click, one detection prompt per call (notification and in-app), none while or after recording, detection off, Chinese labels           | Real browser/Zoom launch, real macOS notifications and their permission, real microphone activity from other apps               |
 | Existing unit tests | Store validation/search/revisions, SSE parser, synthetic OAuth protocol checks                                                                                                                                                                                                                 | Full desktop flow or actual provider behavior                                                                                   |
 | Packaged smoke test | Packaged app launch, preload/store path and bundled native self-test                                                                                                                                                                                                                           | Microphone capture or recognition quality                                                                                       |
 

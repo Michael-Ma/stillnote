@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, Check, Home, Leaf, Plus, Square, X } from 'lucide-react';
+import { ArrowLeft, AudioLines, Check, Home, Leaf, Plus, Square, X } from 'lucide-react';
 import { IconButton, Rich } from './components/Content.jsx';
 import { HomeFeed } from './components/HomeFeed.jsx';
+import { StartMeeting } from './components/StartMeeting.jsx';
 import { Sidebar } from './components/Sidebar.jsx';
 import { NoteToolbar, NoteView } from './components/NoteView.jsx';
 import { EnhancePill, RecordPill } from './components/Dock.jsx';
@@ -11,7 +12,8 @@ import { isCapturing } from './components/RecordingAudio.jsx';
 import { ChatPanel } from './components/ChatPanel.jsx';
 import { SettingsDialog } from './components/SettingsDialog.jsx';
 import { aiView, claudeModels, modelKey } from './ai-view.mjs';
-import { meetingForEvent } from './reminders.mjs';
+import { eventKey, eventNote, meetingForEvent } from './reminders.mjs';
+import { callTitle } from './calls.mjs';
 import { cleanError, date, time, duration, silentState } from './format.mjs';
 import { resolveLanguage, translator } from './i18n/index.mjs';
 import { I18nProvider } from './i18n/react.jsx';
@@ -49,7 +51,9 @@ function App() {
     [captureSources, setCaptureSources] = useState({}),
     [retryingRecording, setRetryingRecording] = useState(null),
     [saving, setSaving] = useState(false),
-    [drafts, setDrafts] = useState({});
+    [drafts, setDrafts] = useState({}),
+    // "Meeting detected": the in-app twin of the notification, until acted on or dismissed.
+    [detected, setDetected] = useState(null);
   const draftRef = useRef({}),
     timers = useRef({}),
     dialogRef = useRef(),
@@ -137,7 +141,15 @@ function App() {
       }
       if (e.type === 'ai') setData((d) => (d ? { ...d, ai: e.ai } : d));
       if (e.type === 'meeting') updateMeeting(e.meeting);
-      if (e.type === 'calendar') setData((d) => (d ? { ...d, calendar: e.events } : d));
+      // A calendar that loads is connected; Settings words the reminder switch from that.
+      if (e.type === 'calendar')
+        setData((d) =>
+          d
+            ? { ...d, calendar: e.events, settings: { ...d.settings, calendarConnected: true } }
+            : d,
+        );
+      if (e.type === 'meeting-detected') setDetected({ event: e.event, at: Date.now() });
+      if (['open-meeting', 'started'].includes(e.type)) setDetected(null);
       // A clicked meeting reminder: open its note and, if enabled, start recording.
       if (e.type === 'open-meeting')
         guard(async () => {
@@ -205,6 +217,12 @@ function App() {
     const t = setTimeout(() => setNotice(''), 5000);
     return () => clearTimeout(t);
   }, [notice]);
+  // A detected meeting nobody acted on stops asking after ten minutes.
+  useEffect(() => {
+    if (!detected) return;
+    const t = setTimeout(() => setDetected(null), 10 * 60_000);
+    return () => clearTimeout(t);
+  }, [detected]);
   useEffect(() => {
     if (modal) dialogRef.current?.showModal();
     else dialogRef.current?.close();
@@ -362,6 +380,27 @@ function App() {
   async function startMeeting(input) {
     const id = await newNote(input);
     if (id && current.current.recording?.id !== id) await record(id);
+  }
+  // Start a meeting: the main process opens a new Google Meet or Zoom call, then it is recorded
+  // in a new note named after the service and the time.
+  async function startCall(service) {
+    const settings = await guard(() => call('start-call', service));
+    if (!settings) return;
+    setData((d) => ({ ...d, settings }));
+    const id = await newNote({ title: callTitle(service, Date.now(), t) });
+    if (id) await record(id);
+  }
+  // Join & record: open the event's call, then record in its note.
+  async function joinMeeting(event) {
+    if (await guard(() => call('join-call', eventKey(event)))) await startMeeting(eventNote(event));
+  }
+  // "Take notes" on a detected meeting: record into the calendar meeting under way, or a new note.
+  async function takeDetectedNotes() {
+    const event = detected?.event;
+    setDetected(null);
+    if (event) return startMeeting(eventNote(event));
+    const id = await newNote({ title: callTitle(null, Date.now(), t) });
+    if (id) await record(id);
   }
   async function openNote(m, panel = null) {
     await guard(async () => {
@@ -541,7 +580,11 @@ function App() {
     setCalendarBusy(true);
     await guard(async () => {
       const events = await call('calendar');
-      setData((d) => ({ ...d, calendar: events }));
+      setData((d) => ({
+        ...d,
+        calendar: events,
+        settings: { ...d.settings, calendarConnected: true },
+      }));
     });
     setCalendarBusy(false);
   }
@@ -788,20 +831,31 @@ function App() {
                   }
                 />
               ) : (
-                <button className="quick-note" onClick={() => newNote()} aria-label={t('New note')}>
-                  <Plus size={14} />
-                  {t('New note')}
-                </button>
+                <>
+                  <StartMeeting
+                    service={data.settings.callService}
+                    disabled={!!data.recording || data.starting}
+                    onStart={startCall}
+                  />
+                  <button
+                    className="quick-note"
+                    onClick={() => newNote()}
+                    aria-label={t('New note')}
+                  >
+                    <Plus size={14} />
+                    {t('New note')}
+                  </button>
+                </>
               )}
             </div>
           </header>
           {error && (
             <div className="error-banner" role="alert">
               <span>{t(error)}</span>
-              {errorState.permission === 'screen-recording' && (
+              {['screen-recording', 'notifications'].includes(errorState.permission) && (
                 <button
                   className="banner-action"
-                  onClick={() => guard(() => call('open-privacy', 'screen-recording'))}
+                  onClick={() => guard(() => call('open-privacy', errorState.permission))}
                 >
                   {t('Open Settings')}
                 </button>
@@ -874,6 +928,7 @@ function App() {
                   calendar={calendar}
                   newNote={newNote}
                   startMeeting={startMeeting}
+                  joinMeeting={joinMeeting}
                   openNote={openNote}
                   importFile={importFile}
                   setQuery={setQuery}
@@ -881,6 +936,29 @@ function App() {
               )}
             </section>
             <div className={'dock-wrap' + (chatOpen ? ' capture-only' : '')}>
+              {detected && !data.recording && (
+                <div className="meeting-prompt" role="status">
+                  <span className="meeting-prompt-mark" aria-hidden="true">
+                    <AudioLines size={16} />
+                  </span>
+                  <span className="meeting-prompt-text">
+                    <strong>{t('Meeting detected — take notes?')}</strong>
+                    <small>
+                      {detected.event?.title || t('Another app is using your microphone.')}
+                    </small>
+                  </span>
+                  <button className="banner-action" onClick={takeDetectedNotes}>
+                    {t('Take notes')}
+                  </button>
+                  <IconButton
+                    label={t('Dismiss')}
+                    className="small"
+                    onClick={() => setDetected(null)}
+                  >
+                    <X size={14} />
+                  </IconButton>
+                </div>
+              )}
               {data.recording && (silent.microphone || silent.system) && (
                 <div className="capture-warnings" role="status">
                   {silent.microphone && (

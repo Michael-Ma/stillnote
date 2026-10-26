@@ -18,12 +18,13 @@ const hook = registerHooks({
   },
 });
 test.after(() => hook.deregister());
-async function setup(t, name, sessions) {
+async function setup(t, name, sessions, extra = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'stillnote-ipc-'));
   const scenario = join(dir, 'scenario.json');
   writeFileSync(
     scenario,
     JSON.stringify({
+      ...extra,
       responses: [{ text: 'Enhanced evidence [1]' }, { text: 'Answer [1]' }],
       sessions: sessions ?? [
         {
@@ -231,4 +232,68 @@ test('withdrawn provisional text is not saved, and track offsets are kept while 
   assert.equal(after.recordings[0].status, 'completed');
   assert.ok(after.transcript.length > 0);
   assert.ok(!after.transcript.some((s) => s.text === 'Hmm'), 'the withdrawn text is not saved');
+});
+test('calls open only fixed or calendar links; reminders join and detection prompts once', async (t) => {
+  const { call, win, events } = await setup(t, 'calls', undefined, {
+    calendar: [
+      {
+        id: 'call',
+        title: 'Design call',
+        startIn: 30_000,
+        notes: 'https://meet.google.com/abc-defg-hij',
+      },
+      { id: 'plain', title: 'Desk time', startIn: 3_600_000 },
+    ],
+  });
+  const opened = () =>
+    events()
+      .filter((e) => e.type === 'open-external')
+      .map((e) => e.url);
+  const until = async (check) => {
+    for (let i = 0; i < 200 && !check(); i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(check());
+  };
+  await assert.rejects(call('start-call', 'javascript:alert(1)'), /Unknown meeting service/);
+  assert.equal((await call('start-call', 'zoom')).callService, 'zoom');
+  assert.deepEqual(opened(), ['https://zoom.us/start/videomeeting']);
+
+  const [design, desk] = await call('calendar');
+  await assert.rejects(call('join-call', 'unknown@2026-10-25'), /no longer in your calendar/);
+  await assert.rejects(call('join-call', `${desk.id}@${desk.start}`), /no Google Meet/);
+  assert.equal(await call('join-call', `${design.id}@${design.start}`), 'meet');
+  assert.equal(opened().at(-1), 'https://meet.google.com/abc-defg-hij');
+
+  // The reminder invites the user to join; its click opens the note and the call.
+  await until(() => globalThis.__stillnoteReminders.length === 1);
+  const reminder = globalThis.__stillnoteReminders[0];
+  assert.match(reminder.body, /Click to join, take notes and start recording\.$/);
+  reminder.open();
+  const opening = win.events.findLast((e) => e.type === 'open-meeting');
+  assert.equal(opening.record, true);
+  assert.equal(win.events.findLast((e) => e.type === 'meeting').meeting.title, 'Design call');
+  await until(() => opened().length === 3);
+
+  // Another app keeps the microphone busy: one prompt for the session, matched to the calendar.
+  await until(() => globalThis.__stillnoteMicrophone?.(false));
+  globalThis.__stillnoteMicrophone(true);
+  await until(() => globalThis.__stillnoteNotifications.some((n) => n.kind === 'detected'));
+  const detected = globalThis.__stillnoteNotifications.find((n) => n.kind === 'detected');
+  assert.equal(detected.title, 'Meeting detected — take notes?');
+  assert.equal(detected.body, 'Click to record “Design call” in Stillnote.');
+  assert.equal(win.events.findLast((e) => e.type === 'meeting-detected').event.id, 'call');
+  globalThis.__stillnoteMicrophone(false);
+  globalThis.__stillnoteMicrophone(true);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.equal(globalThis.__stillnoteNotifications.filter((n) => n.kind === 'detected').length, 1);
+  detected.open();
+  const notes = (await call('state')).meetings.filter((m) => m.eventKey === `call@${design.start}`);
+  assert.equal(notes.length, 1, 'the detected call reuses the occurrence’s note');
+  assert.equal(win.events.findLast((e) => e.type === 'open-meeting').id, notes[0].id);
+
+  // Turning detection off stops the helper watching.
+  await call('setting', 'meetingDetection', false);
+  await until(() =>
+    events().some((e) => e.type === 'native-command' && e.op === 'watch-microphone' && !e.enabled),
+  );
 });

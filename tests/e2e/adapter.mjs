@@ -88,13 +88,23 @@ export function createTestAdapter({ dataDir }) {
   const devices = scenario.devices ?? [
     { uid: 'fixture-mic', name: 'Fixture microphone', isDefault: true, transport: 'built-in' },
   ];
-  // Reminders are recorded instead of shown; E2E clicks one through this main-process hook.
+  // Notifications are recorded instead of shown; E2E clicks one through these main-process hooks.
   const reminders = (globalThis.__stillnoteReminders = []);
+  const notifications = (globalThis.__stillnoteNotifications = []);
+  // Links are recorded instead of opened in the browser or a meeting app.
+  const opened = (globalThis.__stillnoteOpened = []);
   return {
-    notify(reminder) {
-      log({ type: 'reminder', title: reminder.event.title, body: reminder.body });
-      reminders.push(reminder);
+    notify(notification) {
+      log({ type: notification.kind, title: notification.title, body: notification.body });
+      notifications.push(notification);
+      if (notification.kind === 'reminder') reminders.push(notification);
     },
+    async openExternal(url) {
+      log({ type: 'open-external', url });
+      opened.push(url);
+    },
+    // Meeting detection settles and ends within a second, so E2E need not wait minutes.
+    detection: { settle: 300, gap: 1500 },
     createAuth() {
       writeFileSync(join(dataDir, 'adapter-auth-ready.json'), JSON.stringify({ synthetic: true }));
       let connected = scenario.connected !== false;
@@ -226,7 +236,17 @@ export function createTestAdapter({ dataDir }) {
       },
     });
     child.kill = () => child.emit('close', 0);
+    // Another app starting or stopping microphone use, as the helper reports it while watching.
+    let watching = false;
+    globalThis.__stillnoteMicrophone = (active) => {
+      if (watching) emit({ type: 'microphone-activity', active });
+      return watching;
+    };
     function handle(command) {
+      if (command.op === 'watch-microphone') {
+        watching = command.enabled !== false;
+        if (watching) emit({ type: 'microphone-activity', active: false });
+      }
       if (command.op === 'start') {
         const fixture = scenario.sessions?.[next('session')] ?? { mode: 'normal' };
         if (fixture.mode === 'start-error') {

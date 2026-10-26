@@ -54,7 +54,16 @@ All colors, type sizes and radii are CSS custom properties in `app/style.css`, w
 
 ## Meeting reminders
 
-Like Granola, a connected calendar produces a notification about a minute before each timed meeting (all-day events are skipped). Clicking it brings Stillnote forward, opens the note for that occurrence — creating it from the event's title and attendees the first time — and starts recording unless that is turned off in Settings › Recording. Each occurrence of a recurring meeting gets its own reminder and note; Coming up reopens the same note.
+Like Granola, a connected calendar produces a notification about a minute before each timed meeting (all-day events are skipped). Clicking it brings Stillnote forward, opens the note for that occurrence — creating it from the event's title and attendees the first time — and starts recording unless that is turned off in Settings › Recording. When the event links to a Google Meet, Zoom or Teams call, the reminder says “Click to join…” and the click opens the call last, so the meeting app ends up in front where Join is clicked. A reminder clicked from Notification Center after the meeting ended only opens the note. Each occurrence of a recurring meeting gets its own reminder and note; Coming up reopens the same note. The Dock icon bounces once with each prompt, and if macOS refuses the notification Stillnote says so once, with Open Settings.
+
+## Starting and joining calls
+
+- **Start meeting** sits beside New note on Home: one pill split into “Start Google Meet” (or Zoom, whichever was used last) and a chevron listing both services with the address each opens. One click opens a new call in the default browser or meeting app and records it, with meeting audio, in a new note titled “Google Meet · 2:05 PM”. Zoom starts through zoom.us's own Host-a-meeting link (`zoom.us/start/videomeeting`), the supported way to start an instant meeting without Zoom's retired client URL scheme or an OAuth integration.
+- **Join & record** appears on Coming up rows whose event links to a call (marked with the service name next to the time): dark when the meeting is about to start, on hover otherwise. It opens the call and records in the occurrence's note. Rows without a link keep Take notes and Start now.
+
+## Meeting detection
+
+When another app starts using the microphone and keeps it for a few seconds while Stillnote is not recording, Stillnote asks “Meeting detected — take notes?”: a notification and a pill above the dock in the dock's own shape, naming the calendar meeting under way when there is one. Take notes (or clicking the notification) records into that meeting's note, or a new “Meeting · 2:05 PM” note. Each call asks once at most, and a call Stillnote is already recording never asks. **Detect meetings** in Settings › Recording turns it off (on by default, as in Granola).
 
 ## AI providers in the UI
 

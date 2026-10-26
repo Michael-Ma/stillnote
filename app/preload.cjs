@@ -14,6 +14,8 @@ const channels = [
   'recording-url',
   'transcribe-recording',
   'calendar',
+  'start-call',
+  'join-call',
   'audio-devices',
   'languages',
   'install-language',

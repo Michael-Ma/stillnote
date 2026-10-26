@@ -236,6 +236,13 @@ test('settings validate device, echo cancellation, and widened BCP-47 locales', 
   for (const value of ['auto', 'on', 'off']) store.setting('echoCancellation', value);
   for (const value of [true, null, 'maybe'])
     assert.throws(() => store.setting('echoCancellation', value));
+  // Start meeting remembers its service; meeting detection is a plain switch.
+  for (const value of ['meet', 'zoom']) store.setting('callService', value);
+  for (const value of ['teams', 'https://zoom.us', null])
+    assert.throws(() => store.setting('callService', value), /meeting service/);
+  store.setting('meetingDetection', false);
+  assert.throws(() => store.setting('meetingDetection', 'off'), /Invalid preference/);
+  assert.equal(store.settings().callService, 'zoom');
 });
 test('context hints combine names, title, folder, and bounded distinctive terms', () => {
   assert.deepEqual(contextHints({ notes: 'カタカナ 한국어' }), ['カタカナ', '한국어']);

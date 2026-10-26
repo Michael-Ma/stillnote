@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join, basename, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { startableServices } from './calls.mjs';
 
 // Each template states the meeting's purpose, then its sections, as Granola's template guide
 // suggests; enhance.mjs supplies the shared writing rules.
@@ -77,6 +78,8 @@ const portableSettings = new Set([
   'autoEnhance',
   'meetingReminders',
   'reminderAutoRecord',
+  'meetingDetection',
+  'callService',
   'templates',
   'recipes',
 ]);
@@ -657,12 +660,16 @@ export function validateSetting(key, value) {
   } else if (key === 'claudePath') {
     if (value !== null && !(typeof value === 'string' && /^\/.{1,999}$/s.test(value)))
       throw new Error('Invalid Claude Code path.');
+  } else if (key === 'callService') {
+    // The service the Start meeting button opens.
+    if (!startableServices.includes(value)) throw new Error('Invalid meeting service.');
   } else if (
     [
       'systemAudio',
       'autoEnhance',
       'meetingReminders',
       'reminderAutoRecord',
+      'meetingDetection',
       'calendarConnected',
     ].includes(key)
   ) {

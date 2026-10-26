@@ -37,7 +37,22 @@ import {
   validateSetting,
 } from './store.mjs';
 import { ChatGPT } from './auth.mjs';
-import { dueReminders, eventKey, meetingForEvent, reminderBody } from './reminders.mjs';
+import {
+  dueReminders,
+  eventKey,
+  eventNote,
+  meetingForEvent,
+  reminderAction,
+  reminderBody,
+} from './reminders.mjs';
+import {
+  callServices,
+  callTitle,
+  currentEvent,
+  meetingDetector,
+  meetingLink,
+  startableServices,
+} from './calls.mjs';
 import { ClaudeCode } from './providers/claude-code.mjs';
 import { enhanceInstructions, enhanceRequest } from './enhance.mjs';
 import { arbitrateOffline, createLiveArbiter, recognitionPlan } from './language-arbiter.mjs';
@@ -101,8 +116,19 @@ if (!app.requestSingleInstanceLock()) {
     afterCapture,
     // Auto language: decides between the candidate languages while a recording runs.
     languageArbiter,
-    languageTick;
+    languageTick,
+    // Set once Stillnote is quitting, so nothing starts the helper again.
+    quitting = false,
+    // Meeting detection: the helper process told to watch the microphone (and when), and the
+    // debounce.
+    watching,
+    watchedAt = 0,
+    detectTimer,
+    detector = meetingDetector(),
+    notificationsBlocked = false;
   const pendingPartials = new Map();
+  // Notifications on screen; a reference keeps each click handler from being garbage collected.
+  const shown = new Set();
   let calendarWait;
   const emit = (event) => {
     if (win && !win.isDestroyed() && !win.webContents.isDestroyed() && !rendererGone)
@@ -243,6 +269,111 @@ if (!app.requestSingleInstanceLock()) {
     }
     return updated;
   }
+  const idle = () => !recording && !starting && !stopping && !transcriptionWait;
+  // Web links open in the user's browser or meeting app; the test adapter records them instead.
+  const openExternal = (url) =>
+    testAdapter?.openExternal ? testAdapter.openExternal(url) : shell.openExternal(url);
+  async function openCall(url) {
+    try {
+      await openExternal(url);
+    } catch (error) {
+      throw new Error(t('Could not open the meeting link: {error}', { error: error.message }));
+    }
+  }
+  // A macOS notification that runs `open` when clicked. Tests record it instead of showing it.
+  function notify({ kind, title, body, event }, open) {
+    if (testAdapter) {
+      testAdapter.notify?.({ kind, title, body, event, open });
+      return;
+    }
+    // The Dock icon bounces once too, for when banners are off or go unnoticed.
+    if (win && !win.isDestroyed() && !win.isFocused()) app.dock?.bounce('informational');
+    if (!Notification.isSupported()) return;
+    const notification = new Notification({ title, body });
+    shown.add(notification);
+    notification.on('click', () => {
+      shown.delete(notification);
+      open();
+    });
+    notification.on('close', () => shown.delete(notification));
+    // macOS refuses when notifications are off for Stillnote: say so once, with a way to fix it.
+    notification.on('failed', () => {
+      shown.delete(notification);
+      if (notificationsBlocked) return;
+      notificationsBlocked = true;
+      emit({
+        type: 'warning',
+        permission: 'notifications',
+        message:
+          'macOS didn’t show Stillnote’s meeting notification. Allow notifications for Stillnote in System Settings → Notifications.',
+      });
+    });
+    notification.show();
+  }
+  function showWindow() {
+    if (!win || win.isDestroyed()) return false;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    app.focus({ steal: true });
+    return true;
+  }
+  // Brings Stillnote forward on a calendar occurrence's note (created the first time) or on a new
+  // note, and records when asked and nothing else is in progress.
+  function showMeeting({ event, title, record }) {
+    if (!showWindow()) return;
+    const meeting = event
+      ? (meetingForEvent(store.all(), eventKey(event)) ?? store.create(eventNote(event)))
+      : store.create({ title });
+    emit({ type: 'meeting', meeting });
+    emit({ type: 'open-meeting', id: meeting.id, record: record && idle() });
+  }
+  // Granola-style meeting detection: another app has used the microphone for a while and
+  // Stillnote is not recording. A click records into the calendar meeting under way, or a new note.
+  function promptDetected() {
+    const event = currentEvent(calendarEvents, Date.now());
+    emit({ type: 'meeting-detected', event });
+    const title = t('Meeting detected — take notes?');
+    const body = event
+      ? t('Click to record “{title}” in Stillnote.', { title: event.title })
+      : t('Click to open Stillnote and start recording.');
+    notify({ kind: 'detected', title, body, event }, () => {
+      try {
+        // Clicked from Notification Center after the call ended: open the meeting, don't record.
+        const live = detector.active();
+        if (event || live)
+          showMeeting({ event, title: callTitle(null, Date.now(), tr()), record: live });
+        else showWindow();
+      } catch (error) {
+        console.error('Could not open the detected meeting:', error.message);
+      }
+    });
+  }
+  function detect() {
+    clearTimeout(detectTimer);
+    const now = Date.now();
+    if (
+      detector.due(now, !!(recording || starting || stopping)) &&
+      store.settings().meetingDetection !== false
+    )
+      promptDetected();
+    const wait = detector.next(now);
+    if (wait !== null) detectTimer = setTimeout(detect, wait + 50).unref?.();
+  }
+  // Detection runs in the helper, which is started for it. The reminder tick retries, so a helper
+  // started for something else is told to watch, and one that stopped is replaced, at most every
+  // five minutes so a broken helper cannot loop.
+  function watchMicrophone({ retry = false } = {}) {
+    if (quitting || store.settings().meetingDetection === false || (native && watching === native))
+      return;
+    if (retry && !native && Date.now() - watchedAt < 5 * 60_000) return;
+    watchedAt = Date.now();
+    try {
+      send({ op: 'watch-microphone', enabled: true });
+      watching = native;
+    } catch (error) {
+      console.error('Meeting detection is unavailable:', error.message);
+    }
+  }
   function helper() {
     if (native) return native;
     const binary = app.isPackaged
@@ -266,6 +397,11 @@ if (!app.requestSingleInstanceLock()) {
         if (requests.receive(e)) return;
         if (e.type === 'language-progress') {
           emit(e);
+          return;
+        }
+        if (e.type === 'microphone-activity') {
+          detector.observe(e.active === true, Date.now());
+          detect();
           return;
         }
         if (
@@ -702,6 +838,7 @@ if (!app.requestSingleInstanceLock()) {
           pathToFileURL(resolve(process.env.STILLNOTE_TEST_ADAPTER)).href
         );
         testAdapter = await adapterModule.createTestAdapter({ dataDir: app.getPath('userData') });
+        detector = meetingDetector(testAdapter.detection);
       }
       for (const meeting of store.all(true)) {
         for (const session of meeting.recordings) {
@@ -842,6 +979,11 @@ if (!app.requestSingleInstanceLock()) {
       register('setting', (key, value) => {
         const settings = store.setting(key, value);
         if (key === 'uiLanguage') buildMenu();
+        if (key === 'meetingDetection' && value) watchMicrophone();
+        else if (key === 'meetingDetection') {
+          if (native) send({ op: 'watch-microphone', enabled: false });
+          watching = undefined;
+        }
         return settings;
       });
       register('transcript', (id, segment) => store.append(id, segment));
@@ -902,6 +1044,8 @@ if (!app.requestSingleInstanceLock()) {
           },
         };
         pendingPartials.clear();
+        // A call already under way is being recorded now: it never prompts "Meeting detected".
+        detect();
         if (plan.locales.length > 1) {
           languageArbiter = createLiveArbiter({ locales: plan.locales, startedAt: Date.now() });
           languageTick = setInterval(
@@ -1058,6 +1202,33 @@ if (!app.requestSingleInstanceLock()) {
         return updated;
       });
       register('calendar', () => loadCalendar());
+      // Start a meeting: a new Google Meet or Zoom call opens in the browser or meeting app, and
+      // the renderer records it in a new note. Only these fixed addresses can be opened.
+      register('start-call', async (service) => {
+        if (!startableServices.includes(service)) throw new Error('Unknown meeting service.');
+        if (recording || starting || stopping) throw new Error('A meeting is already recording.');
+        store.setting('callService', service);
+        await openCall(callServices[service].start);
+        return store.settings();
+      });
+      // Join & record: opens the call a calendar event links to, then the renderer records in the
+      // event's note. The link is read from Stillnote's own copy of the event, never the renderer.
+      register('join-call', async (key) => {
+        const event = calendarEvents.find((e) => eventKey(e) === key);
+        if (!event)
+          throw new Error(
+            'This meeting is no longer in your calendar. Refresh the calendar and try again.',
+          );
+        const link = meetingLink(event);
+        if (!link) throw new Error('This meeting has no Google Meet, Zoom or Teams link.');
+        if (
+          (recording || starting || stopping) &&
+          recording?.id !== meetingForEvent(store.all(), key)?.id
+        )
+          throw new Error('A meeting is already recording.');
+        await openCall(link.url);
+        return link.service;
+      });
       register('account', async (action, id) => {
         if (activeAI) throw new Error('Stop the current AI response before changing accounts.');
         if (action !== 'models') models.clear();
@@ -1073,7 +1244,7 @@ if (!app.requestSingleInstanceLock()) {
         throw new Error('Unknown account action.');
       });
       register('usage', () =>
-        shell.openExternal(
+        openExternal(
           activeId() === 'claude'
             ? 'https://claude.ai/settings/usage'
             : 'https://chatgpt.com/settings/usage',
@@ -1124,8 +1295,7 @@ if (!app.requestSingleInstanceLock()) {
           return aiNow();
         }
         if (action === 'models') return listModels(activeId());
-        if (action === 'install-help')
-          return shell.openExternal('https://code.claude.com/docs/en/setup');
+        if (action === 'install-help') return openExternal('https://code.claude.com/docs/en/setup');
         throw new Error('Unknown AI provider action.');
       });
       register('ai', ai);
@@ -1166,9 +1336,10 @@ if (!app.requestSingleInstanceLock()) {
         const url = {
           'screen-recording':
             'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+          notifications: 'x-apple.systempreferences:com.apple.Notifications-Settings.extension',
         }[pane];
         if (!url) throw new Error('Unknown settings pane.');
-        return shell.openExternal(url);
+        return openExternal(url);
       });
       register('finish-close', () => {
         if (recording || starting || transcriptionWait) return;
@@ -1178,6 +1349,7 @@ if (!app.requestSingleInstanceLock()) {
       });
       win.webContents.on('render-process-gone', () => {
         rendererGone = true;
+        quitting = true;
         clearTimeout(closeTimer);
         closing = true;
         try {
@@ -1222,6 +1394,7 @@ if (!app.requestSingleInstanceLock()) {
           quitAfterSaving();
           return;
         }
+        quitting = true;
         // A retry only replaces the transcript when it finishes, so stopping it loses nothing.
         transcriptionWait?.reject(
           new Error(
@@ -1249,62 +1422,35 @@ if (!app.requestSingleInstanceLock()) {
         return win.loadFile(page);
       });
       // Granola-style reminders: refresh a connected calendar in the background, announce each
-      // occurrence shortly before it starts, and open (or create) its note on click.
-      const announced = new Set(),
-        shown = new Set();
+      // occurrence shortly before it starts, and on click open (or create) its note, record, and
+      // join the call it links to.
+      const announced = new Set();
       const openFromReminder = (event) => {
         try {
-          openReminderNote(event);
+          const settings = store.settings();
+          const action = reminderAction(event, Date.now(), settings.reminderAutoRecord !== false);
+          showMeeting({ event, record: action.record });
+          // The call opens last, in front: the meeting app is where Join has to be clicked.
+          if (action.join)
+            openCall(action.join.url).catch((error) =>
+              emit({ type: 'error', message: error.message }),
+            );
         } catch (error) {
           console.error('Could not open the reminder note:', error.message);
         }
-      };
-      const openReminderNote = (event) => {
-        if (!win || win.isDestroyed()) return;
-        if (win.isMinimized()) win.restore();
-        win.show();
-        app.focus({ steal: true });
-        const key = eventKey(event);
-        const meeting =
-          meetingForEvent(store.all(), key) ??
-          store.create({
-            title: String(event.title ?? '').slice(0, 300),
-            participants: String(event.participants ?? '').slice(0, 2_000_000),
-            notes: event.notes ? `Meeting context\n${event.notes}` : '',
-            eventKey: key,
-          });
-        emit({ type: 'meeting', meeting });
-        emit({
-          type: 'open-meeting',
-          id: meeting.id,
-          record:
-            store.settings().reminderAutoRecord !== false &&
-            !recording &&
-            !starting &&
-            !stopping &&
-            !transcriptionWait,
-        });
       };
       const remind = () => {
         const settings = store.settings();
         if (settings.meetingReminders === false) return;
         for (const event of dueReminders(calendarEvents, Date.now(), announced)) {
           announced.add(eventKey(event));
-          const body = reminderBody(event, Date.now(), settings.reminderAutoRecord !== false, tr());
-          if (testAdapter) {
-            testAdapter.notify?.({ event, body, open: () => openFromReminder(event) });
+          // Already joined and recording from Home: nothing to remind about.
+          if (recording && meetingForEvent(store.all(), eventKey(event))?.id === recording.id)
             continue;
-          }
-          if (!Notification.isSupported()) continue;
-          // Keep a reference so the click handler survives garbage collection.
-          const notification = new Notification({ title: event.title, body });
-          shown.add(notification);
-          notification.on('click', () => {
-            shown.delete(notification);
-            openFromReminder(event);
-          });
-          notification.on('close', () => shown.delete(notification));
-          notification.show();
+          const body = reminderBody(event, Date.now(), settings.reminderAutoRecord !== false, tr());
+          notify({ kind: 'reminder', title: event.title, body, event }, () =>
+            openFromReminder(event),
+          );
         }
       };
       const refreshCalendar = () => {
@@ -1313,8 +1459,17 @@ if (!app.requestSingleInstanceLock()) {
           loadCalendar({ quiet: true }).catch(() => {});
       };
       refreshCalendar();
+      watchMicrophone();
       setInterval(refreshCalendar, 5 * 60_000).unref();
-      setInterval(remind, testAdapter ? 250 : 15_000).unref();
+      // After sleep the calendar may have changed; refresh before the next reminder is due.
+      powerMonitor.on('resume', refreshCalendar);
+      setInterval(
+        () => {
+          remind();
+          watchMicrophone({ retry: true });
+        },
+        testAdapter ? 250 : 15_000,
+      ).unref();
     })
     .catch((error) => {
       dialog.showErrorBox('Stillnote could not start', error.message);
