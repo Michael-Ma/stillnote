@@ -127,6 +127,10 @@ export async function capture(h) {
   let saved = (await h.state()).meetings.find((m) => m.id === first.id);
   assert.equal(saved.recordings[0].status, 'completed', 'Closing must save the active capture');
   await h.open(first.title);
+  // The saved transcript and audio are each labelled in the dock with their counts.
+  const dock = h.page.locator('.dock');
+  await dock.getByRole('button', { name: 'Transcript, 2 segments', exact: true }).waitFor();
+  await dock.getByRole('button', { name: 'Recordings, 1 saved', exact: true }).waitFor();
   assert.deepEqual(
     saved.transcript.map((s) => s.text),
     [
@@ -188,7 +192,12 @@ export async function capture(h) {
 
   const partial = await h.create('E2E partial recognition');
   await start(h);
-  await h.sheet('Transcript');
+  // While recording, the live transcript has its own labelled button next to the timer.
+  await h.page
+    .locator('.record-pill.recording')
+    .getByRole('button', { name: /^Transcript/ })
+    .click();
+  await h.page.getByRole('tab', { name: /^Transcript/, selected: true }).waitFor();
   await h.page
     .getByText('A partially recognized sentence survives stop.', { exact: true })
     .waitFor();

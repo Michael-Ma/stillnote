@@ -175,6 +175,11 @@ const button = (name) => {
   console.log(`  → ${name}`);
   return page.getByRole('button', { name, exact: true });
 };
+// The dock's Transcript and Recordings buttons are named with their counts.
+const dockButton = (name) => {
+  console.log(`  → ${name} (dock)`);
+  return page.locator('.dock').getByRole('button', { name: new RegExp(`^${name}`) });
+};
 // Playwright's recordVideo stalls Electron's renderer, so the demo records a CDP screencast:
 // one JPEG per painted frame, timed by the compositor, stitched into a GIF afterwards.
 const framesDir = join(dataDir, 'frames');
@@ -217,11 +222,11 @@ try {
   await button('Start recording').click();
   await wait(5200);
   await type(notes, 'Record button moves to the dock\n');
-  await button('Show transcript').click();
+  await dockButton('Transcript').click();
   await page.getByText(transcript.at(-1).text, { exact: true }).waitFor();
   await wait(1200);
   await shot('recording');
-  await button('Hide transcript').click();
+  await dockButton('Transcript').click();
   await type(notes, 'Alex sends revised flow Friday');
   await wait(800);
   await button('Stop recording').click();
@@ -232,10 +237,8 @@ try {
   await wait(1800);
   await shot('note');
 
-  await button('Show transcript').click();
-  await wait(1000);
-  await page.getByRole('tab', { name: 'Recordings' }).click();
-  await wait(1200);
+  await dockButton('Recordings').click();
+  await wait(2200);
   await shot('recordings');
   await button('Close transcript').click();
 

@@ -8,7 +8,10 @@ export async function notebook(h) {
   const original = 'Alex will ship the revised onboarding flow on Friday. 我们保存原始记录。';
   const meeting = await h.create(title, original);
   await page.getByRole('textbox', { name: 'Participants', exact: true }).fill('Alex, Sam');
-  await h.sheet('Transcript');
+  // Before there is a transcript, its dock button opens the sheet's explanation and paste action.
+  const dock = page.locator('.dock');
+  await dock.getByRole('button', { name: 'Transcript', exact: true }).click();
+  await page.getByRole('heading', { name: 'No transcript yet', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Paste a transcript', exact: true }).click();
   await page
     .getByLabel('Transcript', { exact: true })
@@ -19,6 +22,21 @@ export async function notebook(h) {
   await page.getByLabel('Folder name', { exact: true }).fill('E2E product');
   await page.getByRole('button', { name: 'Create folder', exact: true }).click();
   await h.open(title);
+  // A note with a transcript says so in the dock, with its count, and opens it in one click.
+  const sheet = page.locator('.transcript-sheet');
+  const transcript = dock.getByRole('button', { name: 'Transcript, 1 segment', exact: true });
+  assert.equal(await transcript.getAttribute('aria-expanded'), 'false');
+  assert.match(await transcript.getAttribute('title'), /⌘⇧T/);
+  await transcript.click();
+  await page.getByRole('tab', { name: /^Transcript/, selected: true }).waitFor();
+  assert.equal(await sheet.locator('.transcript-segment').count(), 1);
+  assert.equal(await transcript.getAttribute('aria-expanded'), 'true');
+  await transcript.click();
+  await sheet.waitFor({ state: 'hidden' });
+  await page.keyboard.press('Meta+Shift+KeyT');
+  await page.getByRole('tab', { name: /^Transcript/, selected: true }).waitFor();
+  await page.keyboard.press('Meta+Shift+KeyT');
+  await sheet.waitFor({ state: 'hidden' });
   await page
     .getByLabel('Move note to folder', { exact: true })
     .selectOption({ label: 'E2E product' });

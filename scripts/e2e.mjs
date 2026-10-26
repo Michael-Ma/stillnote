@@ -70,6 +70,7 @@ const suites = {
     checks: [
       'create/edit/save',
       'transcript entry',
+      'dock Transcript button and ⌘⇧T open the sheet',
       'folder/star',
       'Markdown export',
       'backup',
@@ -90,6 +91,7 @@ const suites = {
       'closing during recording saves it',
       'two-source WAV artifacts',
       'persisted transcript',
+      'transcript and recordings labelled in the dock',
       'audio decoding/playback',
       'restart playback',
       'last partial persisted once',
