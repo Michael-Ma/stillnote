@@ -27,7 +27,8 @@
     "test:native-scheduler": "node scripts/native-scheduler-test.mjs",
     "test:native:languages": "node scripts/language-eval.mjs",
     "test:claude": "node scripts/claude-smoke.mjs",
-    "test:native-lifecycle": "node scripts/native-lifecycle-test.mjs"
+    "test:native-lifecycle": "node scripts/native-lifecycle-test.mjs",
+    "setup:mac": "bash scripts/setup-mac.sh"
   },
   "build": {
     "appId": "local.stillnote.app",

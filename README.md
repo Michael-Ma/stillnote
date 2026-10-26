@@ -10,6 +10,35 @@ Stillnote keeps the core loop small: **open a note â†’ capture a conversation â†
 
 <sub>Real app UI with fictional meetings and synthetic audio, recognition and AI. The meeting-end timing is compressed; real floating-panel screenshots are composited over the recording. This demonstrates the workflow, not recognition accuracy or real account access. Regenerate with `npm run demo`; regenerate the still screenshots with `npm run screenshots`.</sub>
 
+## Use on your Mac
+
+**1. Install the prerequisites once.** macOS 26 or later is recommended. Install [Node.js 24 or later](https://nodejs.org/en/download), then open **Terminal** and run:
+
+```sh
+xcode-select --install
+```
+
+Finish Apple's tools installer before continuing. Already have the tools? Make sure they're up to date; the setup script will tell you if anything is missing.
+
+**2. Install Stillnote.** Paste these commands into Terminal:
+
+```sh
+git clone https://github.com/Michael-Ma/stillnote.git
+cd stillnote
+bash scripts/setup-mac.sh
+```
+
+The script installs dependencies, builds and checks the app, then puts **Stillnote** in **Applications**. Your existing notes stay in place. You don't need an Apple developer account.
+
+**3. Open Stillnote from Applications.** In **Settings**, connect ChatGPT or Claude for AI features. Choose **New note â†’ Record**, allow microphone and system-audio access when asked, then stop recording and choose **Enhance notes**. You can record and take notes without connecting AI; no API key is needed.
+
+**To update later:** in the same `stillnote` folder, run:
+
+```sh
+git pull --ff-only
+bash scripts/setup-mac.sh
+```
+
 ## Core capabilities
 
 - **Meeting capture:** microphone plus optional system audio, without a meeting bot.
@@ -43,7 +72,9 @@ Stillnote keeps the core loop small: **open a note â†’ capture a conversation â†
 
 Team workspaces, cloud synchronization, public sharing links, mobile apps, CRM integrations, and automatic identification of every remote speaker are intentionally outside this version's scope.
 
-## Run locally
+## Development setup
+
+For a normal installation, use [Use on your Mac](#use-on-your-mac) above. These are the manual development and signing options.
 
 Requires Node.js 24 or later and a Swift/Xcode toolchain with the macOS 26 SDK or newer (`xcode-select --install` installs the Command Line Tools available for your Mac). The app targets macOS 13 or later; modern SpeechTranscriber and in-app language downloads require macOS 26 or later. The build uses the local Mac's CPU architecture. The current implementation was built and checked on Apple Silicon; Intel and macOS 13 have not been separately exercised.
 
@@ -143,6 +174,7 @@ npm run test:native:recognize # opt-in on-device recognition; macOS permission m
 npm run test:native -- --long --recognize --streamed --dual-source # both sources, synthetic audio
 npm run format:check     # source formatting
 npm run build            # Swift helper, Electron main/preload, and renderer
+npm run setup:mac        # build, test and install in Applications
 npm run package          # standalone macOS app
 npm run screenshots      # README still screenshots from fictional fixtures
 npm run demo             # build + capture + MP4/GIF/poster; requires ffmpeg and ffprobe
