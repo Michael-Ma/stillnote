@@ -2027,7 +2027,8 @@ let transcriptionStalled =
   "Transcription stopped because it was taking too long. The existing transcript was preserved."
 
 // A failed locale does not discard a successful candidate, but a source with no usable
-// candidate must fail the whole replacement so its previous transcript survives.
+// candidate must fail the whole replacement so its previous transcript survives. With one
+// language, its own reason (which language to download, say) is the error.
 @MainActor
 func recognizeCandidates(
   _ locales: [String], run: (Int, String) async throws -> [[String: Any]]
@@ -2035,6 +2036,7 @@ func recognizeCandidates(
   var segments: [[String: Any]] = []
   var failures: [[String: String]] = []
   var successes = 0
+  var firstError: Error?
   for (pass, locale) in locales.enumerated() {
     try Task.checkCancellation()
     if transcriptionCancelled { throw CancellationError() }
@@ -2043,10 +2045,12 @@ func recognizeCandidates(
       successes += 1  // A valid silent track is a successful empty result.
     } catch {
       if transcriptionCancelled || error is CancellationError { throw error }
+      firstError = firstError ?? error
       failures.append(["locale": locale, "reason": error.localizedDescription])
     }
   }
   guard successes > 0 else {
+    if locales.count == 1, let firstError { throw firstError }
     throw problem("No language could transcribe this audio. The existing transcript was preserved.")
   }
   return (segments, failures)
@@ -2528,6 +2532,18 @@ func recognitionLifecycleSelfTest() async throws {
     }
     checks += 1
   }
+  // A single language that fails says why, instead of the general message.
+  let missing =
+    "Download the zh-CN language in Settings to enable transcription. Audio is still saved."
+  do {
+    _ = try await recognizeCandidates(["zh-CN"]) { _, _ in throw problem(missing) }
+    throw problem("A failed single-language retry returned a replacement.")
+  } catch {
+    guard error.localizedDescription == missing else {
+      throw problem("A failed single-language retry hid its reason: \(error.localizedDescription)")
+    }
+  }
+  checks += 1
   var sourcesCompleted = 0
   do {
     for source in ["microphone", "system"] {
