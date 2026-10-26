@@ -1,4 +1,4 @@
-// Run after `npm run build`: node scripts/demo-video.mjs && bash scripts/finalize-demo.sh
+// Run with `npm run demo` to build, capture and finalize the demo.
 // Captures the real unpackaged UI using a disposable notebook and fully synthetic transports.
 // The finalizer composites real panel screenshots, labels the fixtures, and creates MP4/GIF/poster.
 import { _electron as electron } from 'playwright';
@@ -203,13 +203,15 @@ const dockButton = (name) => {
 const framesDir = join(dataDir, 'frames');
 const frames = [];
 let cast;
+const panelTiming = {};
+const mark = () => Math.max(0, Date.now() / 1000 - frames[0].receivedAt);
 async function startCast() {
   mkdirSync(framesDir);
   cast = await desktop.context().newCDPSession(page);
   cast.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
     const file = join(framesDir, `${String(frames.length).padStart(5, '0')}.jpg`);
     writeFileSync(file, Buffer.from(data, 'base64'));
-    frames.push({ file, at: metadata.timestamp });
+    frames.push({ file, at: metadata.timestamp, receivedAt: Date.now() / 1000 });
     cast.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
   });
   await cast.send('Page.startScreencast', {
@@ -236,11 +238,14 @@ try {
     await page.waitForTimeout(100);
   }
   if (!panel) throw new Error('Reminder panel did not appear');
+  panelTiming.reminderStart = mark();
   await panel.locator('.panel').screenshot({ path: join(out, 'demo-reminder.png') });
+  await wait(2000);
   for (let i = 0; i < 100; i++) {
     if (await desktop.evaluate(() => globalThis.__stillnoteMicrophone?.(true))) break;
     await page.waitForTimeout(100);
   }
+  panelTiming.reminderEnd = mark();
   await panel.getByRole('button', { name: 'Take notes', exact: true }).click();
   await button('Stop recording').waitFor();
   console.log(
@@ -261,11 +266,13 @@ try {
   await wait(800);
   await desktop.evaluate(() => globalThis.__stillnoteMicrophone?.(false));
   await page.getByText(/^The meeting seems to be over\. Stopping in/).waitFor();
+  panelTiming.meetingEndStart = mark();
   await wait(1500);
   await panel.locator('.panel').screenshot({ path: join(out, 'demo-meeting-end.png') });
   await page
     .getByRole('button', { name: 'Start recording', exact: true })
     .waitFor({ timeout: 15000 });
+  panelTiming.meetingEndEnd = mark();
   await wait(2200);
 
   // Stopping enhances the notes: the user's own points stay dark, Claude's additions are lighter.
@@ -313,6 +320,7 @@ if (demo) {
     `duration ${((frames[i + 1]?.at ?? at + 2.5) - at).toFixed(3)}`,
   ]);
   writeFileSync(join(framesDir, 'list.txt'), [...list, `file '${frames.at(-1).file}'`].join('\n'));
+  writeFileSync(join(out, 'demo-timing.json'), JSON.stringify(panelTiming));
   const gif = join(out, 'demo-preview.gif');
   const palette = join(framesDir, 'palette.png');
   const keyShots = ['home', 'recording', 'note', 'recordings', 'chat'];

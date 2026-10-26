@@ -27,3 +27,7 @@ accounts.enc.tmp
 *.caf
 *.m4a
 assets/icon-options/drafts/
+
+# Intermediate files produced by npm run demo.
+docs/images/demo-raw.mp4
+docs/images/demo-timing.json
