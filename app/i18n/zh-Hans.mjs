@@ -26,6 +26,7 @@ export default {
   'Already recording or finishing a recording.': '正在录音或正在结束录音。',
   'An account operation is already in progress.': '已有账户操作正在进行。',
   'Analyzing transcript…': '正在分析转写…',
+  'Another app is using your microphone.': '另一个应用正在使用麦克风。',
   'Another recording is already being transcribed.': '另一段录音正在转写。',
   'Answers use your {ai} plan. Check important details against the transcript.':
     '回答使用你的 {ai} 订阅。重要细节请对照转写核实。',
@@ -36,6 +37,8 @@ export default {
   'Ask about this meeting…': '就这个会议提问…',
   'Ask anything': '随便问',
   'Ask anything about your notes…': '关于你的笔记，随便问…',
+  'Ask to take notes when another app starts using the microphone, like a Zoom or Meet call.':
+    '其他应用开始使用麦克风时（例如 Zoom 或 Meet 通话），询问是否记笔记。',
   'Audio capture stopped unexpectedly. Review the saved audio and transcript, then start a new recording to continue.':
     '录音意外停止。请检查已保存的音频和转写，然后开始新的录音继续。',
   'Audio is being saved. Finish recording to listen.': '音频正在保存。结束录音后即可收听。',
@@ -69,6 +72,7 @@ export default {
   'ChatGPT sign-in was declined.': 'ChatGPT 登录被拒绝。',
   'Check again': '重新检查',
   'Check important details against the transcript.': '重要细节请对照转写核实。',
+  'Choose meeting app': '选择会议应用',
   'Choose at least one meeting with notes or a transcript.': '请至少选择一个有笔记或转写的会议。',
   'Choose the full path to the claude program.': '请选择 claude 程序的完整路径。',
   'Choose two different languages for Auto.': '请为“自动”选择两种不同的语言。',
@@ -82,6 +86,10 @@ export default {
   'Claude sign-in is already in progress.': 'Claude 登录正在进行。',
   'Claude sign-in timed out. Please try again.': 'Claude 登录超时，请重试。',
   'Clear search': '清除搜索',
+  'Click to join and take notes.': '点按以加入会议并记笔记。',
+  'Click to join, take notes and start recording.': '点按以加入会议、记笔记并开始录音。',
+  'Click to open Stillnote and start recording.': '点按以打开 Stillnote 并开始录音。',
+  'Click to record “{title}” in Stillnote.': '点按以在 Stillnote 中录制“{title}”。',
   'Click to take notes and start recording.': '点按以记笔记并开始录音。',
   'Click to take notes.': '点按以记笔记。',
   'Clicking a reminder opens the meeting’s note and starts recording.':
@@ -111,6 +119,7 @@ export default {
   'Continue with ChatGPT': '使用 ChatGPT 继续',
   Copy: '拷贝',
   'Could not load ChatGPT sign-in configuration.': '无法加载 ChatGPT 登录配置。',
+  'Could not open the meeting link: {error}': '无法打开会议链接：{error}',
   'Could not open Terminal: {error}': '无法打开终端：{error}',
   'Could not process native capture output: {error}': '无法处理本机录音输出：{error}',
   'Create a template': '创建模板',
@@ -122,6 +131,8 @@ export default {
   'Deleted notes will appear here until you restore them.':
     '删除的笔记会显示在这里，直到你恢复它们。',
   Details: '详情',
+  'Detect meetings': '检测会议',
+  Dismiss: '忽略',
   'Dismiss coverage warning': '关闭覆盖率提示',
   'Dismiss error': '关闭错误提示',
   'Done editing': '完成编辑',
@@ -199,6 +210,7 @@ export default {
   'Invalid interface language.': '界面语言无效。',
   'Invalid meeting in backup.': '备份中有无效的会议。',
   'Invalid meeting metadata.': '会议信息无效。',
+  'Invalid meeting service.': '会议服务无效。',
   'Invalid message sources.': '消息来源无效。',
   'Invalid message.': '消息无效。',
   'Invalid preference.': '设置无效。',
@@ -213,6 +225,8 @@ export default {
   'Invalid templates or recipes.': '模板或快捷指令无效。',
   'Invalid text value.': '文本值无效。',
   'Invalid timestamp.': '时间戳无效。',
+  'Join & record': '加入并录音',
+  'Join the call and start recording': '加入通话并开始录音',
   'Language controls are unavailable in this version.': '此版本无法设置语言。',
   'Language download progress': '语言下载进度',
   'Language downloads are unavailable in this version.': '此版本无法下载语言。',
@@ -236,13 +250,17 @@ export default {
   'Loading models…': '正在载入模型…',
   'Looking for Claude Code on this Mac…': '正在这台 Mac 上查找 Claude Code…',
   'macOS credential encryption is unavailable.': 'macOS 凭据加密不可用。',
+  'macOS didn’t show Stillnote’s meeting notification. Allow notifications for Stillnote in System Settings → Notifications.':
+    'macOS 没有显示 Stillnote 的会议通知。请在“系统设置 → 通知”中允许 Stillnote 发送通知。',
   Manage: '管理',
   Me: '我',
+  'Meeting · {time}': '会议 · {time}',
   'Meeting audio': '会议音频',
   'Meeting audio input level': '会议音频输入电平',
   'Meeting audio isn’t being recorded because macOS hasn’t allowed Stillnote to capture it; your microphone is still recording. Turn on Stillnote in Screen & System Audio Recording, then quit and reopen Stillnote. If it’s already on, remove it with − and allow it again.':
     'macOS 尚未允许 Stillnote 捕获会议音频，所以会议音频没有录下来；麦克风仍在录音。请在“屏幕与系统音频录制”中打开 Stillnote，然后退出并重新打开 Stillnote。如果已经打开，请用“−”移除后重新允许。',
   'Meeting audio recording': '会议音频录音',
+  'Meeting detected — take notes?': '检测到会议，要记笔记吗？',
   'Meeting language': '会议语言',
   'Meeting not found.': '找不到会议。',
   'Meeting notes': '会议笔记',
@@ -319,6 +337,7 @@ export default {
   'On-device · Apple SpeechTranscriber. Levels show incoming audio.':
     '本机 · Apple SpeechTranscriber。电平显示传入的音频。',
   Open: '打开',
+  'Open a new {service} meeting and start recording': '新建 {service} 会议并开始录音',
   'Open data folder': '打开数据文件夹',
   'Open Settings': '打开设置',
   'Open the note and start recording': '打开笔记并开始录音',
@@ -404,6 +423,7 @@ export default {
   'Star note': '加星标',
   Starred: '星标',
   'Start a note, press record, and stay in the conversation.': '新建笔记，按下录音，专心参与谈话。',
+  'Start a meeting and record': '发起会议并录音',
   'Start now': '立即开始',
   'Start recording': '开始录音',
   'Start recording from a reminder': '从提醒开始录音',
@@ -413,6 +433,7 @@ export default {
   'Starting now': '即将开始',
   'Starting…': '正在开始…',
   'Starts in {n} min': '{n} 分钟后开始',
+  'Start {service}': '发起 {service}',
   'Stillnote enhances notes and answers questions with a plan you already have. Audio never leaves this Mac; only the notes and transcripts you use are sent.':
     'Stillnote 用你已有的订阅来增强笔记、回答问题。音频不会离开这台 Mac，只会发送你用到的笔记和转写。',
   'Stop recording': '停止录音',
@@ -449,6 +470,10 @@ export default {
   "This Mac couldn't run both Auto languages for your microphone, so it continues in {language} only.":
     '这台 Mac 无法为你的麦克风同时运行两种自动语言，因此只用{language}继续。',
   'This meeting': '此会议',
+  'This meeting has no Google Meet, Zoom or Teams link.':
+    '这个会议没有 Google Meet、Zoom 或 Teams 链接。',
+  'This meeting is no longer in your calendar. Refresh the calendar and try again.':
+    '日历中已没有这个会议。请刷新日历后重试。',
   'This note is in Trash.': '这条笔记在废纸篓中。',
   'This sign-in belongs to a different account.': '这次登录属于另一个账户。',
   'Timed out after 5 minutes. Your notes are unchanged.': '5 分钟后超时，你的笔记没有变化。',
@@ -482,6 +507,7 @@ export default {
   'Unknown AI provider action.': '未知的 AI 服务操作。',
   'Unknown AI provider.': '未知的 AI 服务。',
   'Unknown Claude setup step.': '未知的 Claude 设置步骤。',
+  'Unknown meeting service.': '未知的会议服务。',
   'Unknown native operation.': '未知的本机操作。',
   'Unknown recording source.': '未知的录音来源。',
   'Unknown setting.': '未知的设置。',
@@ -535,6 +561,7 @@ export default {
   'Zoom In': '放大',
   'Zoom Out': '缩小',
   '{device} · Default': '{device} · 默认',
+  '{service} · {time}': '{service} 会议 · {time}',
   '{error} Using the default input device.': '{error} 改用默认输入设备。',
   '{language} · Installed': '{language} · 已安装',
   '{language} · Unavailable': '{language} · 不可用',

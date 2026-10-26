@@ -9,6 +9,7 @@ import { ai, aiScenario } from '../tests/e2e/ai.mjs';
 import { recovery } from '../tests/e2e/recovery.mjs';
 import { language, languageScenario } from '../tests/e2e/language.mjs';
 import { reminders, remindersScenario } from '../tests/e2e/reminders.mjs';
+import { calls, callsScenario } from '../tests/e2e/calls.mjs';
 
 const args = process.argv.slice(2);
 const option = (name) => {
@@ -20,7 +21,7 @@ const option = (name) => {
 };
 if (args.includes('--help')) {
   console.log(
-    'Usage: node scripts/e2e.mjs [--suite notebook|capture|ai|recovery|reminders|language|all] [--no-build] [--output path]\nRuns deterministic Electron E2E tests with synthetic audio and AI. No real account or device is used.',
+    'Usage: node scripts/e2e.mjs [--suite notebook|capture|ai|recovery|reminders|calls|language|all] [--no-build] [--output path]\nRuns deterministic Electron E2E tests with synthetic audio and AI. No real account or device is used.',
   );
   process.exit(0);
 }
@@ -49,6 +50,20 @@ const suites = {
       'no duplicate reminder',
       'Coming up reuses the linked note',
       'auto-record can be turned off',
+    ],
+  },
+  calls: {
+    run: calls,
+    scenario: callsScenario,
+    checks: [
+      'Start Google Meet opens meet.google.com/new and records a new note',
+      'the chevron starts Zoom and remembers it',
+      'Join & record only for meetings with a call link',
+      'reminder invites joining; its click records and joins',
+      'meeting detected: one notification and in-app prompt per call',
+      'no prompt while or after recording the same call',
+      'detection can be turned off',
+      'Start meeting, Join & record and the prompt in Chinese',
     ],
   },
   recovery: {

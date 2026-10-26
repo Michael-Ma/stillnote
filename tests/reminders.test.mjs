@@ -5,9 +5,12 @@ import {
   LATE_MS,
   dueReminders,
   eventKey,
+  eventNote,
   meetingForEvent,
+  reminderAction,
   reminderBody,
 } from '../app/reminders.mjs';
+import { translator } from '../app/i18n/index.mjs';
 
 const now = Date.parse('2026-10-21T10:00:00Z');
 const event = (id, startOffset, minutes = 30, extra = {}) => ({
@@ -56,6 +59,47 @@ test('reminder text says when the meeting starts and what a click does', () => {
   assert.match(reminderBody(event('a', -3 * 60_000), now, false), /^Started 3 min ago/);
   assert.match(reminderBody(event('a', 29_000), now, false), /^Starts in 1 min/);
   assert.match(reminderBody(event('a', -30_000), now, false), /^Starting now/);
+});
+
+test('a meeting with a call link invites the user to join', () => {
+  const call = event('a', 60_000, 30, { location: 'https://zoom.us/j/123' });
+  assert.equal(
+    reminderBody(call, now, true),
+    'Starts in 1 min · Click to join, take notes and start recording.',
+  );
+  assert.equal(reminderBody(call, now, false), 'Starts in 1 min · Click to join and take notes.');
+  assert.equal(
+    reminderBody(call, now, true, translator('zh-Hans')),
+    '1 分钟后开始 · 点按以加入会议、记笔记并开始录音。',
+  );
+});
+
+test('a reminder click records and joins, unless the meeting is already over', () => {
+  const call = event('a', 60_000, 30, { notes: 'https://meet.google.com/abc-defg-hij' });
+  assert.deepEqual(reminderAction(call, now, true), {
+    record: true,
+    join: { service: 'meet', url: 'https://meet.google.com/abc-defg-hij' },
+  });
+  assert.equal(reminderAction(call, now, false).record, false);
+  assert.equal(reminderAction(event('b', 0), now, true).join, null);
+  // Clicked in Notification Center an hour later: open the note only.
+  assert.deepEqual(reminderAction(call, now + 3_600_000, true), { record: false, join: null });
+});
+
+test('an occurrence’s note starts from its title, attendees and calendar notes', () => {
+  const standup = event('standup', 0, 15, { participants: 'Alex, Sam', notes: 'Agenda' });
+  assert.deepEqual(eventNote(standup), {
+    title: 'standup',
+    participants: 'Alex, Sam',
+    notes: 'Meeting context\nAgenda',
+    eventKey: eventKey(standup),
+  });
+  assert.deepEqual(eventNote({ id: 'x', start: 'y' }), {
+    title: '',
+    participants: '',
+    notes: '',
+    eventKey: 'x@y',
+  });
 });
 
 test('an existing, non-trashed note is reused for the same occurrence', () => {

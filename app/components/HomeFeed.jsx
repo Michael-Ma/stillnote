@@ -1,7 +1,8 @@
 import React from 'react';
-import { CalendarDays, FileText, LoaderCircle, Plus, RefreshCw, Star } from 'lucide-react';
-import { dayLabel, time } from '../format.mjs';
-import { eventKey } from '../reminders.mjs';
+import { CalendarDays, FileText, LoaderCircle, Plus, RefreshCw, Star, Video } from 'lucide-react';
+import { dayLabel } from '../format.mjs';
+import { eventNote } from '../reminders.mjs';
+import { callServices, meetingLink } from '../calls.mjs';
 import { IconButton } from './Content.jsx';
 import { useT } from '../i18n/react.jsx';
 
@@ -48,6 +49,7 @@ export function HomeFeed({
   calendar,
   newNote,
   startMeeting,
+  joinMeeting,
   openNote,
   importFile,
   setQuery,
@@ -97,13 +99,10 @@ export function HomeFeed({
                     {events.map((e) => {
                       const soon =
                         Date.parse(e.start) - Date.now() < 600000 && Date.parse(e.end) > Date.now();
-                      const note = {
-                        title: e.title,
-                        participants: e.participants,
-                        notes: e.notes ? `Meeting context\n${e.notes}` : '',
-                        eventKey: eventKey(e),
-                      };
-                      // The row opens the meeting's note; "Start now" also starts recording.
+                      const note = eventNote(e);
+                      const link = meetingLink(e);
+                      // The row opens the meeting's note; "Start now" also starts recording, and
+                      // "Join & record" opens the meeting's call as well.
                       return (
                         <div className={'upcoming-event' + (soon ? ' soon' : '')} key={e.id}>
                           <button className="upcoming-open" onClick={() => newNote(note)}>
@@ -111,18 +110,34 @@ export function HomeFeed({
                               <strong>{e.title}</strong>
                               <small>
                                 <Clock value={e.start} /> – <Clock value={e.end} />
+                                {link && (
+                                  <span className="call-badge">
+                                    <Video size={12} aria-hidden="true" />
+                                    {callServices[link.service].name}
+                                  </span>
+                                )}
                               </small>
                             </span>
                             {!soon && <span className="start-event">{t('Take notes')}</span>}
                           </button>
-                          {soon && (
+                          {link ? (
                             <button
-                              className="start-event"
-                              title={t('Open the note and start recording')}
-                              onClick={() => startMeeting(note)}
+                              className="start-event join-event"
+                              title={t('Join the call and start recording')}
+                              onClick={() => joinMeeting(e)}
                             >
-                              {t('Start now')}
+                              {t('Join & record')}
                             </button>
+                          ) : (
+                            soon && (
+                              <button
+                                className="start-event"
+                                title={t('Open the note and start recording')}
+                                onClick={() => startMeeting(note)}
+                              >
+                                {t('Start now')}
+                              </button>
+                            )
                           )}
                         </div>
                       );

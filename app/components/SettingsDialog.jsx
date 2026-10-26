@@ -354,6 +354,21 @@ export function SettingsDialog({
                 onChange={(v) => guard(() => setting('reminderAutoRecord', v))}
               />
             </div>
+            <div className="setting-row">
+              <div>
+                <label htmlFor="meetingDetection">{t('Detect meetings')}</label>
+                <small>
+                  {t(
+                    'Ask to take notes when another app starts using the microphone, like a Zoom or Meet call.',
+                  )}
+                </small>
+              </div>
+              <Toggle
+                id="meetingDetection"
+                checked={data.settings.meetingDetection ?? true}
+                onChange={(v) => guard(() => setting('meetingDetection', v))}
+              />
+            </div>
             <p className="settings-foot">
               {t(
                 'Your microphone is labeled “You” and other apps “Meeting audio”. Individual remote speakers are not identified. Let participants know when you record.',

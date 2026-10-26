@@ -267,12 +267,9 @@ export async function capture(h) {
   // A permission denial says what to change and links to the right Settings pane.
   const denied = h.page.getByRole('alert').filter({ hasText: 'microphone is still recording' });
   await denied.waitFor();
-  await h.desktop.evaluate(({ shell }) => {
-    globalThis.__opened = [];
-    shell.openExternal = async (url) => globalThis.__opened.push(url);
-  });
+  // The test adapter records links instead of opening them.
   await denied.getByRole('button', { name: 'Open Settings', exact: true }).click();
-  assert.deepEqual(await h.desktop.evaluate(() => globalThis.__opened), [
+  assert.deepEqual(await h.desktop.evaluate(() => globalThis.__stillnoteOpened), [
     'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
   ]);
   const microphoneSaved = await stop(h, microphoneOnly.id, 1);

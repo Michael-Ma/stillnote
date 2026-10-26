@@ -15,6 +15,7 @@ Object.assign(app, {
   commandLine: { appendSwitch() {} },
   getPreferredSystemLanguages: () => ['en-US'],
   requestSingleInstanceLock: () => true,
+  focus() {},
   whenReady: async () => {},
   quit() {},
   exit(code) {
@@ -45,6 +46,13 @@ export class BrowserWindow extends EventEmitter {
   }
   show() {}
   focus() {}
+  isFocused() {
+    return true;
+  }
+  isMinimized() {
+    return false;
+  }
+  restore() {}
   close() {
     let prevented = false;
     this.emit('close', {
