@@ -1,10 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { meetingEndDetector, sustainedSound, trailingCut } from '../app/meeting-end.mjs';
-import { inspectRecordingTracks, lastSound, trimRecordingTail } from '../app/recordings.mjs';
+import {
+  inspectRecordingTracks,
+  lastSound,
+  trimRecordingTail,
+  repairRecordingTracks,
+} from '../app/recordings.mjs';
 
 const s = 1000,
   min = 60 * s;
@@ -178,3 +183,61 @@ test('an untranscribed source counts as speaking only with sustained sound', () 
   assert.equal(heard, true);
   assert.equal(sound(0.001, 40_000), false, 'and it fades');
 });
+
+test('a second-track replacement failure restores both original WAVs byte for byte', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'stillnote-trim-failure-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const original = track([...speech(10), ...quiet(90)]);
+  for (const fileName of ['microphone.wav', 'system.wav'])
+    writeFileSync(join(dir, fileName), original);
+  let replacements = 0;
+  assert.throws(
+    () =>
+      trimRecordingTail(dir, [], 20, {
+        replace: (from, to) => {
+          if (++replacements === 4) throw new Error('Injected second-track rename failure');
+          renameSync(from, to);
+        },
+      }),
+    /second-track rename/,
+  );
+  for (const fileName of ['microphone.wav', 'system.wav'])
+    assert.deepEqual(readFileSync(join(dir, fileName)), original);
+  assert.deepEqual(readdirSync(dir).sort(), ['microphone.wav', 'system.wav']);
+});
+
+test('unsupported second-track audio cannot leave the first track partly trimmed', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'stillnote-trim-format-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const original = track([...speech(10), ...quiet(90)]);
+  writeFileSync(join(dir, 'microphone.wav'), original);
+  writeFileSync(join(dir, 'system.wav'), 'unsupported track');
+  assert.throws(() => trimRecordingTail(dir, [], 20), /unsupported recording track/);
+  assert.deepEqual(readFileSync(join(dir, 'microphone.wav')), original);
+  assert.equal(readFileSync(join(dir, 'system.wav'), 'utf8'), 'unsupported track');
+});
+
+for (const committed of [false, true]) {
+  test(`startup repairs a ${committed ? 'committed' : 'partially replaced'} trim journal`, (t) => {
+    const dir = mkdtempSync(join(tmpdir(), 'stillnote-trim-recovery-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const transaction = mkdtempSync(join(dir, '.trim-'));
+    const original = track([...speech(10), ...quiet(90)]);
+    const shortened = track([...speech(10), ...quiet(10)]);
+    writeFileSync(join(transaction, 'microphone.wav.original'), original);
+    writeFileSync(join(dir, 'microphone.wav'), shortened);
+    writeFileSync(join(dir, 'system.wav'), committed ? shortened : original);
+    if (committed) {
+      writeFileSync(join(transaction, 'system.wav.original'), original);
+      writeFileSync(join(transaction, 'committed'), '');
+    }
+    const restored = repairRecordingTracks(dir);
+    assert.deepEqual(
+      restored.map((item) => item.duration),
+      committed ? [20, 20] : [100, 100],
+    );
+    assert.deepEqual(readdirSync(dir).sort(), ['microphone.wav', 'system.wav']);
+    for (const fileName of ['microphone.wav', 'system.wav'])
+      assert.deepEqual(readFileSync(join(dir, fileName)), committed ? shortened : original);
+  });
+}

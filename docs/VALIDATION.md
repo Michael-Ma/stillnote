@@ -1,10 +1,24 @@
 # Validation
 
-## Current regression checks
+## Current review — October 26, 2026
 
-The fixes and current verification evidence are recorded in [PR #1](https://github.com/Michael-Ma/stillnote/pull/1). The old defect-demonstration script has been replaced by regression tests in `tests/` and the deterministic `test:native-lifecycle` command. See [testing](TESTING.md) for commands and their boundaries.
+Reviewed latest main `06f81f9` (floating reminder panels, meeting-end detection/trimming, and single-language retry errors), following the merge of [PR #1](https://github.com/Michael-Ma/stillnote/pull/1). This follow-up fixes a reproduced trim failure and updates the maintained documentation and demo.
 
-These synthetic checks do not certify live microphone/system-audio behavior, real notifications, account inference, language downloads, signing, or installation. Those require separate device/account acceptance testing.
+| Check | Observed result |
+| --- | --- |
+| Unit and IPC suite | `npm test`: **203 passed**, including four new trim rollback/recovery cases. |
+| Build and formatting | `npm run build`, `npm run format:check`, and `git diff --check` passed. Build used macOS SDK 27; existing Lucide `use client` bundler warnings remain. |
+| Desktop E2E | **All eight passed:** language, reminders, calls, meeting-end, recovery, notebook, capture, AI. The final run used the real renderer, panels, main/preload, SQLite and playback paths with synthetic device/provider transports. |
+| Native lifecycle | **19 checks passed**, without live audio or speech recognition. |
+| Native capture invariants | **12 checks passed**, including canonical WAV output, gap padding, signal events and calendar colors. |
+| Native scheduler | Passed serial concurrency, cancellation/backlog checks and **five silence-boundary checks**. |
+| New demo | `npm run demo` completed in the separate demo worktree. The final H.264 MP4 is **43.21 seconds, 1280 × 880, 900,950 bytes**. Sampled frames were inspected and a complete `ffmpeg` decode reported no errors. |
+
+The original trim path shortened the microphone WAV before trying to open the system WAV. With a read-only second track, it raised `EACCES` and left 30 seconds of microphone audio beside 100 seconds of system audio. The fix stages every shortened track, retains originals until all replacements commit, and rolls back or recovers an interrupted replacement. Tests verify byte-for-byte restoration after a second-track rename failure, rejection of an unsupported second track, and incomplete/committed journal recovery. Successful trimming retains its existing heuristic and can still remove brief untranscribed sounds; Off preserves the full captured files.
+
+The first E2E run also exposed a cross-renderer assertion race: the editor had cleared its meeting-end prompt before the panel rendered its own clearing event. The test now waits for both. The final eight-suite run passed.
+
+The demo uses fictional notes and synthetic audio, recognition, calendar and AI. Meeting-end waits are compressed; floating panels are real screenshots composited into the screencast, with an illustrative countdown. Neither the video nor the deterministic tests establish live transcription accuracy, real provider access, or native placement across displays/full-screen apps/Spaces. No personal notebook, live microphone/system audio, real calendar, account inference, language download, signing or installation was exercised in this review. See [TESTING.md](TESTING.md) for repeatable commands.
 
 ## Historical October 20 validation
 
@@ -40,7 +54,8 @@ Desktop tests use separate `.test-data-*` directories. The import/export tests s
 - Grant microphone and speech permissions, confirm the on-device language is installed, and transcribe actual speech.
 - Grant system-audio permission and verify both sides of a meeting using the packaged app. Check headphone/speaker echo and relative input levels.
 - Record a longer meeting across recognizer task rotations and check gaps, repeated words, pauses, overlapping speakers, and device changes.
-- Grant EventKit access and compare upcoming events with Apple Calendar. Check a reminder while the app is open.
+- Grant EventKit access and compare upcoming events with Apple Calendar. Check the floating reminder without stealing focus, including another display, full-screen calls and macOS Spaces.
+- Verify meeting-end prompts against real call/mute/permission behavior and long pauses. Use Off when capturing acceptance reference audio; separately evaluate which tails the trimming heuristic removes.
 - Exercise the app on Intel and older supported macOS versions. Compilation targets macOS 13, but those combinations have not been separately run.
 
 The app should not be described as full Granola parity or a production-validated transcription system. It implements the requested local core; live service access, OS permission behavior, and transcription quality remain subject to the acceptance checks above.

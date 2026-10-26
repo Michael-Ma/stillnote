@@ -1,6 +1,6 @@
 # Building Stillnote
 
-Stillnote is a desktop meeting notebook with local capture and storage, plus text inference paid for through the user's eligible ChatGPT plan. The implementation deliberately separates the document, the recording session, and the AI response so that a failure in one does not erase the others.
+Stillnote is a desktop meeting notebook with local capture and storage, plus text inference through an eligible ChatGPT plan or a supported direct Claude Pro/Max connection. The implementation deliberately separates the document, the recording session, and the AI response so that a failure in one does not erase the others.
 
 ## 1. Start with the constraints
 
@@ -28,6 +28,7 @@ No OpenAI DevKit source is vendored. OpenAI determines eligibility and service b
 flowchart TB
     subgraph Mac[User's Mac]
       UI[React renderer: notebook, editor, chat]
+      Panel[Floating reminder panel + narrow preload]
       Bridge[Sandboxed preload: narrow IPC methods]
       Main[Electron main: operations and lifecycle]
       Store[(SQLite notebook + FTS5)]
@@ -42,6 +43,7 @@ flowchart TB
       MCP[Optional read-only stdio MCP]
       UI <--> Bridge
       Bridge <--> Main
+      Panel <--> Main
       Main <--> Store
       Native --> Audio
       Main --> Media
@@ -103,8 +105,9 @@ sequenceDiagram
     Main->>Native: start(locale, systemAudio, inputDevice, echoCancellation, context)
     Native->>User: macOS permission prompts if needed
     Native->>Audio: Normalize and checkpoint microphone/system PCM
-    Native->>Speech: Same normalized samples, on-device
-    Native-->>Main: started / partial / segment
+    Native-->>Main: started (raw capture ready)
+    Native->>Speech: Initialize asynchronously, replay buffered audio
+    Native-->>Main: partial / segment
     Main->>DB: Persist completed transcript segments
     Main-->>UI: Current partials and saved transcript (at most 4 meeting updates/s)
     User->>UI: Finish meeting
@@ -112,6 +115,7 @@ sequenceDiagram
     Main->>Native: stop
     Native->>Speech: End audio and allow final results to settle
     Native-->>Main: Final segments, stopped(duration)
+    Main->>Audio: Optionally stage and commit trailing-silence trim
     Main->>DB: Save duration, transcript, audio metadata and diagnostics
     Main-->>UI: Recording finished
     opt Connected ChatGPT + enhancement enabled + sufficient source text
@@ -140,9 +144,13 @@ System-audio permission failure falls back visibly to microphone-only capture. U
 
 Reminder handoffs are coordinated by the main process: stop and save the previous note, start the next recording, wait for its `started` event, then open the call. Failed saves or starts do not open the next call.
 
-Calls and meeting detection (`app/calls.mjs`, pure): `start-call(service)` opens one of two fixed addresses (`https://meet.google.com/new`, `https://zoom.us/start/videomeeting`) with `shell.openExternal`, and `join-call(eventKey)` opens the Google Meet, Zoom or Teams link found in Stillnote's own copy of that calendar event; the renderer never supplies a URL. Links must be plain `https` on the services' own hosts and meeting paths. While **Detect meetings** is on, the main process sends `watch-microphone` to the helper, which checks CoreAudio every two seconds without opening an input and reports `microphone-activity { active }` on each change: on macOS 14 and later, whether any process other than the helper runs audio input (`kAudioHardwarePropertyProcessObjectList`, `kAudioProcessPropertyIsRunningInput`); on macOS 13, whether the default input is running somewhere. A pure debounce turns that into at most one “Meeting detected” prompt per session (5 s settle, 90 s gap) and never for a session Stillnote recorded in. Meeting-end detection (`app/meeting-end.mjs`, pure) also uses that watch while recording, together with speech (any transcript partial or segment, and sustained `audio-level` on meeting audio or an untranscribed microphone) and the end of the recording's calendar occurrence; a one-second tick in the main process shows `meeting-end { reason, deadline }`, stops the capture when an automatic countdown runs out, and `keep-recording` answers it. After a completed stop, `finishCapture` scans each WAV back from its end (one-second RMS blocks, sustained sound only, never before the last speech) and truncates the tracks at ten seconds after the last speech when at least a minute of silence follows; the recording's duration and `diagnostics.trailingSilenceRemoved` follow.
+Calls and meeting detection (`app/calls.mjs`, pure): `start-call(service)` opens one of two fixed addresses (`https://meet.google.com/new`, `https://zoom.us/start/videomeeting`) with `shell.openExternal`, and `join-call(eventKey)` opens the Google Meet, Zoom or Teams link found in Stillnote's own copy of that calendar event; the renderer never supplies a URL. Links must be plain `https` on the services' own hosts and meeting paths. While **Detect meetings** is on, the main process sends `watch-microphone` to the helper, which checks CoreAudio every two seconds without opening an input and reports `microphone-activity { active }` on each change: on macOS 14 and later, whether any process other than the helper runs audio input (`kAudioHardwarePropertyProcessObjectList`, `kAudioProcessPropertyIsRunningInput`); on macOS 13, whether the default input is running somewhere. A pure debounce turns that into at most one “Meeting detected” prompt per session (5 s settle, 90 s gap) and never for a session Stillnote recorded in. Meeting-end detection (`app/meeting-end.mjs`, pure) also uses that watch while recording, together with speech (any transcript partial or segment, and sustained `audio-level` on meeting audio or an untranscribed microphone) and the end of the recording's calendar occurrence; a one-second tick in the main process shows `meeting-end { reason, deadline }`, stops the capture when an automatic countdown runs out, and `keep-recording` answers it. After a completed stop, `finishCapture` scans each WAV back from its end (one-second RMS blocks, sustained sound only, never before the last speech) and chooses a cut ten seconds after the later transcript/sustained-sound endpoint, only when at least 60 seconds would be removed. `trimRecordingTail` prepares shortened files in a same-directory `.trim-*` journal, then replaces the originals and writes a commit marker. A failed replacement restores originals; `repairRecordingTracks` restores incomplete journals after interruption and cleans committed ones. The recording's duration and `diagnostics.trailingSilenceRemoved` follow successful trims. Off disables both prompting and trimming; Only ask still trims on a manual stop. Brief untranscribed sounds are deliberately below the sustained-sound heuristic and can be removed.
 
-The reminder panel (`app/panel.mjs` for its content, pure; `app/panel-window.mjs` for its window) replaces system notifications for reminders, “Meeting detected” and “The meeting seems to be over”. It is one hidden, non-activating `type: 'panel'` window (not focusable, above full-screen apps), loading `dist/panel.html` with its own preload (`app/panel-preload.cjs`), which can only receive the panel to show and answer `stillnote-panel:act(id, action)` or `stillnote-panel:menu(id, x, y)` (a native menu of the panel's choices); main accepts these only from that page and only for the panel on screen, and every choice closes the panel before its action runs. Calendar events carry their calendar's color as `#rrggbb` from the helper (EventKit, converted to sRGB). Scripted runs keep the panel invisible and click-through, and the test adapter is told about each panel and can choose in it.
+The reminder panel (`app/panel.mjs` for its content, pure; `app/panel-window.mjs` for its window) replaces system notifications for reminders, “Meeting detected” and “The meeting seems to be over”. It is one hidden, non-activating `type: 'panel'` window (not focusable, always on top), loading `dist/panel.html` with its own preload (`app/panel-preload.cjs`), which can only receive the panel to show and answer `stillnote-panel:act(id, action)` or `stillnote-panel:menu(id, x, y)` (a native menu of the panel's choices); main accepts these only from that page and only for the panel on screen, and every choice closes the panel before its action runs. Calendar events carry their calendar's color as `#rrggbb` from the helper (EventKit, converted to sRGB). Scripted runs keep the panel invisible and click-through, and the test adapter is told about each panel and can choose in it.
+
+The floating panel has its own `panel.html`, React entry, and sandboxed preload. `app/panel-window.mjs` accepts actions only from that window's main frame and exact file URL; monotonically increasing panel IDs reject stale clicks. It creates a non-activating, always-on-top macOS panel at the cursor display's work-area top right. A newer panel replaces the previous one; closing the notebook destroys the hidden panel so it cannot keep the app alive. Multi-monitor, full-screen and macOS Spaces placement remain native acceptance checks, not guarantees established by hidden-window E2E.
+
+`meetingEndDetector` requires a one-minute microphone hold plus 30 seconds of quiet for a call release, two minutes of quiet after the calendar end, or ten minutes of quiet (twenty while another app holds the microphone). The prolonged-quiet rule requires earlier speech. The default prompt adds a 60-second countdown; Only ask has no deadline. The UI and floating panel receive the same prompt, and Keep recording resets the detector before clearing both views.
 
 Both `start` and `transcribe` receive deduplicated vocabulary hints: title words, participant names split on comma/ampersand/“and”, folder name, and at most 50 capitalized or CJK terms from rough notes. The pure builder caps the result at 100 hints of 100 characters each. Capture settings validate BCP-47 locales with two or three lowercase language letters and up to two 2–8-character subtags.
 

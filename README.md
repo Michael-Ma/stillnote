@@ -4,23 +4,25 @@ A local macOS meeting notebook inspired by Granola, powered by your ChatGPT or C
 
 Stillnote keeps the core loop small: **open a note → capture a conversation → jot down what matters → enhance the notes → ask follow-up questions**. Its home feed, focused document view, and bottom recording/chat dock follow Granola's interaction patterns. It is an independent project, not an official Granola client.
 
-![Stillnote demo: rough notes during a recording, enhanced notes when it stops, then a cited answer from meeting chat](docs/images/demo.gif)
+[![Stillnote demo: floating reminder, live notes, meeting-end prompt, saved audio, enhanced notes and cited chat](docs/images/demo-preview.gif)](docs/images/demo.mp4)
 
-<sub>Real app, fictional meeting: the demo and screenshots below run on test fixtures, so no account, microphone or notebook of anyone's is involved. Regenerate them with `npm run screenshots -- --demo`.</sub>
+[Watch the demo video (MP4)](docs/images/demo.mp4) · [View the poster](docs/images/demo-poster.png)
+
+<sub>Real app UI with fictional meetings and synthetic audio, recognition and AI. The meeting-end timing is compressed; real floating-panel screenshots are composited over the recording. This demonstrates the workflow, not recognition accuracy or real account access. Regenerate with `npm run demo`; regenerate the still screenshots with `npm run screenshots`.</sub>
 
 ## Core capabilities
 
 - **Meeting capture:** microphone plus optional system audio, without a meeting bot.
-- **On-device transcription:** on macOS 26 and later, Apple's SpeechTranscriber streams the whole meeting with punctuation and per-phrase timestamps, using the meeting title, participants and notes as vocabulary hints. Earlier macOS versions fall back to `SFSpeechRecognizer`. **Auto language** (macOS 26) listens in two languages at once, Chinese and English by default, and chooses between the candidate transcripts sentence by sentence. The choice is heuristic; review uncertain passages against the recording. Microphone and meeting audio get separate labels. No transcription API key. Original microphone and system-audio tracks are retained locally for playback and transcription retry.
-- **Replay and diagnose:** separate source players with seeking, live input meters, recognition language, sparse-transcript warnings, and retry from the saved audio. Earlier app versions did not retain audio, so historical audio cannot be recovered.
+- **On-device transcription:** on macOS 26 and later, Apple's SpeechTranscriber streams the whole meeting with punctuation and per-phrase timestamps, using the meeting title, participants and notes as vocabulary hints. Earlier macOS versions fall back to `SFSpeechRecognizer`. **Auto language** (macOS 26) listens in two languages at once, Chinese and English by default, and chooses between the candidate transcripts sentence by sentence. The choice is heuristic; review uncertain passages against the recording. Microphone and meeting audio get separate labels. No transcription API key. Saved microphone and system-audio tracks stay on this Mac for playback and transcription retry; the meeting-end setting controls trailing-silence trimming.
+- **Replay and diagnose:** synchronized playback with seeking and per-source mute, live input meters, recognition language, sparse-transcript warnings, and retry from the saved audio. Earlier app versions did not retain audio, so historical audio cannot be recovered.
 - **A simple notebook:** autosaved rough notes, editable transcripts, folders, stars, search, and recoverable Trash; **Delete forever** and **Empty Trash** remove notes for good, and their audio goes to the macOS Trash.
 - **Enhanced notes:** modeled on Granola's. Your rough notes are the skeleton and stay in dark text; details, missed topics and next steps from the transcript are added in lighter text. Short topic headings, terse bullets, no filler, in the language you wrote in. Templates (1:1, customer discovery, standup, interview, or your own) set the sections. Previous summaries remain available. Optionally enhance automatically when recording ends.
 - **Meeting chat:** ask about one meeting, a folder, or your notebook. Source citations open the corresponding transcript. Apply a chat answer to your enhanced notes explicitly.
 - **Your calendar:** read meetings from accounts configured in Apple Calendar, including Google or Outlook accounts. Create a note from an event; each occurrence keeps one note.
-- **Meeting reminders:** once the calendar is connected, Stillnote refreshes it in the background and, a minute before each timed meeting, shows a Granola-style panel at the top right of the screen, above other apps and without taking focus: the meeting with its calendar's color and time, and **Join and take notes**, which opens the meeting's note, starts recording (switchable in **Settings › Recording**) and then joins its Google Meet, Zoom or Teams call. Its menu takes notes without joining, or, for a meeting without a call link, starts a Google Meet or Zoom call with the notes. Reminders appear while Stillnote is running; the panel replaces system notifications.
+- **Meeting reminders:** a floating panel at the top right shows the calendar's color and meeting time about a minute before it starts. **Join and take notes** opens the note, starts capture when enabled, then opens its Google Meet, Zoom or Teams link. The menu can take notes without joining, or start a new Meet/Zoom call for an event without a link. Stillnote must be running; these panels replace system notifications.
 - **Start or join a call in one click:** **Start Google Meet** (or Zoom) on Home opens a new meeting in your browser or meeting app and records it in a new note; **Join & record** on a calendar meeting opens its call link and records in its note.
 - **Meeting detection:** when another app starts using your microphone, like a Zoom or Meet call, Stillnote asks “Meeting detected — take notes?” once per call. It reads macOS's microphone state only and never records by itself; turn it off in **Settings › Recording**, where **Open Stillnote when a meeting is detected** (off by default) also brings the window forward.
-- **Meeting end:** while recording, Stillnote notices when the meeting seems over: the call app (Zoom, Meet in the browser) lets go of the microphone and nobody speaks for 30 seconds, the calendar meeting has ended and nobody has spoken for two minutes, or nobody has spoken for ten minutes. It says so above the dock (and in the floating panel when Stillnote is in the background) and stops after a 60-second countdown unless you click **Keep recording**; **Resume recording** carries on in the same note. Long silence at the end of a recording is removed when it stops. **Settings › Recording › When a meeting seems over** chooses stopping after the countdown, only asking, or neither.
+- **Meeting end:** a quiet meeting that appears finished produces a prompt and, by default, a 60-second countdown before stopping. **Keep recording**, **Stop now**, and **Resume recording** let you control the session. **Settings › Recording › When a meeting seems over** selects automatic stopping, asking only, or Off. See [the exact conditions and audio-trimming behavior](#meetings-reminders-and-stopping).
 - **English and 简体中文:** the interface follows the macOS language (any Chinese → 简体中文) and can be changed in **Settings › General**, including menus, the reminder panel and macOS permission prompts. Notes, transcripts and enhanced notes keep the language of the meeting.
 - **Local ownership:** SQLite storage, Markdown export, JSON backup/restore, and an optional read-only local MCP server.
 
@@ -32,7 +34,7 @@ Stillnote keeps the core loop small: **open a note → capture a conversation �
 | **Home.** Upcoming meetings from your calendar, then recent notes by day. | **Recording.** Write rough notes while the on-device transcript fills in. |
 | ![Enhanced notes: the user's own points in dark text, with details from the transcript nested under them in lighter text](docs/images/note.png) | ![Meeting chat answering "What did we decide?" with a source citation](docs/images/chat.png) |
 | **Enhanced notes.** Your own points stay dark; what the transcript adds is lighter. | **Chat.** Ask a meeting, a folder or the notebook; answers link back to sources. |
-| ![Recordings tab with separate microphone and meeting-audio players](docs/images/recordings.png) | ![Settings showing Claude in use with plan usage, and ChatGPT connected](docs/images/settings-ai.png) |
+| ![Recordings tab with synchronized microphone and meeting-audio playback](docs/images/recordings.png) | ![Settings showing Claude in use with plan usage, and ChatGPT connected](docs/images/settings-ai.png) |
 | **Recordings.** Replay each source, or retry transcription from the saved audio. | **AI provider.** Use your Claude or ChatGPT plan; usage shows next to it. |
 | ![Recording settings: microphone, echo cancellation, language, meeting audio and reminders](docs/images/settings-recording.png) | ![Home in dark mode](docs/images/home-dark.png) |
 | **Recording settings.** Microphone, meeting language, meeting audio and reminders. | **Dark mode.** Follows macOS appearance. |
@@ -43,7 +45,7 @@ Team workspaces, cloud synchronization, public sharing links, mobile apps, CRM i
 
 ## Run locally
 
-Requires macOS 13 or later, Node.js 24 or later, and Xcode Command Line Tools (`xcode-select --install`). The build uses the local Mac's CPU architecture. The current implementation was built and checked on Apple Silicon; Intel and macOS 13 have not been separately exercised.
+Requires Node.js 24 or later and a Swift/Xcode toolchain with the macOS 26 SDK or newer (`xcode-select --install` installs the Command Line Tools available for your Mac). The app targets macOS 13 or later; modern SpeechTranscriber and in-app language downloads require macOS 26 or later. The build uses the local Mac's CPU architecture. The current implementation was built and checked on Apple Silicon; Intel and macOS 13 have not been separately exercised.
 
 ```sh
 git clone https://github.com/Michael-Ma/stillnote.git
@@ -90,13 +92,29 @@ Stillnote runs your own, unmodified `claude` program in print mode with built-in
 
 1. Choose **New note**, or connect your Mac calendars and select a meeting under **Coming up**.
 2. Press **Record** in the dock at the bottom.
-3. Grant **Microphone**, **Speech Recognition**, and, for meeting audio, **Screen & System Audio Recording** access in macOS.
+3. Grant **Microphone** and, for meeting audio, **Screen & System Audio Recording** access in macOS. The legacy speech engine also requests **Speech Recognition** permission; modern SpeechTranscriber uses installed on-device language models.
 4. Write a few notes while the transcript accumulates.
 5. Press the stop button in the dock. **Transcript** and **Recordings** in the dock show how many lines and saved recordings the note has; choose **Recordings** to listen to the saved sources or retry transcription. If ChatGPT or Claude is connected and automatic enhancement is enabled, Stillnote enhances notes unless transcript coverage looks sparse. You can also choose **Enhance notes** later. Rough notes are optional.
 
-Choose the microphone and meeting language in **Settings › Recording**. **Auto** picks between two languages sentence by sentence; it runs two transcribers per source, and if this Mac cannot, it continues in the first language and says so. On macOS 26 and later, languages such as Chinese (Mandarin, Taiwan, Hong Kong), Cantonese, Japanese and Korean download inside Stillnote; on earlier versions, install the language for Dictation in macOS Settings. If a source stays silent during a recording, the dock says so and links to the microphone setting. Plugging or unplugging a headset mid-meeting restarts the input automatically. Audio capture continues even when recognition is unavailable, and Stillnote never switches to a cloud transcription service. If meeting audio is denied, the warning says what to change and opens the right Settings pane. Quitting or logging out mid-recording stops the recording and saves its audio before Stillnote closes.
+Choose the microphone and meeting language in **Settings › Recording**. **Auto** picks between two languages sentence by sentence; it runs two transcribers per source, and if one candidate cannot run, it continues with the working language and says so. On macOS 26 and later, languages such as Chinese (Mandarin, Taiwan, Hong Kong), Cantonese, Japanese and Korean download inside Stillnote; on earlier versions, install the language for Dictation in macOS Settings. If a source stays silent during a recording, the dock says so and links to the microphone setting. Plugging or unplugging a headset mid-meeting restarts the input automatically. Audio capture continues even when recognition is unavailable, and Stillnote never switches to a cloud transcription service. If meeting audio is denied, the warning says what to change and opens the right Settings pane. Quitting or logging out mid-recording stops the recording and saves its audio before Stillnote closes.
 
 **Shortcuts:** `⌘N` new note, `⌘K` search from Home, `⌘J` toggle chat, `⌘⇧T` toggle the note's transcript.
+
+## Meetings, reminders and stopping
+
+A reminder's **Join and take notes** action waits for raw audio capture before opening the call. During another recording, it first stops and saves that note, then starts the next one. Clicking the panel's meeting title only opens the note. The panel's dismissal timer pauses while hovered; no macOS notification permission is required. The separate Home **Start** and **Join & record** buttons open the call and begin recording from the renderer, so they do not provide the reminder's capture-before-join ordering.
+
+Meeting-end detection uses other apps' microphone activity, transcript activity, sustained sound, and the linked calendar event. These are heuristics: an unrelated app, an inaccurate transcript, or a long pause can affect the result.
+
+| Signal | When the meeting-end prompt can appear |
+| --- | --- |
+| A call app releases the microphone | It held the microphone for at least one minute during this recording, then both the release and last detected speech are at least 30 seconds old. |
+| Calendar end | The event has ended and there has been no detected speech for two minutes. |
+| Prolonged quiet | No detected speech for ten minutes, or twenty minutes while another app still holds the microphone. This signal requires earlier speech or sustained sound. |
+
+The default adds a **60-second countdown** after the prompt. Renewed speech can withdraw it; **Keep recording** resets the answered signals. **Only ask** leaves the decision to you. **Off** disables both end prompts and tail trimming. The floating panel also shows the prompt when Stillnote is in the background.
+
+After a successful automatic or manual stop, Auto and Only ask modes may shorten the saved WAVs: they keep ten seconds after the last recognized speech or sustained sound, and trim only if at least another minute can be removed. The notice reports the amount. This changes the saved audio; Retry cannot recover a successfully removed tail. Very short untranscribed sounds can fall below the sustained-sound threshold, so choose **Off** when you need every captured sample. Track replacements are staged together; a failed or interrupted replacement restores the originals on rollback or startup recovery.
 
 ## Where data lives
 
@@ -108,7 +126,7 @@ Choose the microphone and meeting language in **Settings › Recording**. **Auto
 
 Notes, transcripts, and chat history are stored locally in `notebook.sqlite`. This notebook database is not application-encrypted; macOS account access and FileVault are the disk protection boundary. ChatGPT credentials are separately encrypted with Electron's macOS `safeStorage` mechanism and are never included in notebook backups or renderer state. Stillnote holds no Claude credentials; Claude Code keeps its own sign-in.
 
-**AI is online:** selected notes, transcripts, and recent chat context are sent to the chosen provider when you enhance or chat. ChatGPT requests use OpenAI; the supported Claude configuration uses Anthropic directly, as described above. Automatic enhancement is enabled by default once an AI plan is connected; it can be disabled in Settings. Audio is saved as separate 16 kHz mono PCM WAV files under `recordings/<meeting-id>/<session-id>/`, and is never sent to an AI provider. It remains until you delete the note forever (its audio folder then moves to the macOS Trash) or remove the local files; moving a note to Trash does not remove audio. Delete forever removes the note and its meeting-scoped chat; quoted content can remain in notebook/folder chat and subsequent backups. Storage is approximately 110 MiB per hour per source. JSON notebook backups explicitly exclude these audio files; copy the data folder separately to preserve audio.
+**AI is online:** selected notes, transcripts, and recent chat context are sent to the chosen provider when you enhance or chat. ChatGPT requests use OpenAI; the supported Claude configuration uses Anthropic directly, as described above. Automatic enhancement is enabled by default once an AI plan is connected; it can be disabled in Settings. Audio is saved as separate 16 kHz mono PCM WAV files under `recordings/<meeting-id>/<session-id>/`, and is never sent to an AI provider. With meeting-end handling enabled, the saved files can first have long trailing silence removed as described above. The remaining audio stays until you delete the note forever (its audio folder then moves to the macOS Trash) or remove the local files; moving a note to Trash does not remove audio. Delete forever removes the note and its meeting-scoped chat; quoted content can remain in notebook/folder chat and subsequent backups. Storage is approximately 110 MiB per hour per source. JSON notebook backups explicitly exclude these audio files; copy the data folder separately to preserve audio.
 
 ## Development and verification
 
@@ -116,7 +134,7 @@ Notes, transcripts, and chat history are stored locally in `notebook.sqlite`. Th
 npm test                 # storage, search, imports, streaming, synthetic OAuth and Claude CLI tests
 npm run test:claude      # opt-in: one tiny live request through your own Claude Code
 npm run test:ui          # original notebook smoke checks
-npm run test:e2e         # reusable notebook/capture/playback/AI/crash-recovery suites
+npm run test:e2e         # eight suites, including floating panels and meeting-end behavior
 npm run test:native-scheduler # deterministic native scheduling regression
 npm run test:native-lifecycle # delayed model startup, Stop, and per-source language fallback
 npm run test:native      # real native audio writer with synthetic speech
@@ -126,7 +144,8 @@ npm run test:native -- --long --recognize --streamed --dual-source # both source
 npm run format:check     # source formatting
 npm run build            # Swift helper, Electron main/preload, and renderer
 npm run package          # standalone macOS app
-npm run screenshots      # README screenshots from fictional fixtures; add `-- --demo` for the GIF
+npm run screenshots      # README still screenshots from fictional fixtures
+npm run demo             # build + capture + MP4/GIF/poster; requires ffmpeg and ffprobe
 npm run test:native:languages # opt-in: Auto language on synthetic Chinese/English speech (`-- --live` streams it)
 ```
 

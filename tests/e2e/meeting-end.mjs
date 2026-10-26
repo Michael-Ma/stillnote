@@ -55,7 +55,7 @@ export async function meetingEnd(h) {
   // Keep recording in the panel: both prompts go and the recording carries on past the countdown.
   await panel.getByRole('button', { name: 'Keep recording', exact: true }).click();
   await until(async () => (await prompt.count()) === 0, 'the prompt stayed');
-  assert.equal(await panel.locator('.panel').count(), 0);
+  await panel.locator('.panel').waitFor({ state: 'detached' });
   await page.waitForTimeout(3000);
   assert.equal(await stopButton.count(), 1, 'still recording');
 

@@ -1,6 +1,7 @@
 // 简体中文. Keys are the English strings used in the code; see app/i18n/index.mjs.
 // Missing entries fall back to English; tests/i18n.test.mjs lists any that are missing.
 export default {
+  'Cannot trim an unsupported recording track.': '无法裁剪不支持的录音格式。',
   'Audio is recording while transcription prepares.': '音频正在录制，转录正在准备中。',
   'Notebook and folder chats, and existing backups, may still contain quoted content.':
     '笔记本和文件夹聊天，以及现有备份，仍可能保留引用的内容。',

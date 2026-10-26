@@ -1,15 +1,21 @@
 import {
   closeSync,
+  constants,
+  copyFileSync,
   existsSync,
   fstatSync,
   ftruncateSync,
   lstatSync,
+  mkdtempSync,
   openSync,
   readdirSync,
   readSync,
   realpathSync,
+  renameSync,
+  rmSync,
   statSync,
   writeSync,
+  writeFileSync,
 } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
@@ -241,38 +247,91 @@ export function lastSound(filePath, { after = 0, threshold = 0.006, needed = 4, 
   }
 }
 
-// Cuts each helper track at `keep` seconds of the recording (a track that started later keeps
-// what it has before then, at least a tenth of a second). Returns the most seconds removed from
-// a track.
-export function trimRecordingTail(dir, tracks, keep) {
-  let removed = 0;
-  for (const [source, fileName] of Object.entries(files)) {
-    const filePath = join(dir, fileName);
-    if (!existsSync(filePath) || !lstatSync(filePath).isFile()) continue;
-    const offset = Number(tracks?.find((track) => track.source === source)?.startOffset) || 0;
-    const fd = openSync(filePath, 'r+');
-    try {
-      const size = fstatSync(fd).size;
-      if (!helperWav(readAt(fd, 44, 0), size)) continue;
-      const frames = Math.floor((size - 44) / 2),
-        kept = Math.min(frames, Math.max(1600, Math.round((keep - offset) * 16000)));
+// Restore originals after a failed/interrupted multi-track replacement. A committed journal
+// means every replacement succeeded; only its leftover backups need cleanup. Never follow links.
+function recoverTrim(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^\.trim-[a-zA-Z0-9]{6}$/.test(entry.name)) continue;
+    const transaction = join(dir, entry.name);
+    if (!existsSync(join(transaction, 'committed'))) {
+      for (const fileName of Object.values(files)) {
+        const original = join(transaction, fileName + '.original');
+        if (existsSync(original) && lstatSync(original).isFile())
+          renameSync(original, join(dir, fileName));
+      }
+    }
+    rmSync(transaction, { recursive: true });
+  }
+}
+
+// Stage all shortened WAVs before touching any original. Replacing a pair of files is not one
+// filesystem operation, so originals stay in a journal until both replacements commit. Startup
+// repair rolls back an interrupted replacement; a write/copy failure leaves both inputs intact.
+// `replace` is injectable to exercise a failure between the two filesystem renames.
+export function trimRecordingTail(dir, tracks, keep, { replace = renameSync } = {}) {
+  if (!Number.isFinite(keep) || keep < 0) return 0;
+  recoverTrim(dir);
+  const changes = [];
+  let transaction;
+  try {
+    for (const [source, fileName] of Object.entries(files)) {
+      const filePath = join(dir, fileName);
+      if (!existsSync(filePath) || !lstatSync(filePath).isFile()) continue;
+      const offset = Number(tracks?.find((track) => track.source === source)?.startOffset) || 0;
+      const original = openSync(filePath, 'r');
+      let frames;
+      try {
+        const size = fstatSync(original).size;
+        if (!helperWav(readAt(original, 44, 0), size))
+          throw new Error('Cannot trim an unsupported recording track.');
+        frames = Math.floor((size - 44) / 2);
+      } finally {
+        closeSync(original);
+      }
+      const kept = Math.min(frames, Math.max(1600, Math.round((keep - offset) * 16000)));
       if (kept >= frames) continue;
-      ftruncateSync(fd, 44 + kept * 2);
-      const length = Buffer.alloc(4);
-      length.writeUInt32LE(36 + kept * 2);
-      writeSync(fd, length, 0, 4, 4);
-      length.writeUInt32LE(kept * 2);
-      writeSync(fd, length, 0, 4, 40);
-      removed = Math.max(removed, (frames - kept) / 16000);
-    } finally {
-      closeSync(fd);
+      transaction ??= mkdtempSync(join(dir, '.trim-'));
+      const staged = join(transaction, fileName);
+      copyFileSync(filePath, staged, constants.COPYFILE_FICLONE);
+      const fd = openSync(staged, 'r+');
+      try {
+        ftruncateSync(fd, 44 + kept * 2);
+        const length = Buffer.alloc(4);
+        length.writeUInt32LE(36 + kept * 2);
+        writeSync(fd, length, 0, 4, 4);
+        length.writeUInt32LE(kept * 2);
+        writeSync(fd, length, 0, 4, 40);
+      } finally {
+        closeSync(fd);
+      }
+      changes.push({ fileName, filePath, staged, removed: (frames - kept) / 16000 });
+    }
+    if (!changes.length) return 0;
+    for (const change of changes) {
+      replace(change.filePath, join(transaction, change.fileName + '.original'));
+      replace(change.staged, change.filePath);
+    }
+    // The empty marker is written only once every canonical track is in place. Once it exists,
+    // recovery keeps the shortened files, even if cleanup or database finalization is interrupted.
+    writeFileSync(join(transaction, 'committed'), '', { mode: 0o600 });
+  } catch (error) {
+    // Leave the journal available for startup repair if rollback itself fails.
+    recoverTrim(dir);
+    throw error;
+  }
+  if (transaction) {
+    try {
+      rmSync(transaction, { recursive: true });
+    } catch (error) {
+      console.error('Could not clean up a completed audio trim:', error.message);
     }
   }
-  return removed;
+  return Math.max(0, ...changes.map((change) => change.removed));
 }
 
 export function repairRecordingTracks(dir) {
   if (!existsSync(dir) || !lstatSync(dir).isDirectory()) return [];
+  recoverTrim(dir);
   for (const fileName of Object.values(files)) {
     const filePath = join(dir, fileName);
     if (!existsSync(filePath) || !lstatSync(filePath).isFile()) continue;

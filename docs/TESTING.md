@@ -10,6 +10,7 @@ These tests establish application behavior; they do not measure native recogniti
 
 ```sh
 npm test
+npm run build
 npm run test:native-scheduler # after npm run build; no speech/device permission
 npm run test:native-lifecycle # delayed/failing/pending models, raw WAV persistence and language fallback
 node scripts/e2e.mjs
@@ -18,6 +19,9 @@ node scripts/e2e.mjs --suite capture --no-build
 node scripts/e2e.mjs --suite ai --no-build
 node scripts/e2e.mjs --suite recovery --no-build
 node scripts/e2e.mjs --suite calls --no-build
+node scripts/e2e.mjs --suite reminders --no-build
+node scripts/e2e.mjs --suite meeting-end --no-build
+node scripts/e2e.mjs --suite language --no-build
 node scripts/native-audio-test.mjs
 node scripts/native-audio-test.mjs --long
 # Explicit opt-in: can prompt for macOS Speech Recognition permission.
@@ -50,14 +54,19 @@ Unit/IPC regressions also exercise changed or unreadable Claude auth, rejected c
 
 ## Coverage and boundaries
 
-| Suite               | What it verifies                                                                                                                                                                                                                                                                               | What it cannot establish                                                                                                        |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `notebook`          | Editing/autosave, transcript entry, folders, star, export bytes, backup, duplicate restore, invalid-import atomicity, transcript import, Trash/restore, CJK search, immediate-close persistence, compact chat layout                                                                           | Every native file-picker interaction; OS dialogs are replaced but real handlers write/read files                                |
-| `capture`           | Start/stop state, closing during capture, per-source WAV structure, persisted session metadata/transcripts, decoded audio playback before/after restart, latest-partial flush once, empty/failed recognition retaining audio, sparse coverage, retry, failed-start recovery, multiple sessions | Native device access, actual audio content, speech accuracy, diarization, echo, real-time continuity, native writer correctness |
-| `ai`                | Failed/empty/incomplete stream rejection, cancellation, unchanged prior summary/notes, retry, revisions, citations and persistence                                                                                                                                                             | OAuth, real plan eligibility, usage limits, model quality, remote network reliability                                           |
-| `calls`             | Start Google Meet/Zoom opens the fixed address and records a new note, remembered service, Join & record only for linked events, reminder join copy and click, one detection prompt per call (notification and in-app), none while or after recording, detection off, Chinese labels           | Real browser/Zoom launch, real macOS notifications and their permission, real microphone activity from other apps               |
-| Existing unit tests | Store validation/search/revisions, SSE parser, synthetic OAuth protocol checks                                                                                                                                                                                                                 | Full desktop flow or actual provider behavior                                                                                   |
-| Packaged smoke test | Packaged app launch, preload/store path and bundled native self-test                                                                                                                                                                                                                           | Microphone capture or recognition quality                                                                                       |
+| Suite | What it verifies | Boundary |
+| --- | --- | --- |
+| `language` | English/简体中文 selection, persistence, and localized panel text | No transcription-quality measurement |
+| `reminders` | Calendar reminders, real panel renderer, primary/menu actions, settings and no automatic recording until acted on | Calendar and external links use fixtures; macOS Spaces/full-screen behavior is not established |
+| `calls` | Fixed Start URLs, calendar Join paths, note reuse, floating/in-app detection prompts, detection preferences | No real call app, real microphone activity or account |
+| `meeting-end` | Countdown/Keep recording, panel and editor clearing, automatic/manual stop, saved trim metadata, Resume, Only ask and Chinese labels | Compressed fixture timing and synthetic sound; not evidence that real meetings end reliably |
+| `capture` | Start/stop/close, WAV structure, playback and seeking, session metadata, retries, sparse coverage, failed-start recovery | Native capture and speech are substituted |
+| `recovery` | Repair of interrupted canonical WAVs, persisted durations/transcripts, playback after restart | Synthetic interruption, not an OS power-loss durability test |
+| `notebook` | Autosave, folders, stars, Markdown export, backup/import/restore, CJK search, Trash, immediate-close persistence, compact chat | Native file pickers are stubbed |
+| `ai` | Failed/empty/incomplete streams, cancellation, prior-text preservation, retries, revisions and citations | No real authentication, plan access, quota or model-quality claim |
+
+Unit and IPC tests cover the production detector thresholds, setting changes, panel sender/frame validation, stale panel actions, and staged multi-track trimming. Failure injection rejects a second-track replacement after the first one has changed, then checks byte-for-byte restoration. Recovery tests reconstruct incomplete and committed trim journals. The meeting-end E2E waits for both renderers to clear after Keep recording; delivery to the editor does not prove the panel has rendered its own update.
+
 
 The fixture adapter feeds fragmented SSE bytes through the production `consumeResponse`
 parser. Capture fixtures emit realistic line-delimited native events, and create valid
@@ -77,7 +86,7 @@ restore playable audio files.
 
 `STILLNOTE_TEST_ADAPTER` is accepted only by an unpackaged app with `NODE_ENV=test` and
 an explicit `STILLNOTE_DATA_DIR`. It names an absolute module exporting
-`createTestAdapter({dataDir})`, which returns `{createNative, createAuth}`. The adapter
+`createTestAdapter({dataDir})`, which supplies `createNative`, `createAuth`, `createClaude`, and optional calendar/panel/timing fixtures. The adapter
 writes a ready marker; the runner refuses to proceed unless that marker exists. This
 prevents an outdated build from accidentally using real capture or authentication.
 
@@ -101,8 +110,8 @@ solely for tests. Never make this adapter available to a packaged build.
 passes it through the native `--audio-self-test` path. It tests the actual native audio
 writer using known input, without accessing a microphone, network, or Speech permission.
 Its report and synthetic audio remain in `output/native-audio/<run>/report.json`.
-The optional `--recognize` flag exercises on-device file recognition through a dedicated macOS test app with its own Speech usage description. `--streamed` additionally feeds prerecorded PCM through the production live recognition windows in real time, exercising chunk scheduling and finalization without opening a microphone. `--long` repeats the fixture to span more than 60 seconds. `--dual-source` drives microphone and system channels together and scores each independently. It reproduces the concurrency failure that single-source tests missed. These modes may prompt for Speech Recognition permission.
-It is deliberately excluded from the automatic deterministic suite. Synthetic recognition acceptance requires at least 70% keyword recall, 75–150% of reference word count, and token-level WER ≤25%. WER is token Levenshtein edit distance divided by reference token count; normalization changes case and punctuation only. Brand spellings and word boundaries are not rewritten, so “time stamps” versus “timestamps” and “Still note” versus “Stillnote” count as errors. Reports include the edit distance, token counts, and scoring definition. This small synthetic fixture is a regression test, not a general accuracy benchmark.
+The optional `--recognize` flag exercises on-device file recognition. On macOS 26+ it launches the helper directly without legacy Speech authorization; older macOS uses a dedicated test app with its own Speech usage description. `--streamed` additionally feeds prerecorded PCM through the production live recognition windows in real time, exercising chunk scheduling and finalization without opening a microphone. `--long` repeats the fixture to span more than 60 seconds. `--dual-source` drives microphone and system channels together and scores each independently. It reproduces the concurrency failure that single-source tests missed. These modes may prompt for Speech Recognition permission.
+It is deliberately excluded from the automatic deterministic suite. Synthetic recognition acceptance requires token-level WER ≤15% for each source. Keyword recall and word-count ratios are reported as diagnostics, not additional pass thresholds. WER is token Levenshtein edit distance divided by reference token count; normalization extracts lowercase ASCII English words and removes punctuation. Brand spellings and word boundaries are not rewritten, so “time stamps” versus “timestamps” and “Still note” versus “Stillnote” count as errors. Reports include the edit distance, token counts, and scoring definition. This small synthetic fixture is a regression test, not a general accuracy benchmark.
 Every native audio run also converts the synthetic fixture to 48 kHz stereo AIFF, matching common microphone/system formats, then verifies native normalization to 16 kHz mono WAV with preserved duration and non-silent signal. Those metrics appear under `stereoNormalization`; recognition uses the original case.
 
 The macOS synthesis service must be available: some sandboxed environments can make
@@ -152,3 +161,16 @@ the evidence for each acceptance result. Label unexecuted cases as pending.
 ## Native scheduler regression
 
 `npm run test:native-scheduler` exercises the production Swift scheduler with a substituted async worker, not a substituted queue. It verifies maximum concurrency of one, FIFO progress across sources, the 24-job backlog bound, pending-job cancellation, active cancellation without duplicate completion, and recovery for the next job. It invokes no speech-recognition requests or audio devices and runs in CI after the native build. This complements, rather than replaces, the real dual-source acceptance test.
+
+## Demo video and still screenshots
+
+Run `npm run demo` from a checkout with dependencies installed, a supported Swift/Xcode toolchain, and `ffmpeg` plus `ffprobe` on PATH. The wrapper builds current sources, launches the unpackaged app with isolated fixture data, captures its real UI, and produces:
+
+- `docs/images/demo.mp4`: shareable H.264 video with fixture labeling.
+- `docs/images/demo-preview.gif`: lightweight README preview.
+- `docs/images/demo-poster.png`: poster frame.
+- `docs/images/demo-reminder.png` and `demo-meeting-end.png`: real panel captures used by the compositor.
+
+Panel overlays use timing collected during capture; the panels themselves are static screenshots, so their displayed countdown is illustrative. A persistent label discloses fictional data, synthetic audio/recognition/AI, compressed end detection, and compositing. The command removes raw MP4/timing intermediates on success; `.gitignore` also excludes them. A failed run may leave disposable `.test-data-*` or intermediate files for inspection. Do not use personal meetings as presentation fixtures.
+
+`npm run screenshots` continues to generate the README's separate still images. Its older `--demo` GIF mode is retained for compatibility; the current video and README preview are generated by `npm run demo`. Neither command establishes live-device capture or account inference. Inspect the rendered frames and decode the finished video before publishing regenerated media.
