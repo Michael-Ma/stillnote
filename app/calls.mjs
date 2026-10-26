@@ -69,11 +69,13 @@ export const callTitle = (service, at, t = translator('en')) =>
     : t('Meeting · {time}', { time: time(at, t.locale) });
 
 // The calendar meeting under way, or starting within `lead`, when a call is detected, so the notes
-// go into that occurrence's note. The one starting nearest to now wins.
+// go into that occurrence's note. The one starting nearest to now wins. Only meetings count (a
+// call link or attendees): a call during a long "Focus time" block gets a note of its own.
 export function currentEvent(events, now, lead = 5 * 60_000) {
   let best = null;
   for (const event of Array.isArray(events) ? events : []) {
     if (!event || event.allDay) continue;
+    if (!meetingLink(event) && !String(event.participants ?? '').trim()) continue;
     const start = Date.parse(event.start),
       end = Date.parse(event.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || start - lead > now || now >= end)
@@ -84,21 +86,24 @@ export function currentEvent(events, now, lead = 5 * 60_000) {
 }
 
 // Meeting detection. Another app's microphone use counts as a meeting once it has lasted `settle`
-// ms (dictation or a quick voice memo does not); a pause shorter than `gap` (muting, switching
-// microphones) continues the same session. A session prompts at most once, and never when
-// Stillnote recorded during it.
+// ms without a break (dictation or a quick voice memo does not, nor do two of them a minute
+// apart); a pause shorter than `gap` (muting, switching microphones) continues the same session.
+// A session prompts at most once, and never when Stillnote recorded during it. `session` numbers
+// sessions, so a prompt acted on later can tell whether its call is still the one under way.
 export function meetingDetector({ settle = 5000, gap = 90_000 } = {}) {
   let active = false,
     since = 0,
     quietSince = -Infinity,
-    handled = false;
+    handled = false,
+    session = 0;
   return {
     observe(on, now) {
       if (on && !active) {
         if (now - quietSince >= gap) {
-          since = now;
           handled = false;
+          session++;
         }
+        since = now;
         active = true;
       } else if (!on && active) {
         active = false;
@@ -120,5 +125,6 @@ export function meetingDetector({ settle = 5000, gap = 90_000 } = {}) {
       return active && !handled ? Math.max(0, since + settle - now) : null;
     },
     active: () => active,
+    session: () => session,
   };
 }

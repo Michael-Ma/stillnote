@@ -50,6 +50,7 @@ export function HomeFeed({
   newNote,
   startMeeting,
   joinMeeting,
+  callPending,
   openNote,
   importFile,
   setQuery,
@@ -120,10 +121,12 @@ export function HomeFeed({
                             </span>
                             {!soon && <span className="start-event">{t('Take notes')}</span>}
                           </button>
-                          {link ? (
+                          {/* Starting now records at once, so it is offered only near the start. */}
+                          {soon && link ? (
                             <button
                               className="start-event join-event"
                               title={t('Join the call and start recording')}
+                              disabled={callPending}
                               onClick={() => joinMeeting(e)}
                             >
                               {t('Join & record')}
@@ -133,6 +136,7 @@ export function HomeFeed({
                               <button
                                 className="start-event"
                                 title={t('Open the note and start recording')}
+                                disabled={callPending}
                                 onClick={() => startMeeting(note)}
                               >
                                 {t('Start now')}

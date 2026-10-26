@@ -88,7 +88,8 @@ export async function calls(h) {
   const joinButton = (text) =>
     row(text).getByRole('button', { name: 'Join & record', exact: true });
   await joinButton('E2E design review').waitFor();
-  assert.equal(await joinButton('E2E customer call').count(), 1);
+  // Join & record starts recording at once, so a meeting hours away offers it only near its start.
+  assert.equal(await joinButton('E2E customer call').count(), 0);
   assert.equal(await joinButton('E2E focus time').count(), 0, 'no link, no Join & record');
   assert.match(await row('E2E design review').innerText(), /Google Meet/);
   assert.match(await row('E2E customer call').innerText(), /Zoom/);

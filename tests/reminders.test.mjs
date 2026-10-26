@@ -61,6 +61,29 @@ test('reminder text says when the meeting starts and what a click does', () => {
   assert.match(reminderBody(event('a', -30_000), now, false), /^Starting now/);
 });
 
+test('during another recording, the reminder says a click saves it and switches', () => {
+  const t = translator('en');
+  assert.equal(
+    reminderBody(event('a', 60_000), now, true, t, 'Weekly sync'),
+    'Starts in 1 min · Click to save “Weekly sync” and record this meeting instead.',
+  );
+  assert.match(
+    reminderBody(
+      { ...event('a', 60_000), notes: 'https://meet.google.com/abc-defg-hij' },
+      now,
+      true,
+      t,
+      'Weekly sync',
+    ),
+    /Click to save “Weekly sync”, then join and record this meeting\.$/,
+  );
+  assert.equal(
+    reminderBody(event('a', 60_000), now, false, t, 'Weekly sync'),
+    'Starts in 1 min · Click to take notes.',
+    'without auto-record a click only opens the note',
+  );
+});
+
 test('a meeting with a call link invites the user to join', () => {
   const call = event('a', 60_000, 30, { location: 'https://zoom.us/j/123' });
   assert.equal(

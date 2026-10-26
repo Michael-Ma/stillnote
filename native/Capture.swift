@@ -1331,7 +1331,9 @@ func microphoneInUseElsewhere() -> Bool {
   let input = audioNumber(system, kAudioHardwarePropertyDefaultInputDevice)
   return input != 0 && audioNumber(input, kAudioDevicePropertyDeviceIsRunningSomewhere) != 0
 }
-// Checks every two seconds and reports each change, starting with the current state.
+// Checks every two seconds and reports each change, starting with the current state. CoreAudio is
+// read off the main actor, which also receives recorded audio: a slow audio service (a Bluetooth
+// handoff) must not hold up capture.
 @MainActor
 final class MicrophoneWatch {
   var task: Task<Void, Never>?
@@ -1340,8 +1342,8 @@ final class MicrophoneWatch {
     guard task == nil else { return }
     task = Task { @MainActor [weak self] in
       while !Task.isCancelled {
-        guard let self else { break }
-        let now = microphoneInUseElsewhere()
+        let now = await Task.detached(priority: .utility) { microphoneInUseElsewhere() }.value
+        guard let self, !Task.isCancelled else { break }
         if now != self.active {
           self.active = now
           emit(["type": "microphone-activity", "active": now])

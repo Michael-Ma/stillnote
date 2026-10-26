@@ -111,6 +111,7 @@ test('a detected call goes into the calendar meeting under way or about to start
     id,
     start: new Date(now + startMinutes * 60_000).toISOString(),
     end: new Date(now + (startMinutes + minutes) * 60_000).toISOString(),
+    participants: 'Priya, Sam',
     ...extra,
   });
   assert.equal(currentEvent([event('ended', -40), event('later', 20)], now), null);
@@ -118,6 +119,13 @@ test('a detected call goes into the calendar meeting under way or about to start
   assert.equal(currentEvent([event('running', -10), event('soon', 12)], now).id, 'running');
   assert.equal(currentEvent([event('day', -600, 1440, { allDay: true })], now), null);
   assert.equal(currentEvent(null, now), null);
+  // A long block with no call link and no attendees is not a meeting a call belongs to.
+  const focus = event('focus', -120, 480, { participants: '' });
+  assert.equal(currentEvent([focus], now), null);
+  assert.equal(
+    currentEvent([{ ...focus, notes: 'https://meet.google.com/abc-defg-hij' }], now).id,
+    'focus',
+  );
 });
 
 test('detection waits for the call to settle and prompts once per session', () => {
@@ -138,6 +146,23 @@ test('detection waits for the call to settle and prompts once per session', () =
   detector.observe(true, 130_000);
   assert.equal(detector.active(), true);
   assert.equal(detector.due(136_000, false), true);
+});
+
+test('two short microphone uses a minute apart do not add up to a meeting', () => {
+  const detector = meetingDetector({ settle: 5000, gap: 90_000 });
+  detector.observe(true, 0);
+  detector.observe(false, 3000);
+  const first = detector.session();
+  detector.observe(true, 60_000);
+  assert.equal(detector.due(60_000, false), false, 'settling counts the current stretch');
+  assert.equal(detector.next(60_000), 5000);
+  assert.equal(detector.session(), first, 'still the same session');
+  detector.observe(false, 62_000);
+  assert.equal(detector.due(70_000, false), false);
+  // A use that does last is still found, and a new session gets a new number.
+  detector.observe(true, 200_000);
+  assert.ok(detector.session() > first);
+  assert.equal(detector.due(205_000, false), true);
 });
 
 test('a short microphone use that ends before settling never prompts', () => {

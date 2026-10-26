@@ -311,3 +311,47 @@ test('calls open only fixed or calendar links; reminders join and detection prom
     events().some((e) => e.type === 'native-command' && e.op === 'watch-microphone' && !e.enabled),
   );
 });
+test('one note per calendar event, and a reminder during a recording switches to the next', async (t) => {
+  const { call, win, events } = await setup(t, 'back-to-back', undefined, {
+    calendar: [
+      {
+        id: 'next',
+        title: 'Next call',
+        startIn: 30_000,
+        notes: 'https://meet.google.com/abc-defg-hij',
+      },
+    ],
+  });
+  const until = async (check) => {
+    for (let i = 0; i < 300 && !(await check()); i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(await check());
+  };
+  // Join clicked twice: both creates land on the same note.
+  const once = await call('create', { title: 'Design call', eventKey: 'design@2026-10-25' });
+  const twice = await call('create', { title: 'Design call', eventKey: 'design@2026-10-25' });
+  assert.equal(twice.id, once.id);
+
+  await call('setting', 'autoEnhance', false);
+  const current = await call('create', { title: 'Weekly sync' });
+  await call('record', current.id);
+  await until(async () => {
+    const state = await call('state');
+    return state.recording?.id === current.id && !state.starting;
+  });
+  await call('calendar');
+  await until(() => globalThis.__stillnoteReminders.length === 1);
+  const [reminder] = globalThis.__stillnoteReminders;
+  assert.match(reminder.body, /Click to save “Weekly sync”, then join and record this meeting\.$/);
+  reminder.open();
+  // The recording in progress is saved first, then the next meeting is opened to record.
+  await until(async () => (await call('state')).recording === null);
+  const saved = (await call('state')).meetings.find((m) => m.id === current.id);
+  assert.equal(saved.recordings[0].status, 'completed');
+  await until(() => win.events.findLast((e) => e.type === 'open-meeting')?.record === true);
+  const next = (await call('state')).meetings.find((m) => m.title === 'Next call');
+  assert.equal(win.events.findLast((e) => e.type === 'open-meeting').id, next.id);
+  assert.ok(
+    events().some((e) => e.type === 'open-external' && e.url.startsWith('https://meet.google.com')),
+  );
+});

@@ -135,6 +135,10 @@ if (!app.requestSingleInstanceLock()) {
     watchedAt = 0,
     detectTimer,
     detector = meetingDetector(),
+    // The "Meeting detected" notification on screen, closed once its prompt is acted on in the app.
+    detectedNotice,
+    // Back-to-back meetings: what to do once the recording in progress has stopped and saved.
+    afterStop,
     notificationsBlocked = false;
   const pendingPartials = new Map();
   // Notifications on screen; a reference keeps each click handler from being garbage collected.
@@ -276,13 +280,20 @@ if (!app.requestSingleInstanceLock()) {
       releaseCapture();
       if (updated) meetingUpdates.flush(active.id, updated);
       afterCapture?.();
+      const then = afterStop;
+      afterStop = undefined;
+      then?.();
     }
     return updated;
   }
   const idle = () => !recording && !starting && !stopping && !transcriptionWait;
   // Web links open in the user's browser or meeting app; the test adapter records them instead.
-  const openExternal = (url) =>
-    testAdapter?.openExternal ? testAdapter.openExternal(url) : shell.openExternal(url);
+  // Only web pages and System Settings panes are ever opened.
+  const openExternal = (url) => {
+    if (!/^(?:https|x-apple\.systempreferences):/i.test(url))
+      return Promise.reject(new Error('Only web and System Settings links can be opened.'));
+    return testAdapter?.openExternal ? testAdapter.openExternal(url) : shell.openExternal(url);
+  };
   async function openCall(url) {
     try {
       await openExternal(url);
@@ -301,6 +312,8 @@ if (!app.requestSingleInstanceLock()) {
     if (!Notification.isSupported()) return;
     const notification = new Notification({ title, body });
     shown.add(notification);
+    // Ones never clicked or closed would otherwise be kept for the life of the app.
+    if (shown.size > 20) shown.delete(shown.values().next().value);
     notification.on('click', () => {
       shown.delete(notification);
       open();
@@ -319,6 +332,7 @@ if (!app.requestSingleInstanceLock()) {
       });
     });
     notification.show();
+    return notification;
   }
   function showWindow() {
     if (!win || win.isDestroyed()) return false;
@@ -351,12 +365,20 @@ if (!app.requestSingleInstanceLock()) {
     const body = event
       ? t('Click to record “{title}” in Stillnote.', { title: event.title })
       : t('Click to open Stillnote and start recording.');
-    notify({ kind: 'detected', title, body, event }, () => {
+    const session = detector.session();
+    detectedNotice = notify({ kind: 'detected', title, body, event }, () => {
       try {
-        // Clicked from Notification Center after the call ended: open the meeting, don't record.
-        const live = detector.active();
-        if (event || live)
-          showMeeting({ event, title: callTitle(null, Date.now(), tr()), record: live });
+        // Already recording (the in-app prompt was used, or another meeting): show that note.
+        if (recording) {
+          if (showWindow()) emit({ type: 'open-meeting', id: recording.id, record: false });
+          return;
+        }
+        // A prompt from an earlier call only brings Stillnote forward; clicked after its call
+        // ended, it opens the meeting's note without recording.
+        if (detector.session() !== session) showWindow();
+        else if (detector.active())
+          showMeeting({ event, title: callTitle(null, Date.now(), tr()), record: true });
+        else if (event) showMeeting({ event, record: false });
         else showWindow();
       } catch (error) {
         console.error('Could not open the detected meeting:', error.message);
@@ -381,6 +403,8 @@ if (!app.requestSingleInstanceLock()) {
   // started for something else is told to watch, and one that stopped is replaced, at most every
   // five minutes so a broken helper cannot loop.
   function watchMicrophone({ retry = false } = {}) {
+    // A scripted run without the fake helper (smoke tests) must not prompt about real calls.
+    if (scripted && !testAdapter) return;
     if (quitting || store.settings().meetingDetection === false || (native && watching === native))
       return;
     if (retry && !native && Date.now() - watchedAt < 5 * 60_000) return;
@@ -656,6 +680,8 @@ if (!app.requestSingleInstanceLock()) {
     child.on('close', () => {
       if (native !== child) return;
       native = undefined;
+      // Its last report no longer holds: no prompt from a dead helper's microphone state.
+      detector.observe(false, Date.now());
       requests.reject(new Error('Native helper stopped. Please try again.'));
       calendarWait?.reject(new Error('Calendar helper stopped.'));
       calendarWait = undefined;
@@ -991,7 +1017,12 @@ if (!app.requestSingleInstanceLock()) {
         );
       buildMenu();
       register('state', () => ({ ...snapshot(), startupError }));
-      register('create', (input) => store.create(input));
+      // One note per calendar occurrence, even when Join or Start is clicked twice quickly.
+      register('create', (input) =>
+        typeof input?.eventKey === 'string'
+          ? (meetingForEvent(store.all(), input.eventKey) ?? store.create(input))
+          : store.create(input),
+      );
       register('update', (id, patch) => {
         if (recording?.id === id && patch.deletedAt)
           throw new Error('Stop recording before moving this note to Trash.');
@@ -1039,6 +1070,9 @@ if (!app.requestSingleInstanceLock()) {
           throw new Error('Wait for transcription to finish before recording.');
         const m = store.get(id);
         if (m.deletedAt) throw new Error('Restore this meeting before recording.');
+        // A "Meeting detected" notification has served its purpose once a recording starts.
+        detectedNotice?.close();
+        detectedNotice = undefined;
         const recordingId = randomUUID(),
           startedAt = Date.now(),
           plan = recognitionPlan(store.settings()),
@@ -1230,6 +1264,8 @@ if (!app.requestSingleInstanceLock()) {
       register('start-call', async (service) => {
         if (!startableServices.includes(service)) throw new Error('Unknown meeting service.');
         if (recording || starting || stopping) throw new Error('A meeting is already recording.');
+        if (transcriptionWait)
+          throw new Error('Wait for transcription to finish before recording.');
         store.setting('callService', service);
         await openCall(callServices[service].start);
         return store.settings();
@@ -1249,6 +1285,8 @@ if (!app.requestSingleInstanceLock()) {
           recording?.id !== meetingForEvent(store.all(), key)?.id
         )
           throw new Error('A meeting is already recording.');
+        if (transcriptionWait)
+          throw new Error('Wait for transcription to finish before recording.');
         await openCall(link.url);
         return link.service;
       });
@@ -1453,7 +1491,14 @@ if (!app.requestSingleInstanceLock()) {
         try {
           const settings = store.settings();
           const action = reminderAction(event, Date.now(), settings.reminderAutoRecord !== false);
-          showMeeting({ event, record: action.record });
+          const other =
+            recording && meetingForEvent(store.all(), eventKey(event))?.id !== recording.id;
+          if (other && action.record) {
+            // Back-to-back meetings: save the meeting being recorded, then record this one.
+            afterStop = () => showMeeting({ event, record: true });
+            showWindow();
+            stopCapture();
+          } else showMeeting({ event, record: action.record });
           // The call opens last, in front: the meeting app is where Join has to be clicked.
           if (action.join)
             openCall(action.join.url).catch((error) =>
@@ -1471,7 +1516,13 @@ if (!app.requestSingleInstanceLock()) {
           // Already joined and recording from Home: nothing to remind about.
           if (recording && meetingForEvent(store.all(), eventKey(event))?.id === recording.id)
             continue;
-          const body = reminderBody(event, Date.now(), settings.reminderAutoRecord !== false, tr());
+          const body = reminderBody(
+            event,
+            Date.now(),
+            settings.reminderAutoRecord !== false,
+            tr(),
+            recording ? store.get(recording.id).title : null,
+          );
           notify({ kind: 'reminder', title: event.title, body, event }, () =>
             openFromReminder(event),
           );
@@ -1479,7 +1530,9 @@ if (!app.requestSingleInstanceLock()) {
       };
       const refreshCalendar = () => {
         const settings = store.settings();
-        if (settings.calendarConnected && settings.meetingReminders !== false && !calendarWait)
+        // Reminders and meeting detection both match calls to the calendar.
+        const wanted = settings.meetingReminders !== false || settings.meetingDetection !== false;
+        if (settings.calendarConnected && wanted && !calendarWait)
           loadCalendar({ quiet: true }).catch(() => {});
       };
       refreshCalendar();

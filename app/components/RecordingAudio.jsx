@@ -23,7 +23,7 @@ const english = translator('en');
 const sourceName = (source, t) => (source === 'system' ? t('Meeting audio') : t('Microphone'));
 export const isCapturing = (recording) =>
   ['starting', 'recording', 'capturing', 'stopping'].includes(recording.status);
-const playableTracks = (recording) =>
+export const playableTracks = (recording) =>
   (recording.tracks ?? []).filter((track) => track.fileName && track.bytes !== 0);
 
 export function transcriptCoverageWarning(meeting, t = english) {

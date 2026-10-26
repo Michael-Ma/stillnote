@@ -8,7 +8,7 @@ import { Sidebar } from './components/Sidebar.jsx';
 import { NoteToolbar, NoteView } from './components/NoteView.jsx';
 import { EnhancePill, RecordPill } from './components/Dock.jsx';
 import { TranscriptSheet } from './components/TranscriptSheet.jsx';
-import { isCapturing } from './components/RecordingAudio.jsx';
+import { isCapturing, playableTracks } from './components/RecordingAudio.jsx';
 import { ChatPanel } from './components/ChatPanel.jsx';
 import { SettingsDialog } from './components/SettingsDialog.jsx';
 import { aiView, claudeModels, modelKey } from './ai-view.mjs';
@@ -64,7 +64,10 @@ function App() {
     [saving, setSaving] = useState(false),
     [drafts, setDrafts] = useState({}),
     // "Meeting detected": the in-app twin of the notification, until acted on or dismissed.
-    [detected, setDetected] = useState(null);
+    [detected, setDetected] = useState(null),
+    // A Start, Join or Take notes click in progress: the buttons wait, so a double click opens
+    // one call and one note.
+    [callPending, setCallPending] = useState(false);
   const draftRef = useRef({}),
     timers = useRef({}),
     dialogRef = useRef(),
@@ -78,7 +81,8 @@ function App() {
     // Streamed AI text is drawn in batches, not once per token.
     pendingDelta = useRef(''),
     deltaTimer = useRef(0),
-    newNoteRef = useRef();
+    newNoteRef = useRef(),
+    callPendingRef = useRef(false);
   // Interface language: the setting, else the first macOS language Stillnote has.
   const language = resolveLanguage(
     data?.settings.uiLanguage,
@@ -417,24 +421,42 @@ function App() {
   }
   // Start a meeting: the main process opens a new Google Meet or Zoom call, then it is recorded
   // in a new note named after the service and the time.
-  async function startCall(service) {
-    const settings = await guard(() => call('start-call', service));
-    if (!settings) return;
-    setData((d) => ({ ...d, settings }));
-    const id = await newNote({ title: callTitle(service, Date.now(), t) });
-    if (id) await record(id);
+  async function oneCall(work) {
+    if (callPendingRef.current) return;
+    callPendingRef.current = true;
+    setCallPending(true);
+    try {
+      await work();
+    } finally {
+      callPendingRef.current = false;
+      setCallPending(false);
+    }
+  }
+  function startCall(service) {
+    return oneCall(async () => {
+      const settings = await guard(() => call('start-call', service));
+      if (!settings) return;
+      setData((d) => ({ ...d, settings }));
+      const id = await newNote({ title: callTitle(service, Date.now(), t) });
+      if (id) await record(id);
+    });
   }
   // Join & record: open the event's call, then record in its note.
-  async function joinMeeting(event) {
-    if (await guard(() => call('join-call', eventKey(event)))) await startMeeting(eventNote(event));
+  function joinMeeting(event) {
+    return oneCall(async () => {
+      if (await guard(() => call('join-call', eventKey(event))))
+        await startMeeting(eventNote(event));
+    });
   }
   // "Take notes" on a detected meeting: record into the calendar meeting under way, or a new note.
-  async function takeDetectedNotes() {
-    const event = detected?.event;
-    setDetected(null);
-    if (event) return startMeeting(eventNote(event));
-    const id = await newNote({ title: callTitle(null, Date.now(), t) });
-    if (id) await record(id);
+  function takeDetectedNotes() {
+    return oneCall(async () => {
+      const event = detected?.event;
+      setDetected(null);
+      if (event) return startMeeting(eventNote(event));
+      const id = await newNote({ title: callTitle(null, Date.now(), t) });
+      if (id) await record(id);
+    });
   }
   async function openNote(m, panel = null) {
     await guard(async () => {
@@ -868,7 +890,9 @@ function App() {
                 <>
                   <StartMeeting
                     service={data.settings.callService}
-                    disabled={!!data.recording || data.starting}
+                    disabled={
+                      !!data.recording || data.starting || callPending || !!retryingRecording
+                    }
                     onStart={startCall}
                   />
                   <button
@@ -961,8 +985,9 @@ function App() {
                   calendarBusy={calendarBusy}
                   calendar={calendar}
                   newNote={newNote}
-                  startMeeting={startMeeting}
+                  startMeeting={(input) => oneCall(() => startMeeting(input))}
                   joinMeeting={joinMeeting}
+                  callPending={callPending}
                   openNote={openNote}
                   importFile={importFile}
                   setQuery={setQuery}
@@ -981,7 +1006,11 @@ function App() {
                       {detected.event?.title || t('Another app is using your microphone.')}
                     </small>
                   </span>
-                  <button className="banner-action" onClick={takeDetectedNotes}>
+                  <button
+                    className="banner-action"
+                    disabled={callPending}
+                    onClick={takeDetectedNotes}
+                  >
                     {t('Take notes')}
                   </button>
                   <IconButton
@@ -1075,7 +1104,11 @@ function App() {
                         levels={audioLevels}
                         sheet={sheet}
                         lines={meeting.transcript.length}
-                        saved={meeting.recordings?.filter((r) => !isCapturing(r)).length ?? 0}
+                        saved={
+                          meeting.recordings?.filter(
+                            (r) => !isCapturing(r) && playableTracks(r).length > 0,
+                          ).length ?? 0
+                        }
                         disabled={!!data.recording || !!retryingRecording}
                         onStart={() => record()}
                         onStop={() => guard(() => call('stop'))}

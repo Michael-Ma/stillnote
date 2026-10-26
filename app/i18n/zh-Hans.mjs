@@ -326,6 +326,11 @@ export default {
   'No sound from {device}': '{device} 没有声音',
   'No sound from the microphone': '麦克风没有声音',
   'Open Stillnote when a meeting is detected': '检测到会议时打开 Stillnote',
+  'Click to save “{title}”, then join and record this meeting.':
+    '点击保存“{title}”，然后加入并录制这场会议。',
+  'Click to save “{title}” and record this meeting instead.':
+    '点击保存“{title}”，改为录制这场会议。',
+  'Only web and System Settings links can be opened.': '只能打开网页和系统设置的链接。',
   'Bring Stillnote to the front with its prompt, not only a notification.':
     '把 Stillnote 连同提示一起切到前台，而不只是发通知。',
   'No transcript text was recovered. The existing transcript was preserved.':
