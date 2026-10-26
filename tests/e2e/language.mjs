@@ -33,7 +33,7 @@ export async function language(h) {
     reminder = await h.desktop.evaluate(() => globalThis.__stillnoteReminders[0]?.body ?? '');
     if (!reminder) await page.waitForTimeout(100);
   }
-  assert.match(reminder, /分钟后开始|即将开始/);
+  assert.match(reminder, /分钟后开始|现在开始/);
   assert.match(reminder, /点按以记笔记/);
 
   // A new note starts with a Chinese placeholder title and a Chinese dock.
