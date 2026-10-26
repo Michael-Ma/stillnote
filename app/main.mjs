@@ -89,10 +89,20 @@ app.setPath(
   process.env.STILLNOTE_DATA_DIR ??
     (app.isPackaged ? join(app.getPath('appData'), 'Stillnote') : join(root, '.data')),
 );
-// Scripted runs against an isolated data directory use Chromium's mock keychain, so test
-// launches never ask for access to the real “Stillnote Safe Storage” keychain item.
-if (process.env.STILLNOTE_MOCK_KEYCHAIN && process.env.STILLNOTE_DATA_DIR)
+// Scripted runs against an isolated data directory (tests, screenshots) use Chromium's mock
+// keychain, so they never ask for the real “Stillnote Safe Storage” keychain item. They also stay
+// out of the way of the person at the Mac: no Dock icon, never active, and a window that is
+// invisible, takes no focus or clicks, and keeps rendering while behind other windows.
+const scripted = Boolean(process.env.STILLNOTE_MOCK_KEYCHAIN && process.env.STILLNOTE_DATA_DIR);
+if (scripted) {
   app.commandLine.appendSwitch('use-mock-keychain');
+  for (const flag of [
+    'disable-renderer-backgrounding',
+    'disable-backgrounding-occluded-windows',
+    'disable-background-timer-throttling',
+  ])
+    app.commandLine.appendSwitch(flag);
+}
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -313,9 +323,14 @@ if (!app.requestSingleInstanceLock()) {
   function showWindow() {
     if (!win || win.isDestroyed()) return false;
     if (win.isMinimized()) win.restore();
-    win.show();
-    app.focus({ steal: true });
+    reveal();
+    if (!scripted) app.focus({ steal: true });
     return true;
+  }
+  // Shows the window; a scripted run never takes focus.
+  function reveal() {
+    if (scripted) win.showInactive();
+    else win.show();
   }
   // Brings Stillnote forward on a calendar occurrence's note (created the first time) or on a new
   // note, and records when asked and nothing else is in progress.
@@ -825,9 +840,7 @@ if (!app.requestSingleInstanceLock()) {
     .whenReady()
     .then(async () => {
       store = new Store(app.getPath('userData'));
-      // A scripted copy beside the user's own Stillnote is marked, so the two Dock icons differ.
-      if (process.env.STILLNOTE_MOCK_KEYCHAIN && process.env.STILLNOTE_DATA_DIR)
-        app.dock?.setBadge('Test');
+      if (scripted) app.setActivationPolicy?.('accessory');
       if (
         !app.isPackaged &&
         process.env.NODE_ENV === 'test' &&
@@ -910,13 +923,20 @@ if (!app.requestSingleInstanceLock()) {
         backgroundColor: '#f8f7f3',
         titleBarStyle: 'hiddenInset',
         trafficLightPosition: { x: 20, y: 20 },
+        show: !scripted,
         webPreferences: {
           preload: join(root, 'dist-electron/preload.cjs'),
           contextIsolation: true,
           nodeIntegration: false,
           sandbox: true,
+          backgroundThrottling: !scripted,
         },
       });
+      if (scripted) {
+        win.setOpacity(0);
+        win.setIgnoreMouseEvents(true);
+        win.showInactive();
+      }
       let claudeCheckedAt = 0;
       win.on('focus', () => {
         // Pick up a sign-in or install finished in Terminal or the browser.
@@ -1127,7 +1147,7 @@ if (!app.requestSingleInstanceLock()) {
           }
         }, 40_000);
         afterCapture = quit;
-        if (win && !win.isDestroyed()) win.show();
+        if (win && !win.isDestroyed()) reveal();
         stopCapture();
       };
       register('recording-url', (meetingId, recordingId, source) => {
@@ -1385,8 +1405,9 @@ if (!app.requestSingleInstanceLock()) {
         }
       });
       app.on('second-instance', () => {
-        win?.show();
-        win?.focus();
+        if (!win || win.isDestroyed()) return;
+        reveal();
+        if (!scripted) win.focus();
       });
       app.on('before-quit', (event) => {
         if (recording || starting) {
