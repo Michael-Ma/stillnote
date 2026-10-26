@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   AlertTriangle,
   AudioLines,
+  History,
   LoaderCircle,
   Mic,
   Pause,
@@ -382,6 +383,7 @@ export function RecordingAudio({
   meeting,
   call,
   onRetry,
+  onRestore,
   retrying,
   disabled,
   locale = 'en-US',
@@ -424,25 +426,40 @@ export function RecordingAudio({
                       : t('Language not recorded')}
                   </span>
                 </div>
-                {!capturing && tracks.length > 0 && (
-                  <button
-                    className="text-button"
-                    disabled={disabled || !!retrying}
-                    onClick={() => onRetry(recording.id)}
-                    title={
-                      sameLanguage(recording)
-                        ? undefined
-                        : t('Transcribes again in {language}', { language: target })
-                    }
-                  >
-                    {retrying === recording.id ? (
-                      <LoaderCircle size={13} className="spin" />
-                    ) : (
-                      <RotateCcw size={13} />
-                    )}
-                    {retrying === recording.id ? t('Transcribing…') : t('Retry transcription')}
-                  </button>
-                )}
+                <div className="recording-actions">
+                  {!capturing && recording.previousAt && (
+                    <button
+                      className="text-button"
+                      disabled={disabled || !!retrying}
+                      onClick={() => onRestore(recording.id)}
+                      title={t('Brings back the transcript from before {time}', {
+                        time: `${date(recording.previousAt, t.locale)} ${time(recording.previousAt, t.locale)}`,
+                      })}
+                    >
+                      <History size={13} />
+                      {t('Restore previous transcript')}
+                    </button>
+                  )}
+                  {!capturing && tracks.length > 0 && (
+                    <button
+                      className="text-button"
+                      disabled={disabled || !!retrying}
+                      onClick={() => onRetry(recording.id)}
+                      title={
+                        sameLanguage(recording)
+                          ? undefined
+                          : t('Transcribes again in {language}', { language: target })
+                      }
+                    >
+                      {retrying === recording.id ? (
+                        <LoaderCircle size={13} className="spin" />
+                      ) : (
+                        <RotateCcw size={13} />
+                      )}
+                      {retrying === recording.id ? t('Transcribing…') : t('Retry transcription')}
+                    </button>
+                  )}
+                </div>
               </header>
               {(recording.engine || recording.sources?.microphone?.device?.name) && (
                 <p className="recording-footnote">

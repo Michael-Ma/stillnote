@@ -180,6 +180,10 @@ kbd {
 .primary:not(:disabled):hover {
   opacity: 0.86;
 }
+.primary.destructive {
+  background: var(--danger);
+  color: #fff;
+}
 .secondary {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -1798,6 +1802,12 @@ kbd {
   display: grid;
   gap: 2px;
 }
+.saved-recording header > .recording-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 10px;
+}
 .saved-recording header strong {
   font-size: var(--text-base);
   font-weight: 600;
@@ -2207,6 +2217,15 @@ dialog::backdrop {
 }
 .modal-footer .danger {
   margin-right: auto;
+}
+.confirm-body {
+  display: grid;
+  gap: 16px;
+}
+.confirm-body p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.5;
 }
 .history-list {
   overflow-y: auto;

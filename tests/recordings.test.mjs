@@ -364,6 +364,27 @@ test('recording transcripts preserve manual text, other sessions and prior retry
     ['Corrected earlier window', 'Later window'],
   );
   assert.equal(saved.notes, 'Keep these rough notes.');
+  // The retry's replaced transcript can be restored; restoring again undoes it.
+  const firstSession = () => store.get(note.id).recordings.find((r) => r.id === first);
+  assert.ok(firstSession().previousAt);
+  assert.equal(firstSession().edited, false);
+  const recovered = store.get(note.id).transcript.find((s) => s.recordingId === first);
+  store.editSegment(note.id, recovered.id, { text: 'Recovered, corrected by hand' });
+  assert.equal(firstSession().edited, true, 'a hand correction marks the recording');
+  const restored = store.restoreTranscript(note.id, first);
+  assert.deepEqual(
+    restored.transcript.filter((s) => s.recordingId === first).map((s) => s.text),
+    ['Corrected earlier window', 'Later window'],
+  );
+  assert.equal(firstSession().edited, false, 'the restored version was not edited');
+  const undone = store.restoreTranscript(note.id, first);
+  assert.deepEqual(
+    undone.transcript.filter((s) => s.recordingId === first).map((s) => s.text),
+    ['Recovered, corrected by hand'],
+  );
+  assert.equal(firstSession().edited, true, 'and the edit mark comes back with it');
+  assert.throws(() => store.restoreTranscript(note.id, second), /no earlier transcript/);
+  saved = store.replaceRecordingTranscript(note.id, first, retry, assessCoverage(retry, 12));
   assert.throws(() => store.replaceRecordingTranscript(note.id, first, [], {}), /preserved/);
   assert.deepEqual(store.get(note.id), saved);
   assert.throws(

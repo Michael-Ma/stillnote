@@ -236,6 +236,41 @@ export async function capture(h) {
     1,
     'Retranscription reuses the saved session',
   );
+  // A hand-corrected transcript is not replaced without asking, and the replaced version can be
+  // restored (and the restore undone).
+  await h.sheet('Transcript');
+  await h.page
+    .locator('.transcript-segment')
+    .filter({ hasText: 'Recovered complete' })
+    .getByRole('button', { name: 'Edit', exact: true })
+    .click();
+  await h.page.getByRole('textbox', { name: 'Transcript', exact: true }).fill('Corrected by hand.');
+  await h.page.getByRole('button', { name: 'Save transcript', exact: true }).click();
+  await h.waitForState(
+    (s, id) =>
+      s.meetings.find((m) => m.id === id).transcript.some((x) => x.text === 'Corrected by hand.'),
+    empty.id,
+  );
+  await h.sheet('Recordings');
+  await h.page
+    .locator('.saved-recording')
+    .getByRole('button', { name: 'Retry transcription', exact: true })
+    .click();
+  await h.page.getByRole('heading', { name: 'Transcribe again?', exact: true }).waitFor();
+  await h.screenshot('retry-confirm');
+  await h.page.getByRole('button', { name: 'Transcribe again', exact: true }).click();
+  const retried = (s, id) => s.meetings.find((m) => m.id === id).transcript.map((x) => x.text);
+  await h.waitForState(
+    (s, id) =>
+      !retried(s, id).includes('Corrected by hand.') &&
+      retried(s, id).some((x) => x.includes('Recovered complete')),
+    empty.id,
+  );
+  await h.screenshot('restore-previous');
+  await h.page.getByRole('button', { name: 'Restore previous transcript', exact: true }).click();
+  await h.waitForState((s, id) => retried(s, id).includes('Corrected by hand.'), empty.id);
+  await h.page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await h.waitForState((s, id) => !retried(s, id).includes('Corrected by hand.'), empty.id);
 
   const failed = await h.create('E2E failed recognition');
   await start(h);

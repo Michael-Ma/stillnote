@@ -344,7 +344,7 @@ test('earlier transcript versions move out of meetings once, and the index learn
       summary: '',
       transcript: [],
       versions: [],
-      recordings: [],
+      recordings: [{ id: 'r', status: 'completed' }],
       transcriptVersions: versions,
       createdAt: '2026',
       updatedAt: '2026',
@@ -354,6 +354,7 @@ test('earlier transcript versions move out of meetings once, and the index learn
   const store = new Store(dir);
   assert.ok(!('transcriptVersions' in store.get('m')));
   assert.deepEqual(store.transcriptVersions('m'), versions, 'newest first, as before');
+  assert.equal(store.get('m').recordings[0].previousAt, '2026-10-02', 'and can be restored');
   assert.equal(store.search('招聘')[0].id, 'm');
   store.close();
   const reopened = new Store(dir);

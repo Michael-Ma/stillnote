@@ -13,6 +13,7 @@ const channels = [
   'stop',
   'recording-url',
   'transcribe-recording',
+  'restore-transcript',
   'calendar',
   'start-call',
   'join-call',

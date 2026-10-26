@@ -132,6 +132,36 @@ export class Store {
         throw error;
       }
     }
+    // Recordings learn whether an earlier transcript can be restored.
+    if (this.db.prepare('PRAGMA user_version').get().user_version < 3) {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        const latest = new Map();
+        for (const row of this.db
+          .prepare('SELECT meeting_id, data FROM transcript_versions ORDER BY id')
+          .all()) {
+          const { recordingId, at } = JSON.parse(row.data);
+          latest.set(`${row.meeting_id}/${recordingId}`, at);
+        }
+        for (const row of this.db.prepare('SELECT id, data FROM meetings').all()) {
+          const m = JSON.parse(row.data);
+          let changed = false;
+          for (const session of m.recordings ?? []) {
+            const at = latest.get(`${row.id}/${session.id}`);
+            if (at) {
+              session.previousAt = at;
+              changed = true;
+            }
+          }
+          if (changed)
+            this.db.prepare('UPDATE meetings SET data=? WHERE id=?').run(JSON.stringify(m), row.id);
+        }
+        this.db.exec('PRAGMA user_version=3; COMMIT');
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
+    }
   }
   all(includeTrash = false) {
     return this.db
@@ -336,7 +366,10 @@ export class Store {
       recordingId,
       at: new Date().toISOString(),
       segments: m.transcript.filter((segment) => segment.recordingId === recordingId),
+      edited: Boolean(session.edited),
     };
+    session.edited = false;
+    session.previousAt = replaced.at;
     m.transcript = [
       ...m.transcript.filter((segment) => segment.recordingId !== recordingId),
       ...replacement,
@@ -365,6 +398,9 @@ export class Store {
     const m = this.get(id);
     const i = m.transcript.findIndex((s) => s.id === segmentId);
     if (i < 0) throw new Error('Transcript segment not found.');
+    // A recording whose transcript was corrected by hand is not retried without asking.
+    const session = m.recordings.find((r) => r.id === m.transcript[i].recordingId);
+    if (session) session.edited = true;
     if (patch.remove) m.transcript.splice(i, 1);
     else {
       if ('text' in patch) m.transcript[i].text = text(patch.text);
@@ -372,6 +408,38 @@ export class Store {
     }
     m.updatedAt = new Date().toISOString();
     return this.write(m);
+  }
+  // Swaps a recording's transcript with the one its last Retry (or restore) replaced, so a restore
+  // is undone by restoring again.
+  restoreTranscript(id, recordingId) {
+    const m = this.get(id),
+      session = m.recordings.find((r) => r.id === recordingId);
+    if (!session) throw new Error('Recording not found.');
+    const row = this.db
+      .prepare('SELECT id, data FROM transcript_versions WHERE meeting_id=? ORDER BY id DESC')
+      .all(id)
+      .find((r) => JSON.parse(r.data).recordingId === recordingId);
+    if (!row) throw new Error('There is no earlier transcript for this recording.');
+    const previous = JSON.parse(row.data);
+    const current = {
+      recordingId,
+      at: new Date().toISOString(),
+      segments: m.transcript.filter((segment) => segment.recordingId === recordingId),
+      edited: Boolean(session.edited),
+    };
+    m.transcript = [
+      ...m.transcript.filter((segment) => segment.recordingId !== recordingId),
+      ...previous.segments,
+    ].sort((a, b) => a.timestamp - b.timestamp);
+    session.edited = Boolean(previous.edited);
+    session.previousAt = current.at;
+    m.updatedAt = new Date().toISOString();
+    return this.write(m, () => {
+      this.db.prepare('DELETE FROM transcript_versions WHERE id=?').run(row.id);
+      this.db
+        .prepare('INSERT INTO transcript_versions(meeting_id, data) VALUES(?,?)')
+        .run(id, JSON.stringify(current));
+    });
   }
   // Matching meetings' ids, best first. The search box wants every word (the last one may be
   // unfinished); `any` is for questions, where any word or pair of CJK characters may match and

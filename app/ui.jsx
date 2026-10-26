@@ -621,9 +621,23 @@ function App() {
       setTab('notes');
     });
   }
-  async function retryRecording(recordingId) {
+  async function retryRecording(recordingId, confirmed = false) {
     if (retryingRecording) return;
     const meetingId = selected;
+    // Hand corrections would be replaced: ask first. The current version stays restorable.
+    const session = meeting?.recordings.find((r) => r.id === recordingId);
+    if (session?.edited && !confirmed) {
+      setModal({
+        kind: 'confirm',
+        title: t('Transcribe again?'),
+        message: t(
+          'You edited this transcript. Transcribing again replaces your edits; the current version is kept, and Restore previous transcript brings it back.',
+        ),
+        confirmLabel: t('Transcribe again'),
+        onConfirm: () => retryRecording(recordingId, true),
+      });
+      return;
+    }
     setRetryingRecording(recordingId);
     try {
       await guard(async () => {
@@ -636,6 +650,24 @@ function App() {
     } finally {
       setRetryingRecording(null);
     }
+  }
+  // Swaps the transcript back to the one the last Retry replaced; doing it again undoes it.
+  async function restoreTranscript(recordingId) {
+    const meetingId = selected;
+    await guard(async () => {
+      await flushAll();
+      updateMeeting(await call('restore-transcript', meetingId, recordingId));
+      setNotice({
+        text: t('Previous transcript restored.'),
+        action: {
+          label: t('Undo'),
+          run: () =>
+            guard(async () =>
+              updateMeeting(await call('restore-transcript', meetingId, recordingId)),
+            ),
+        },
+      });
+    });
   }
   async function calendar() {
     setCalendarBusy(true);
@@ -1081,6 +1113,7 @@ function App() {
                       recordings={{
                         call,
                         onRetry: retryRecording,
+                        onRestore: restoreTranscript,
                         retrying: retryingRecording,
                         locale: data.settings.locale ?? 'en-US',
                         autoLocales: data.settings.autoLocales,
@@ -1200,6 +1233,7 @@ function App() {
                     segment: t('Edit transcript'),
                     history: t('Previous summaries'),
                     template: t('Create a template'),
+                    confirm: modal?.title,
                   }[modal?.kind]
                 }
               </h2>
@@ -1373,6 +1407,26 @@ function App() {
                   </button>
                 </div>
               </form>
+            ) : modal?.kind === 'confirm' ? (
+              <div className="confirm-body">
+                <p>{modal.message}</p>
+                <div className="modal-footer">
+                  <button className="secondary" onClick={() => setModal(null)}>
+                    {t('Cancel')}
+                  </button>
+                  <button
+                    autoFocus
+                    className={'primary' + (modal.destructive ? ' destructive' : '')}
+                    onClick={() => {
+                      const run = modal.onConfirm;
+                      setModal(null);
+                      run();
+                    }}
+                  >
+                    {modal.confirmLabel}
+                  </button>
+                </div>
+              </div>
             ) : modal?.kind === 'history' ? (
               <div className="history-list">
                 {meeting?.versions.map((v, i) => (

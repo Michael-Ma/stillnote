@@ -331,6 +331,16 @@ export default {
   'The meeting context is the calendar invite as it arrived.': '会议信息还是日历邀请的原样。',
   'Tidy it': '整理一下',
   'Meeting context tidied.': '会议信息已整理。',
+  'Transcribe again?': '重新转写？',
+  'You edited this transcript. Transcribing again replaces your edits; the current version is kept, and Restore previous transcript brings it back.':
+    '你改过这段转写。重新转写会替换你的修改；当前版本会保留，用“恢复上一版转写”可以找回。',
+  'Transcribe again': '重新转写',
+  'Restore previous transcript': '恢复上一版转写',
+  'Brings back the transcript from before {time}': '恢复 {time} 之前的转写',
+  'Previous transcript restored.': '已恢复上一版转写。',
+  'There is no earlier transcript for this recording.': '这段录音没有更早的转写。',
+  'Finish recording or transcribing before restoring a transcript.':
+    '请等录音或转写结束后再恢复转写。',
   'Click to save “{title}”, then join and record this meeting.':
     '点击保存“{title}”，然后加入并录制这场会议。',
   'Click to save “{title}” and record this meeting instead.':

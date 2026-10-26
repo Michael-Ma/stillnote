@@ -1258,6 +1258,13 @@ if (!app.requestSingleInstanceLock()) {
         emit({ type: 'meeting', meeting: updated });
         return updated;
       });
+      register('restore-transcript', (meetingId, recordingId) => {
+        if (recording?.id === meetingId || transcriptionWait)
+          throw new Error('Finish recording or transcribing before restoring a transcript.');
+        const m = store.restoreTranscript(meetingId, recordingId);
+        emit({ type: 'meeting', meeting: m });
+        return m;
+      });
       register('calendar', () => loadCalendar());
       // Start a meeting: a new Google Meet or Zoom call opens in the browser or meeting app, and
       // the renderer records it in a new note. Only these fixed addresses can be opened.
