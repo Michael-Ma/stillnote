@@ -1,7 +1,7 @@
 import React from 'react';
 import { CalendarDays, FileText, LoaderCircle, Plus, RefreshCw, Star, Video } from 'lucide-react';
-import { dayLabel } from '../format.mjs';
-import { eventNote } from '../reminders.mjs';
+import { dateFormat, dayLabel } from '../format.mjs';
+import { eventKey, eventNote } from '../reminders.mjs';
 import { callServices, meetingLink } from '../calls.mjs';
 import { IconButton } from './Content.jsx';
 import { useT } from '../i18n/react.jsx';
@@ -9,7 +9,7 @@ import { useT } from '../i18n/react.jsx';
 // "11:30 AM" with a quieter meridiem, as in Granola's lists.
 function Clock({ value }) {
   const t = useT();
-  const parts = new Intl.DateTimeFormat(t.locale, { hour: 'numeric', minute: '2-digit' })
+  const parts = dateFormat(t.locale, { hour: 'numeric', minute: '2-digit' })
     .formatToParts(new Date(value))
     .map((p, i) =>
       p.type === 'dayPeriod' ? (
@@ -30,10 +30,10 @@ function DayStamp({ day }) {
       <strong>{d.getDate()}</strong>
       <span>
         <span>
-          {new Intl.DateTimeFormat(t.locale, { month: 'long' }).format(d)}
+          {dateFormat(t.locale, { month: 'long' }).format(d)}
           {today && <i className="today-dot" aria-label={t('Today')} />}
         </span>
-        <small>{new Intl.DateTimeFormat(t.locale, { weekday: 'short' }).format(d)}</small>
+        <small>{dateFormat(t.locale, { weekday: 'short' }).format(d)}</small>
       </span>
     </div>
   );
@@ -104,7 +104,7 @@ export function HomeFeed({
                       // The row opens the meeting's note; "Start now" also starts recording, and
                       // "Join & record" opens the meeting's call as well.
                       return (
-                        <div className={'upcoming-event' + (soon ? ' soon' : '')} key={e.id}>
+                        <div className={'upcoming-event' + (soon ? ' soon' : '')} key={eventKey(e)}>
                           <button className="upcoming-open" onClick={() => newNote(note)}>
                             <span>
                               <strong>{e.title}</strong>

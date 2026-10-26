@@ -202,6 +202,8 @@ export default {
   'Import a transcript': '导入转写',
   'Import transcript or backup': '导入转写或备份',
   'Imported transcript': '导入的转写',
+  'Imported {n} new meeting. Existing meetings were preserved.':
+    '已导入 {n} 个新会议，现有会议都已保留。',
   'Imported {n} new meetings. Existing meetings were preserved.':
     '已导入 {n} 个新会议，现有会议都已保留。',
   'In use': '使用中',
@@ -322,6 +324,7 @@ export default {
   'No saved audio': '没有保存的音频',
   'No saved audio is available for this recording.': '这段录音没有保存的音频。',
   'No sound from {device}': '{device} 没有声音',
+  'No sound from the microphone': '麦克风没有声音',
   'No transcript text was recovered. The existing transcript was preserved.':
     '没有转写出任何文字，现有转写已保留。',
   'No transcript yet': '还没有转写',

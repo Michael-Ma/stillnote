@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useSyncExternalStore } from 'react';
 import {
   Captions,
   ChevronDown,
@@ -9,6 +9,7 @@ import {
   Square,
 } from 'lucide-react';
 import { duration } from '../format.mjs';
+import { meterLevel } from '../live-values.mjs';
 import { useT } from '../i18n/react.jsx';
 
 // Toggles the transcript sheet (handled in ui.jsx); the Transcript button's tooltip names it.
@@ -80,13 +81,19 @@ function SheetButtons({ sheet, lines, saved, live, onSheet }) {
   );
 }
 
+// The bars subscribe to the audio levels themselves, so a level update redraws only them.
+function LiveLevelBars({ levels, live }) {
+  const current = useSyncExternalStore(levels.subscribe, levels.get);
+  return <LevelBars level={meterLevel(current)} live={live} />;
+}
+
 export function RecordPill({
   recording,
   active,
   canRecord,
   hasAudio,
   elapsed,
-  level,
+  levels,
   sheet,
   lines,
   saved,
@@ -107,7 +114,7 @@ export function RecordPill({
           onClick={() => onSheet('transcript')}
           aria-label={t('Live transcript')}
         >
-          <LevelBars level={level} live={!recording.stopping} />
+          <LiveLevelBars levels={levels} live={!recording.stopping} />
           <span className="pill-time">
             {recording.stopping
               ? t('Saving…')

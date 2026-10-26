@@ -1,13 +1,32 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { Mic, Plus, X } from 'lucide-react';
 import { IconButton } from './Content.jsx';
 import { CaptureDiagnostics, RecordingAudio } from './RecordingAudio.jsx';
-import { duration, languageName } from '../format.mjs';
+import { duration, languageName, speakerLabel } from '../format.mjs';
 import { useT } from '../i18n/react.jsx';
 
 const isMe = (speaker = '') => /^(me|you|microphone|mic)$/i.test(speaker.trim());
-// Speaker labels Stillnote writes itself (stored in English); names people assign stay as typed.
-const builtInSpeakers = ['You', 'Meeting audio', 'Speaker', 'Imported transcript'];
+
+// A saved line. Rows draw again only when their own segment changes, not on every live update of
+// a long meeting.
+const Segment = React.memo(function Segment({ segment: s, mixed, onEdit }) {
+  const t = useT();
+  return (
+    <div className={'transcript-segment' + (isMe(s.speaker) ? ' me' : '')}>
+      <div className="segment-head">
+        <strong>{speakerLabel(s.speaker, t)}</strong>
+        <time>{duration(s.timestamp)}</time>
+        {mixed && s.locale && (
+          <span className="segment-language">{languageName(s.locale.split('-')[0], t.locale)}</span>
+        )}
+        <button className="text-button segment-edit" onClick={() => onEdit(s)}>
+          {t('Edit')}
+        </button>
+      </div>
+      <p>{s.text}</p>
+    </div>
+  );
+});
 
 // Granola keeps the transcript one click away from the listening indicator, above the dock.
 export function TranscriptSheet({
@@ -16,19 +35,24 @@ export function TranscriptSheet({
   setTab,
   onClose,
   activeRecord,
-  partial,
+  partials,
   capture,
   recordings,
   onAddTranscript,
   onEditSegment,
 }) {
   const t = useT();
-  const speakerName = (speaker) => (builtInSpeakers.includes(speaker) ? t(speaker) : speaker);
+  const partial = useSyncExternalStore(partials.subscribe, partials.get);
   const bottomRef = useRef();
+  // While recording, the newest line stays in view unless the reader has scrolled up to read.
+  const following = useRef(true);
+  const edit = useRef(onEditSegment);
+  edit.current = onEditSegment;
+  const onEdit = useCallback((segment) => edit.current(segment), []);
   // Auto language: when sentences came out in different languages, each says which.
   const mixed = new Set(meeting.transcript.map((s) => s.locale).filter(Boolean)).size > 1;
   useEffect(() => {
-    if (activeRecord && tab === 'transcript')
+    if (activeRecord && tab === 'transcript' && following.current)
       bottomRef.current?.scrollIntoView({ block: 'nearest' });
   }, [meeting.transcript.length, partial, activeRecord, tab]);
   return (
@@ -65,7 +89,13 @@ export function TranscriptSheet({
           </IconButton>
         </div>
       </header>
-      <div className="sheet-body">
+      <div
+        className="sheet-body"
+        onScroll={(e) => {
+          const body = e.currentTarget;
+          following.current = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
+        }}
+      >
         {activeRecord && <CaptureDiagnostics {...capture} />}
         {tab === 'recordings' ? (
           <RecordingAudio meeting={meeting} {...recordings} />
@@ -93,21 +123,7 @@ export function TranscriptSheet({
             )}
             <div className="transcript-list">
               {meeting.transcript.map((s) => (
-                <div className={'transcript-segment' + (isMe(s.speaker) ? ' me' : '')} key={s.id}>
-                  <div className="segment-head">
-                    <strong>{speakerName(s.speaker)}</strong>
-                    <time>{duration(s.timestamp)}</time>
-                    {mixed && s.locale && (
-                      <span className="segment-language">
-                        {languageName(s.locale.split('-')[0], t.locale)}
-                      </span>
-                    )}
-                    <button className="text-button segment-edit" onClick={() => onEditSegment(s)}>
-                      {t('Edit')}
-                    </button>
-                  </div>
-                  <p>{s.text}</p>
-                </div>
+                <Segment key={s.id} segment={s} mixed={mixed} onEdit={onEdit} />
               ))}
               {activeRecord &&
                 Object.values(partial).map((s) => (
@@ -116,7 +132,7 @@ export function TranscriptSheet({
                     key={s.segmentId || s.speaker}
                   >
                     <div className="segment-head">
-                      <strong>{speakerName(s.speaker)}</strong>
+                      <strong>{speakerLabel(s.speaker, t)}</strong>
                       <span className="live-label">{t('Live')}</span>
                     </div>
                     <p>{s.text}</p>

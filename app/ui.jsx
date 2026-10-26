@@ -14,7 +14,16 @@ import { SettingsDialog } from './components/SettingsDialog.jsx';
 import { aiView, claudeModels, modelKey } from './ai-view.mjs';
 import { eventKey, eventNote, meetingForEvent } from './reminders.mjs';
 import { callTitle } from './calls.mjs';
-import { cleanError, date, time, duration, silentState } from './format.mjs';
+import {
+  cleanError,
+  date,
+  time,
+  duration,
+  silentState,
+  speakerLabel,
+  storedSpeaker,
+} from './format.mjs';
+import { liveValue } from './live-values.mjs';
 import { resolveLanguage, translator } from './i18n/index.mjs';
 import { I18nProvider } from './i18n/react.jsx';
 import './style.css';
@@ -41,13 +50,15 @@ function App() {
     [messages, setMessages] = useState([]),
     [busy, setBusy] = useState(null),
     [stream, setStream] = useState(''),
-    [partial, setPartial] = useState({}),
+    // Live transcript lines and audio levels change several times a second; only the transcript
+    // and the meters subscribe to them (see live-values.mjs).
+    [partials] = useState(() => liveValue({})),
     [accountBusy, setAccountBusy] = useState(false),
     [chatgptModels, setChatgptModels] = useState([]),
     [calendarBusy, setCalendarBusy] = useState(false),
     [editingSummary, setEditingSummary] = useState(false),
     [elapsed, setElapsed] = useState(0),
-    [audioLevels, setAudioLevels] = useState({}),
+    [audioLevels] = useState(() => liveValue({})),
     [captureSources, setCaptureSources] = useState({}),
     [retryingRecording, setRetryingRecording] = useState(null),
     [saving, setSaving] = useState(false),
@@ -63,13 +74,23 @@ function App() {
     backdropDown = useRef(false),
     aiRequest = useRef({}),
     answerContexts = useRef(new Map()),
-    messagesRequest = useRef(0);
+    messagesRequest = useRef(0),
+    // Streamed AI text is drawn in batches, not once per token.
+    pendingDelta = useRef(''),
+    deltaTimer = useRef(0),
+    newNoteRef = useRef();
   // Interface language: the setting, else the first macOS language Stillnote has.
   const language = resolveLanguage(
     data?.settings.uiLanguage,
     data?.systemLanguages ?? navigator.languages,
   );
   const t = useMemo(() => translator(language), [language]);
+  function resetStream() {
+    clearTimeout(deltaTimer.current);
+    deltaTimer.current = 0;
+    pendingDelta.current = '';
+    setStream('');
+  }
   useEffect(() => {
     document.documentElement.lang = language;
   }, [language]);
@@ -132,12 +153,12 @@ function App() {
           setTab('summary');
           setSheet(null);
         } else setNotice({ text: current.current.t('Enhancing your recorded note.'), id: e.id });
-        setStream('');
+        resetStream();
       }
       if (e.type === 'ai-done' && busyRef.current === 'auto-enhance') {
         busyRef.current = null;
         setBusy(null);
-        setStream('');
+        resetStream();
       }
       if (e.type === 'ai') setData((d) => (d ? { ...d, ai: e.ai } : d));
       if (e.type === 'meeting') updateMeeting(e.meeting);
@@ -164,7 +185,7 @@ function App() {
           if (e.record) await record(e.id);
         });
       if (e.type === 'audio-level')
-        setAudioLevels((levels) => ({ ...levels, [e.source]: { ...e, receivedAt: Date.now() } }));
+        audioLevels.set((levels) => ({ ...levels, [e.source]: { ...e, receivedAt: Date.now() } }));
       if (e.type === 'recording-status') {
         if (e.recording) setData((d) => (d ? { ...d, recording: e.recording } : d));
         if (e.recording?.sources) setCaptureSources(e.recording.sources);
@@ -180,24 +201,27 @@ function App() {
         }));
       }
       if (e.type === 'started') {
-        setAudioLevels({});
+        audioLevels.set({});
         setCaptureSources(e.recording?.sources ?? {});
       }
-      if (['started', 'stopped'].includes(e.type) || (e.type === 'error' && 'recording' in e)) {
+      if (
+        ['started', 'stopped'].includes(e.type) ||
+        (e.type === 'error' && 'recording' in e && (!e.op || e.op === 'start'))
+      ) {
         current.current.recording = e.recording;
         setData((d) => (d ? { ...d, recording: e.recording, starting: false } : d));
       }
-      if (e.type === 'partial') setPartial((p) => ({ ...p, [e.segmentId || e.speaker]: e }));
+      if (e.type === 'partial') partials.set((p) => ({ ...p, [e.segmentId || e.speaker]: e }));
       if (e.type === 'segment')
-        setPartial((p) => {
+        partials.set((p) => {
           const n = { ...p };
           delete n[e.segmentId || e.speaker];
           return n;
         });
-      if (e.type === 'stopped') setPartial({});
-      // Auto language: provisional text in a language that lost the sentence.
+      if (e.type === 'stopped') partials.set({});
+      // Provisional text withdrawn: revised away, or (Auto) in a language that lost the sentence.
       if (e.type === 'partial-discard')
-        setPartial((p) => {
+        partials.set((p) => {
           const n = { ...p };
           for (const id of e.segmentIds ?? []) delete n[id];
           return n;
@@ -210,7 +234,15 @@ function App() {
           );
         else setError(message, e.permission);
       }
-      if (e.type === 'ai-delta') setStream((s) => s + e.delta);
+      if (e.type === 'ai-delta') {
+        pendingDelta.current += e.delta;
+        deltaTimer.current ||= setTimeout(() => {
+          const delta = pendingDelta.current;
+          pendingDelta.current = '';
+          deltaTimer.current = 0;
+          setStream((s) => s + delta);
+        }, 50);
+      }
     });
   }, []);
   useEffect(() => {
@@ -265,7 +297,8 @@ function App() {
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
         e.preventDefault();
-        newNote();
+        // The latest newNote: the first render's would title the note in the wrong language.
+        newNoteRef.current();
       }
       // ⌘⇧T toggles the open note's transcript like its Transcript button in the dock, and
       // brings it back from behind the chat.
@@ -355,6 +388,7 @@ function App() {
       return m;
     });
   }
+  newNoteRef.current = newNote;
   async function newNote(input = {}) {
     // A calendar occurrence keeps one note: opening it again returns to that note.
     const existing = input.eventKey && meetingForEvent(data?.meetings, input.eventKey);
@@ -476,7 +510,7 @@ function App() {
     aiRequest.current = {};
     setBusy(kind);
     setAiTarget(target);
-    setStream('');
+    resetStream();
     await guard(async () => {
       try {
         await flushAll();
@@ -491,7 +525,7 @@ function App() {
       } finally {
         busyRef.current = null;
         setBusy(null);
-        setStream('');
+        resetStream();
       }
     });
   }
@@ -545,7 +579,11 @@ function App() {
         setView('all');
       } else
         setNotice(
-          t('Imported {n} new meetings. Existing meetings were preserved.', { n: r.restored }),
+          t.count(
+            r.restored,
+            'Imported {n} new meeting. Existing meetings were preserved.',
+            'Imported {n} new meetings. Existing meetings were preserved.',
+          ),
         );
     });
   }
@@ -553,7 +591,7 @@ function App() {
     await guard(async () => {
       await flushAll();
       setElapsed(0);
-      setAudioLevels({});
+      audioLevels.set({});
       setCaptureSources({});
       const r = await call('record', meetingId);
       setData((d) => ({ ...d, recording: r, starting: true }));
@@ -658,13 +696,6 @@ function App() {
     ? savedModel
     : activeModels[0]?.id;
   const globalChat = chatOpen && !meeting;
-  const level = Math.max(
-    ...['microphone', 'system'].map((s) =>
-      audioLevels[s] && Date.now() - audioLevels[s].receivedAt < 3000
-        ? Math.sqrt(Math.max(0, Number(audioLevels[s].rms) || 0))
-        : 0,
-    ),
-  );
   const chat = (
     <ChatPanel
       global={globalChat}
@@ -701,7 +732,10 @@ function App() {
       onSource={(m, number) => {
         const source = m.sources?.find((s) => s.number === number);
         const target = data.meetings.find((n) => n.id === source?.id);
-        if (target) openNote(target, 'transcript').then(() => setView('all'));
+        if (!target) return;
+        // The transcript sheet sits where the chat panel is; the citation shows the transcript.
+        setChatOpen(false);
+        openNote(target, 'transcript').then(() => setView('all'));
       }}
       onOpenSource={(s) => {
         const target = data.meetings.find((m) => m.id === s.id);
@@ -963,7 +997,9 @@ function App() {
                 <div className="capture-warnings" role="status">
                   {silent.microphone && (
                     <div className="capture-warning">
-                      {t('No sound from {device}', { device: silent.microphone })}
+                      {silent.microphone === true
+                        ? t('No sound from the microphone')
+                        : t('No sound from {device}', { device: silent.microphone })}
                       <button className="text-button" onClick={() => settings('capture')}>
                         {t('Change microphone')}
                       </button>
@@ -983,7 +1019,7 @@ function App() {
                       setTab={setSheet}
                       onClose={() => setSheet(null)}
                       activeRecord={activeRecord}
-                      partial={partial}
+                      partials={partials}
                       capture={{
                         levels: audioLevels,
                         sources: { ...data.recording?.sources, ...captureSources },
@@ -1000,9 +1036,21 @@ function App() {
                         disabled: !!data.recording || !!meeting.deletedAt || !!busy,
                       }}
                       onAddTranscript={() =>
-                        setModal({ kind: 'transcript', text: '', speaker: 'Speaker' })
+                        setModal({
+                          kind: 'transcript',
+                          meetingId: meeting.id,
+                          text: '',
+                          speaker: speakerLabel('Speaker', t),
+                        })
                       }
-                      onEditSegment={(s) => setModal({ kind: 'segment', ...s })}
+                      onEditSegment={(s) =>
+                        setModal({
+                          kind: 'segment',
+                          meetingId: meeting.id,
+                          ...s,
+                          speaker: speakerLabel(s.speaker, t),
+                        })
+                      }
                     />
                   )}
                   {meeting &&
@@ -1024,7 +1072,7 @@ function App() {
                         canRecord={!meeting.deletedAt}
                         hasAudio={meeting.recordings?.length > 0 || meeting.transcript.length > 0}
                         elapsed={elapsed}
-                        level={level}
+                        levels={audioLevels}
                         sheet={sheet}
                         lines={meeting.transcript.length}
                         saved={meeting.recordings?.filter((r) => !isCapturing(r)).length ?? 0}
@@ -1169,16 +1217,19 @@ function App() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   guard(async () => {
+                    // The meeting the dialog was opened for, even if a reminder opened another since.
+                    const target = data.meetings.find((m) => m.id === modal.meetingId);
+                    const speaker = storedSpeaker(modal.speaker, t);
                     const m =
                       modal.kind === 'segment'
-                        ? await call('edit-segment', selected, modal.id, {
+                        ? await call('edit-segment', modal.meetingId, modal.id, {
                             text: modal.text,
-                            speaker: modal.speaker,
+                            speaker,
                           })
-                        : await call('transcript', selected, {
+                        : await call('transcript', modal.meetingId, {
                             text: modal.text,
-                            speaker: modal.speaker,
-                            timestamp: meeting.duration,
+                            speaker,
+                            timestamp: target?.duration ?? 0,
                           });
                     updateMeeting(m);
                     setModal(null);

@@ -6,7 +6,10 @@ import {
   languageOptions,
   recordingLanguage,
   silentState,
+  speakerLabel,
+  storedSpeaker,
 } from '../app/format.mjs';
+import { translator } from '../app/i18n/index.mjs';
 import { ownLineMatcher } from '../app/own-lines.mjs';
 import { aiView, claudeSummary, usageSummary, modelKey } from '../app/ai-view.mjs';
 
@@ -167,11 +170,21 @@ test('silence warnings track independent sources and clear when their signal ret
   const first = silentState({}, mic, 'a');
   const both = silentState(first, { ...mic, source: 'system', device: '' }, 'a');
   assert.deepEqual(first, { microphone: 'External Microphone' });
-  assert.deepEqual(both, { microphone: 'External Microphone', system: 'meeting audio' });
-  assert.deepEqual(silentState(both, { ...mic, type: 'source-signal' }, 'a'), {
-    system: 'meeting audio',
-  });
-  assert.deepEqual(silentState({}, { ...mic, device: '' }, 'a'), { microphone: 'microphone' });
+  assert.deepEqual(both, { microphone: 'External Microphone', system: true });
+  assert.deepEqual(silentState(both, { ...mic, type: 'source-signal' }, 'a'), { system: true });
+  assert.deepEqual(silentState({}, { ...mic, device: '' }, 'a'), { microphone: true });
+  // A failed start clears the warnings; another operation's error (a calendar refresh) does not.
+  assert.deepEqual(silentState(both, { type: 'error', op: 'start', recording: null }, 'a'), {});
+  assert.equal(silentState(both, { type: 'error', op: 'calendar', recording: {} }, 'a'), both);
+});
+
+test('built-in speaker labels show translated and are stored in English', () => {
+  const zh = translator('zh-Hans');
+  assert.equal(speakerLabel('You', zh), '我');
+  assert.equal(speakerLabel('Priya', zh), 'Priya');
+  assert.equal(storedSpeaker('我', zh), 'You');
+  assert.equal(storedSpeaker(' 发言人 ', zh), 'Speaker');
+  assert.equal(storedSpeaker('Priya', zh), 'Priya');
 });
 
 test('silence warnings ignore stale recordings and unknown sources', () => {

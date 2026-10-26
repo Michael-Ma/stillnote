@@ -39,6 +39,14 @@ export function dayLabel(value, t = english) {
   return dateFormat(t.locale, { weekday: 'long', month: 'short', day: 'numeric' }).format(d);
 }
 
+// Speaker labels Stillnote writes itself are stored in English and shown translated; names people
+// type stay as typed. A built-in label left as shown is stored back in English.
+const builtInSpeakers = ['You', 'Meeting audio', 'Speaker', 'Imported transcript'];
+export const speakerLabel = (speaker, t) =>
+  builtInSpeakers.includes(speaker) ? t(speaker) : speaker;
+export const storedSpeaker = (label, t) =>
+  builtInSpeakers.find((name) => t(name) === label.trim()) ?? label;
+
 export function cleanError(error, { stopped = false, timedOut = false } = {}) {
   const raw = typeof error === 'string' ? error : (error?.message ?? String(error));
   const text = raw.replace(/^Error invoking remote method '[^']+':\s*(?:[\w.]*Error:\s*)?/, '');
@@ -100,11 +108,13 @@ export function languageOptions(languages, displayLocale) {
     );
 }
 
+// Which sources have gone quiet: the device's name, or true when the helper did not say. A new
+// recording, its end, or a failed start clears it; other errors (a calendar refresh) do not.
 export function silentState(state, event, recordingId) {
   if (
     event.type === 'started' ||
     event.type === 'stopped' ||
-    (event.type === 'error' && 'recording' in event)
+    (event.type === 'error' && 'recording' in event && (!event.op || event.op === 'start'))
   )
     return {};
   if (
@@ -113,12 +123,7 @@ export function silentState(state, event, recordingId) {
     !['microphone', 'system'].includes(event.source)
   )
     return state;
-  if (event.type === 'source-silent')
-    return {
-      ...state,
-      [event.source]:
-        event.device || (event.source === 'microphone' ? 'microphone' : 'meeting audio'),
-    };
+  if (event.type === 'source-silent') return { ...state, [event.source]: event.device || true };
   if (event.type === 'source-signal') {
     const next = { ...state };
     delete next[event.source];

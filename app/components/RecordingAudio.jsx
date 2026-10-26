@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   AlertTriangle,
   AudioLines,
@@ -79,8 +79,15 @@ export function CoverageWarning({ meeting, onListen, onRetry, retrying, disabled
   );
 }
 
-export function CaptureDiagnostics({ levels, sources, systemAudioRequested, starting, engine }) {
+export function CaptureDiagnostics({
+  levels: live,
+  sources,
+  systemAudioRequested,
+  starting,
+  engine,
+}) {
   const t = useT();
+  const levels = useSyncExternalStore(live.subscribe, live.get);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
