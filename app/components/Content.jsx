@@ -44,14 +44,18 @@ export function Rich({ text, onSource, isOwn }) {
     };
   }, [isOwn, t]);
   const content = onSource ? text.replace(/\[(\d+)\](?!\()/g, '[$1](stillnote://source/$1)') : text;
-  return (
-    <div className={'prose' + (isOwn ? ' enhanced' : '')}>
+  // Parsing Markdown is the slow part: it reruns only when the text or its marking changes, not
+  // on every render of a chat or note (each keystroke, each streamed word elsewhere).
+  const rendered = useMemo(
+    () => (
       <Markdown
         urlTransform={(url) => (url.startsWith('stillnote://source/') ? url : '')}
         components={components}
       >
         {content}
       </Markdown>
-    </div>
+    ),
+    [content, components],
   );
+  return <div className={'prose' + (isOwn ? ' enhanced' : '')}>{rendered}</div>;
 }

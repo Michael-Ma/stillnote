@@ -164,10 +164,12 @@ export function ChatPanel({
                 <Rich text={m.content} onSource={(number) => onSource(m, number)} />
                 {m.context?.included < m.context?.total && (
                   <p className="context-coverage">
-                    {t('Used {used} of {total} notes', {
-                      used: m.context.included,
-                      total: m.context.total,
-                    })}
+                    {t.count(
+                      m.context.total,
+                      'Used {used} of {n} note',
+                      'Used {used} of {n} notes',
+                      { used: m.context.included },
+                    )}
                   </p>
                 )}
                 {(m.sources?.length > 0 || onApply) && (

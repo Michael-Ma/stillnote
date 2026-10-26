@@ -1,7 +1,7 @@
 import { _electron as electron } from 'playwright';
 import assert from 'node:assert/strict';
 import { resolve, join } from 'node:path';
-import { mkdtempSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync } from 'node:fs';
 const dataDir = mkdtempSync(resolve('.test-data-'));
 const output = resolve('output/playwright');
 mkdirSync(output, { recursive: true });
@@ -127,7 +127,6 @@ try {
     JSON.stringify(
       {
         status: 'passed',
-        dataDir,
         screenshots: output,
         checks: [
           'create/edit/autosave',
@@ -150,4 +149,6 @@ try {
   );
 } finally {
   if (desktop) await desktop.close().catch(() => {});
+  // The isolated notebook is only for this run.
+  rmSync(dataDir, { recursive: true, force: true });
 }

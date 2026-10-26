@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { resolveLanguage, translator } from '../app/i18n/index.mjs';
 import zh from '../app/i18n/zh-Hans.mjs';
 import { usedKeys } from '../scripts/i18n-keys.mjs';
+import { readFileSync } from 'node:fs';
+import { helperMessage } from '../app/helper-messages.mjs';
 
 const placeholders = (text) => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
 
@@ -60,5 +62,49 @@ test('helper messages are translated, including ones with a part filled in', asy
   assert.equal(
     helperMessage('Something the helper never says.', zhT),
     'Something the helper never says.',
+  );
+});
+
+test('every message the native helper can show is translated', () => {
+  const swift = readFileSync(new URL('../native/Capture.swift', import.meta.url), 'utf8');
+  // Self-tests and the evaluation harness report to scripts, not to people.
+  const internal = [
+    'schedulerSelfTest',
+    'captureSelfTest',
+    'audioSelfTest',
+    'streamedRecognition',
+  ].map((name) => {
+    const start = swift.indexOf(`func ${name}(`);
+    let end = swift.indexOf('{', start);
+    for (let depth = 0; end < swift.length; end++) {
+      if (swift[end] === '{') depth++;
+      else if (swift[end] === '}' && --depth === 0) break;
+    }
+    return [start, end];
+  });
+  const shown = new Set();
+  for (const match of swift.matchAll(
+    /(?:problem|warning)\(\s*"((?:[^"\\]|\\.)*)"|"message":\s*"((?:[^"\\]|\\.)*)"/g,
+  )) {
+    if (internal.some(([from, to]) => match.index > from && match.index < to)) continue;
+    // Interpolated parts arrive filled in: a speaker, a source, a status code, a language, an error.
+    shown.add(
+      (match[1] ?? match[2]).replace(/\\\((.*?)\)/g, (_, part) =>
+        /speaker/.test(part)
+          ? 'You'
+          : /source/.test(part)
+            ? 'microphone'
+            : /status/.test(part)
+              ? '-10851'
+              : /locale/.test(part)
+                ? 'zh-CN'
+                : 'X',
+      ),
+    );
+  }
+  const t = translator('zh-Hans');
+  assert.deepEqual(
+    [...shown].filter((message) => helperMessage(message, t) === message),
+    [],
   );
 });

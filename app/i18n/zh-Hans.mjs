@@ -158,6 +158,16 @@ export default {
     '请等重新转写完成后再开始录音。',
   'Transcription stopped because it was taking too long. The existing transcript was preserved.':
     '转写耗时过长，已停止。原有转写已保留。',
+  'Allow Microphone access for Stillnote in System Settings → Privacy & Security.':
+    '请在“系统设置 → 隐私与安全性”中允许 Stillnote 使用麦克风。',
+  'No microphone input is available. Connect a microphone; capture will retry automatically.':
+    '没有可用的麦克风输入。请连接麦克风，录音会自动重试。',
+  'Allow Speech Recognition for Stillnote in macOS Settings, then retry. Audio is preserved.':
+    '请在 macOS 设置中允许 Stillnote 使用语音识别，然后重试。音频已保留。',
+  'On-device recognition is unavailable for {language}. Audio will still be saved. Install the language in macOS Dictation settings, then retry transcription.':
+    '{language}不支持本机识别。音频仍会保存。请在 macOS 听写设置中安装这种语言，然后重新转写。',
+  'On-device recognition is unavailable for {language}. Install the language in macOS Dictation settings, then retry.':
+    '{language}不支持本机识别。请在 macOS 听写设置中安装这种语言，然后重试。',
   'File transcription finalization timed out. Retry from the saved audio.':
     '文件转写收尾超时。请从保存的音频重试。',
   Finish: '结束',
@@ -499,7 +509,8 @@ export default {
   'Use Claude': '使用 Claude',
   'Use the plan you already pay for. No API key needed.': '使用你已付费的订阅，无需 API 密钥。',
   'Use {provider}': '使用 {provider}',
-  'Used {used} of {total} notes': '用了 {total} 条笔记中的 {used} 条',
+  'Used {used} of {n} note': '用了 {n} 条笔记中的 {used} 条',
+  'Used {used} of {n} notes': '用了 {n} 条笔记中的 {used} 条',
   'Uses the Claude Code app on this Mac with your own sign-in. Stillnote never reads your Claude credentials. Requests count toward your Claude plan limits.':
     '通过这台 Mac 上的 Claude Code 应用和你自己的登录来使用。Stillnote 不会读取你的 Claude 凭据。请求计入你的 Claude 订阅额度。',
   'Very little text was recognized. Listen to the audio before relying on enhanced notes.':

@@ -578,7 +578,11 @@ if (!app.requestSingleInstanceLock()) {
   async function ai({ kind, id, ids, question, scope }) {
     if (activeAI) throw new Error('Wait for the current response, or stop it first.');
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 300000);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 300000);
     activeAI = controller;
     try {
       const settings = store.settings();
@@ -670,6 +674,11 @@ if (!app.requestSingleInstanceLock()) {
         sources.filter((source) => cited.has(source.number)),
       );
       return { message, messages: store.messages(scope), context: selected.context };
+    } catch (error) {
+      // Said as a timeout, not "Stopped.", also where nothing else knows when it started
+      // (enhancing after a recording).
+      if (timedOut) throw new Error('Timed out after 5 minutes. Your notes are unchanged.');
+      throw error;
     } finally {
       clearTimeout(timeout);
       activeAI = undefined;

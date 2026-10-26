@@ -42,6 +42,9 @@ const fixed = new Set([
   msg('The microphone keeps resetting. Check the input device in Settings › Recording.'),
   msg('Microphone permission denied.'),
   msg('Wait for the transcription retry to finish, then start recording.'),
+  msg('Allow Microphone access for Stillnote in System Settings → Privacy & Security.'),
+  msg('No microphone input is available. Connect a microphone; capture will retry automatically.'),
+  msg('Allow Speech Recognition for Stillnote in macOS Settings, then retry. Audio is preserved.'),
   msg(
     'Transcription stopped because it was taking too long. The existing transcript was preserved.',
   ),
@@ -65,6 +68,22 @@ const shaped = [
       t('On-device recognition is unavailable for {language}. Audio is still saved.', {
         language: languageName(m[1], t.locale),
       }),
+  ],
+  [
+    /^On-device recognition is unavailable for (\S+)\. Audio will still be saved\. Install the language in macOS Dictation settings, then retry transcription\.$/,
+    (m, t) =>
+      t(
+        'On-device recognition is unavailable for {language}. Audio will still be saved. Install the language in macOS Dictation settings, then retry transcription.',
+        { language: languageName(m[1], t.locale) },
+      ),
+  ],
+  [
+    /^On-device recognition is unavailable for (\S+)\. Install the language in macOS Dictation settings, then retry\.$/,
+    (m, t) =>
+      t(
+        'On-device recognition is unavailable for {language}. Install the language in macOS Dictation settings, then retry.',
+        { language: languageName(m[1], t.locale) },
+      ),
   ],
   [
     /^Cannot select microphone (.+) \((-?\d+)\)\.$/,

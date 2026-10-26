@@ -16,11 +16,18 @@ export const builtInNames = [
   msg('Speaker'),
   msg('Imported transcript'),
 ];
-// Dates and times follow the interface language (`locale` is t.locale).
+// Dates and times follow the interface language (`locale` is t.locale). Formatters are reused:
+// building one per row made long lists slow to draw.
+const formatters = new Map();
+export const dateFormat = (locale, options) => {
+  const key = `${locale}|${JSON.stringify(options)}`;
+  if (!formatters.has(key)) formatters.set(key, new Intl.DateTimeFormat(locale, options));
+  return formatters.get(key);
+};
 export const date = (x, locale) =>
-  new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(new Date(x));
+  dateFormat(locale, { month: 'short', day: 'numeric' }).format(new Date(x));
 export const time = (x, locale) =>
-  new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(new Date(x));
+  dateFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(new Date(x));
 export const duration = (x) =>
   `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
 export function dayLabel(value, t = english) {
@@ -29,11 +36,7 @@ export function dayLabel(value, t = english) {
   if (d.toDateString() === today.toDateString()) return t('Today');
   today.setDate(today.getDate() - 1);
   if (d.toDateString() === today.toDateString()) return t('Yesterday');
-  return new Intl.DateTimeFormat(t.locale, {
-    weekday: 'long',
-    month: 'short',
-    day: 'numeric',
-  }).format(d);
+  return dateFormat(t.locale, { weekday: 'long', month: 'short', day: 'numeric' }).format(d);
 }
 
 export function cleanError(error, { stopped = false, timedOut = false } = {}) {

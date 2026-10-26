@@ -1,6 +1,6 @@
 import { _electron as electron } from 'playwright';
 import { resolve, join } from 'node:path';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 // Spotlight skips `.noindex` folders, so the build never shows up beside the installed app.
@@ -10,11 +10,12 @@ const bundle = resolve(
 const helper = join(bundle, 'Contents/Resources/StillnoteCapture');
 const probe = JSON.parse(execFileSync(helper, ['--self-test'], { encoding: 'utf8' }).trim());
 assert.equal(probe.type, 'ready');
+const dataDir = mkdtempSync(resolve('.test-data-package-'));
 const desktop = await electron.launch({
   executablePath: join(bundle, 'Contents/MacOS/Stillnote'),
   env: {
     ...process.env,
-    STILLNOTE_DATA_DIR: mkdtempSync(resolve('.test-data-package-')),
+    STILLNOTE_DATA_DIR: dataDir,
     STILLNOTE_DISABLE_CLAUDE: '1',
     STILLNOTE_MOCK_KEYCHAIN: '1',
     STILLNOTE_UI_LANGUAGE: 'en',
@@ -49,4 +50,6 @@ try {
   );
 } finally {
   await desktop.close();
+  // The isolated notebook is only for this run.
+  rmSync(dataDir, { recursive: true, force: true });
 }

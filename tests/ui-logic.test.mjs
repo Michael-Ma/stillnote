@@ -25,10 +25,12 @@ test('short or empty notes never mark generated text', () => {
   assert.equal(ownLineMatcher('Ship the flow Friday')('Ship'), false);
 });
 
-test('CJK notes match by character', () => {
+test('CJK notes match by neighbouring characters, not common single ones', () => {
   const isOwn = ownLineMatcher('我们保存原始记录');
   assert.equal(isOwn('团队决定：我们保存原始记录。'), true);
   assert.equal(isOwn('下周讨论定价方案'), false);
+  assert.equal(ownLineMatcher('我们的目标')('我们的计划是什么'), false, 'only 我们的 in common');
+  assert.equal(ownLineMatcher('用React开发定价页')('决定用 React 开发定价页。'), true);
 });
 
 test('aiView falls back to the legacy account shape', () => {

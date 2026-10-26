@@ -1,9 +1,20 @@
 // Granola-style emphasis: enhanced lines that restate the user's own rough notes stay in ink,
 // everything the model added is rendered quieter. Pure and deterministic; no model involvement.
+// CJK runs count by neighbouring character pairs: single characters such as 我, 们 and 的 are in
+// almost every sentence and would make unrelated lines look alike.
+const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const words = (text) =>
-  (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).flatMap((w) =>
-    /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(w)
-      ? [...w]
+  (
+    text
+      .toLowerCase()
+      .match(
+        /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+|(?:(?![\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}])[\p{L}\p{N}])+/gu,
+      ) ?? []
+  ).flatMap((w) =>
+    cjk.test(w)
+      ? w.length === 1
+        ? [w]
+        : [...w].slice(1).map((c, i) => w[i] + c)
       : w.length > 2
         ? [w]
         : [],
