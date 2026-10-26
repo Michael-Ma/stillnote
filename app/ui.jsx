@@ -24,6 +24,7 @@ import {
   storedSpeaker,
 } from './format.mjs';
 import { liveValue } from './live-values.mjs';
+import { tidyNotes } from './meeting-context.mjs';
 import { resolveLanguage, translator } from './i18n/index.mjs';
 import { I18nProvider } from './i18n/react.jsx';
 import './style.css';
@@ -250,7 +251,8 @@ function App() {
     });
   }, []);
   useEffect(() => {
-    const t = setTimeout(() => setNotice(''), 5000);
+    // A notice with an action (Undo) stays a little longer.
+    const t = setTimeout(() => setNotice(''), notice?.action ? 10000 : 5000);
     return () => clearTimeout(t);
   }, [notice]);
   // A detected meeting nobody acted on stops asking after ten minutes.
@@ -377,8 +379,7 @@ function App() {
   async function flushAll() {
     for (const id of Object.keys(draftRef.current)) await flush(id);
   }
-  function draft(patch) {
-    const id = selected;
+  function draft(patch, id = selected) {
     draftRef.current[id] = { ...draftRef.current[id], ...patch };
     setDrafts((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
     clearTimeout(timers.current[id]);
@@ -445,7 +446,7 @@ function App() {
   function joinMeeting(event) {
     return oneCall(async () => {
       if (await guard(() => call('join-call', eventKey(event))))
-        await startMeeting(eventNote(event));
+        await startMeeting(eventNote(event, t));
     });
   }
   // "Take notes" on a detected meeting: record into the calendar meeting under way, or a new note.
@@ -453,7 +454,7 @@ function App() {
     return oneCall(async () => {
       const event = detected?.event;
       setDetected(null);
-      if (event) return startMeeting(eventNote(event));
+      if (event) return startMeeting(eventNote(event, t));
       const id = await newNote({ title: callTitle(null, Date.now(), t) });
       if (id) await record(id);
     });
@@ -927,6 +928,17 @@ function App() {
             <div className="notice" role="status">
               <Check size={14} />
               {typeof notice === 'string' ? notice : notice.text}
+              {notice.action && (
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    notice.action.run();
+                    setNotice('');
+                  }}
+                >
+                  {notice.action.label}
+                </button>
+              )}
               {notice.id && (
                 <button
                   className="text-button"
@@ -954,6 +966,16 @@ function App() {
                   folders={data.folders}
                   tab={tab}
                   draft={draft}
+                  onTidyContext={() => {
+                    // The invite as it arrived comes back with Undo.
+                    const before = meeting.notes,
+                      id = meeting.id;
+                    draft({ notes: tidyNotes(before, t) }, id);
+                    setNotice({
+                      text: t('Meeting context tidied.'),
+                      action: { label: t('Undo'), run: () => draft({ notes: before }, id) },
+                    });
+                  }}
                   patch={patch}
                   busy={aiTarget?.id === selected ? busy : null}
                   stream={aiTarget?.id === selected ? stream : ''}

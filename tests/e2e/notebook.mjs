@@ -132,6 +132,21 @@ export async function notebook(h) {
   assert.equal(persisted.transcript.length, 1);
   assert.equal(persisted.starred, true);
   assert.equal(persisted.deletedAt, null);
+  // A note made before invites were cleaned offers to tidy its meeting context, with Undo.
+  const raw =
+    'Meeting context\n<p>Hi <b>Alex</b>,</p><p>Agenda &amp; goals</p><br />Meeting ID: 81234567890\nMy own line';
+  await h.call('create', { title: 'Old invite note', notes: raw });
+  page = await h.restart();
+  await h.open('Old invite note');
+  const notesBox = page.getByRole('textbox', { name: 'My notes', exact: true });
+  await page.getByRole('button', { name: 'Tidy it', exact: true }).click();
+  assert.equal(
+    await notesBox.inputValue(),
+    'Meeting context\nHi Alex,\nAgenda & goals\nMy own line',
+  );
+  await page.getByRole('button', { name: 'Tidy it', exact: true }).waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  assert.equal(await notesBox.inputValue(), raw);
   await h.desktop.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setSize(1024, 768),
   );

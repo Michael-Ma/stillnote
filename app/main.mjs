@@ -351,7 +351,7 @@ if (!app.requestSingleInstanceLock()) {
   function showMeeting({ event, title, record }) {
     if (!showWindow()) return;
     const meeting = event
-      ? (meetingForEvent(store.all(), eventKey(event)) ?? store.create(eventNote(event)))
+      ? (meetingForEvent(store.all(), eventKey(event)) ?? store.create(eventNote(event, tr())))
       : store.create({ title });
     emit({ type: 'meeting', meeting });
     emit({ type: 'open-meeting', id: meeting.id, record: record && idle() });

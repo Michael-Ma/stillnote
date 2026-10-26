@@ -16,6 +16,7 @@ import { IconButton, Rich } from './Content.jsx';
 import { AiConnect } from './AiConnect.jsx';
 import { CoverageWarning } from './RecordingAudio.jsx';
 import { ownLineMatcher } from '../own-lines.mjs';
+import { tidyNotes } from '../meeting-context.mjs';
 import { date } from '../format.mjs';
 import { useT } from '../i18n/react.jsx';
 
@@ -110,9 +111,12 @@ export function NoteView({
   activeRecord,
   ai,
   aiActions,
+  onTidyContext,
 }) {
   const t = useT();
   const isOwn = useMemo(() => ownLineMatcher(meeting.notes), [meeting.notes]);
+  // Notes made before invites were cleaned still hold them as they arrived (HTML, dial-ins).
+  const untidy = useMemo(() => tidyNotes(meeting.notes, t) !== meeting.notes, [meeting.notes, t]);
   const enhancing = busy === 'enhance';
   return (
     <article className="note">
@@ -163,6 +167,14 @@ export function NoteView({
         </div>
       )}
       {!activeRecord && <CoverageWarning meeting={meeting} {...coverage} />}
+      {tab === 'notes' && untidy && !meeting.deletedAt && (
+        <div className="inline-note">
+          {t('The meeting context is the calendar invite as it arrived.')}{' '}
+          <button className="text-button" onClick={onTidyContext}>
+            {t('Tidy it')}
+          </button>
+        </div>
+      )}
       <div className="document-body">
         {tab === 'notes' ? (
           <textarea

@@ -326,6 +326,11 @@ export default {
   'No sound from {device}': '{device} 没有声音',
   'No sound from the microphone': '麦克风没有声音',
   'Open Stillnote when a meeting is detected': '检测到会议时打开 Stillnote',
+  'Meeting ID {id}': '会议号 {id}',
+  'Passcode {code}': '密码 {code}',
+  'The meeting context is the calendar invite as it arrived.': '会议信息还是日历邀请的原样。',
+  'Tidy it': '整理一下',
+  'Meeting context tidied.': '会议信息已整理。',
   'Click to save “{title}”, then join and record this meeting.':
     '点击保存“{title}”，然后加入并录制这场会议。',
   'Click to save “{title}” and record this meeting instead.':

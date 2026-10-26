@@ -100,7 +100,7 @@ export function HomeFeed({
                     {events.map((e) => {
                       const soon =
                         Date.parse(e.start) - Date.now() < 600000 && Date.parse(e.end) > Date.now();
-                      const note = eventNote(e);
+                      const note = eventNote(e, t);
                       const link = meetingLink(e);
                       // The row opens the meeting's note; "Start now" also starts recording, and
                       // "Join & record" opens the meeting's call as well.
