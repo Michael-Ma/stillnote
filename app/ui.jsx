@@ -231,7 +231,8 @@ function App() {
       valid = false;
       clearTimeout(t);
     };
-  }, [query, data?.meetings]);
+    // Results refresh as notes change, but not on every transcript line while recording.
+  }, [query, data?.recording ? null : data?.meetings]);
   useEffect(() => {
     const key = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'j') {

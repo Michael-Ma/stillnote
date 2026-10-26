@@ -317,6 +317,42 @@ test('old FTS schema migrates safely and idempotently with stable integer rowids
   assert.equal(reopened.search('Updated').length, 0);
   reopened.close();
 });
+test('earlier transcript versions move out of meetings once, and the index learns CJK', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'stillnote-v1-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const db = new DatabaseSync(join(dir, 'notebook.sqlite'));
+  db.exec(
+    "CREATE TABLE meetings(id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE VIRTUAL TABLE meeting_search USING fts5(id UNINDEXED, title, content, tokenize='unicode61'); PRAGMA user_version=1;",
+  );
+  const versions = [
+    { recordingId: 'r', at: '2026-10-02', segments: [{ text: 'newer' }] },
+    { recordingId: 'r', at: '2026-10-01', segments: [{ text: 'older' }] },
+  ];
+  db.prepare('INSERT INTO meetings(id,data) VALUES(?,?)').run(
+    'm',
+    JSON.stringify({
+      id: 'm',
+      title: '招聘计划',
+      notes: '',
+      summary: '',
+      transcript: [],
+      versions: [],
+      recordings: [],
+      transcriptVersions: versions,
+      createdAt: '2026',
+      updatedAt: '2026',
+    }),
+  );
+  db.close();
+  const store = new Store(dir);
+  assert.ok(!('transcriptVersions' in store.get('m')));
+  assert.deepEqual(store.transcriptVersions('m'), versions, 'newest first, as before');
+  assert.equal(store.search('招聘')[0].id, 'm');
+  store.close();
+  const reopened = new Store(dir);
+  assert.equal(reopened.transcriptVersions('m').length, 2, 'migrates once');
+  reopened.close();
+});
 test('stream parser ignores non-string text deltas', async () => {
   const deltas = [];
   const events = [null, 7, {}, 'valid'].map((delta) => ({

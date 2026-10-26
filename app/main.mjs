@@ -628,9 +628,13 @@ if (!app.requestSingleInstanceLock()) {
         instructions = enhanceInstructions;
         input = [{ role: 'user', content: enhanceRequest(m, template) }];
       } else {
-        selected = chatContext(meetings, single ? [] : store.search(question.slice(0, 1000)), {
-          single,
-        });
+        selected = chatContext(
+          meetings,
+          single ? [] : store.search(question.slice(0, 1000), { any: true }),
+          {
+            single,
+          },
+        );
         const { source } = selected;
         sources = selected.sources;
         instructions =

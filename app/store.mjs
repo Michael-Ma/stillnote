@@ -89,6 +89,9 @@ export class Store {
       CREATE TABLE IF NOT EXISTS folders(id TEXT PRIMARY KEY, name TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY, scope TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS messages_scope ON messages(scope);
+      CREATE TABLE IF NOT EXISTS transcript_versions(id INTEGER PRIMARY KEY, meeting_id TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS transcript_versions_meeting ON transcript_versions(meeting_id);
       CREATE VIRTUAL TABLE IF NOT EXISTS meeting_search USING fts5(id UNINDEXED, title, content, tokenize='unicode61');`);
     // Old indexes used unrelated FTS rowids. Rebuild once, atomically, from durable meetings.
     if (this.db.prepare('PRAGMA user_version').get().user_version < 1) {
@@ -102,19 +105,49 @@ export class Store {
         throw error;
       }
     }
+    // Earlier transcript versions move out of the meeting, which every new line rewrites; the
+    // search index is rebuilt with CJK characters as separate tokens.
+    if (this.db.prepare('PRAGMA user_version').get().user_version < 2) {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const row of this.db.prepare('SELECT id, data FROM meetings').all()) {
+          const stored = JSON.parse(row.data);
+          if (!('transcriptVersions' in stored)) continue;
+          const { transcriptVersions = [], ...m } = stored;
+          for (const version of [...transcriptVersions].reverse())
+            this.db
+              .prepare('INSERT INTO transcript_versions(meeting_id, data) VALUES(?,?)')
+              .run(row.id, JSON.stringify(version));
+          this.db.prepare('UPDATE meetings SET data=? WHERE id=?').run(JSON.stringify(m), row.id);
+        }
+        this.db.exec('DELETE FROM meeting_search');
+        for (const m of this.all(true)) this.index(m);
+        this.db.exec('PRAGMA user_version=2; COMMIT');
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
+    }
   }
   all(includeTrash = false) {
     return this.db
       .prepare('SELECT data FROM meetings')
       .all()
-      .map((x) => ({ recordings: [], transcriptVersions: [], ...JSON.parse(x.data) }))
+      .map((x) => ({ recordings: [], ...JSON.parse(x.data) }))
       .filter((m) => includeTrash || !m.deletedAt)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
   get(id) {
     const r = this.db.prepare('SELECT data FROM meetings WHERE id=?').get(id);
     if (!r) throw new Error('Meeting not found.');
-    return { recordings: [], transcriptVersions: [], ...JSON.parse(r.data) };
+    return { recordings: [], ...JSON.parse(r.data) };
+  }
+  // A recording's earlier transcripts, newest first (each Retry keeps the one it replaced).
+  transcriptVersions(id) {
+    return this.db
+      .prepare('SELECT data FROM transcript_versions WHERE meeting_id=? ORDER BY id DESC')
+      .all(id)
+      .map((row) => JSON.parse(row.data));
   }
   create(input = {}, transcript = []) {
     const now = new Date().toISOString();
@@ -134,7 +167,6 @@ export class Store {
       duration: 0,
       versions: [],
       recordings: [],
-      transcriptVersions: [],
       ...Object.fromEntries(
         ['notes', 'participants']
           .filter((k) => typeof input[k] === 'string')
@@ -154,11 +186,12 @@ export class Store {
         .run(
           rowid,
           m.id,
-          m.title,
-          [m.notes, m.summary, ...m.transcript.map((s) => s.text)].join('\n'),
+          searchable(m.title),
+          searchable([m.notes, m.summary, ...m.transcript.map((s) => s.text)].join('\n')),
         );
   }
-  write(m) {
+  // `alongside` runs in the same transaction (rows that belong with this write).
+  write(m, alongside = () => {}) {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db
@@ -167,6 +200,7 @@ export class Store {
         )
         .run(m.id, JSON.stringify(m));
       this.index(m);
+      alongside();
       this.db.exec('COMMIT');
       return m;
     } catch (e) {
@@ -294,14 +328,11 @@ export class Store {
       }));
     if (!replacement.length)
       throw new Error('No transcript text was recovered. The existing transcript was preserved.');
-    m.transcriptVersions = [
-      {
-        recordingId,
-        at: new Date().toISOString(),
-        segments: m.transcript.filter((segment) => segment.recordingId === recordingId),
-      },
-      ...m.transcriptVersions,
-    ].slice(0, 20);
+    const replaced = {
+      recordingId,
+      at: new Date().toISOString(),
+      segments: m.transcript.filter((segment) => segment.recordingId === recordingId),
+    };
     m.transcript = [
       ...m.transcript.filter((segment) => segment.recordingId !== recordingId),
       ...replacement,
@@ -314,7 +345,17 @@ export class Store {
       else delete session.locales;
     }
     m.updatedAt = new Date().toISOString();
-    return this.write(m);
+    // The replaced transcript is kept (the latest 20 per meeting) beside the meeting, not in it.
+    return this.write(m, () => {
+      this.db
+        .prepare('INSERT INTO transcript_versions(meeting_id, data) VALUES(?,?)')
+        .run(id, JSON.stringify(replaced));
+      this.db
+        .prepare(
+          'DELETE FROM transcript_versions WHERE meeting_id=? AND id NOT IN (SELECT id FROM transcript_versions WHERE meeting_id=? ORDER BY id DESC LIMIT 20)',
+        )
+        .run(id, id);
+    });
   }
   editSegment(id, segmentId, patch) {
     const m = this.get(id);
@@ -328,26 +369,42 @@ export class Store {
     m.updatedAt = new Date().toISOString();
     return this.write(m);
   }
-  search(query) {
+  // Matching meetings' ids, best first. The search box wants every word (the last one may be
+  // unfinished); `any` is for questions, where any word or pair of CJK characters may match and
+  // relevance decides.
+  search(query, { any = false } = {}) {
     const terms = text(query, 1000).trim().split(/\s+/).filter(Boolean);
-    if (!terms.length) return this.all();
-    const match = terms.map((t) => '"' + t.replaceAll('"', '""') + '"*').join(' AND ');
-    const ids = this.db
-      .prepare('SELECT id FROM meeting_search WHERE meeting_search MATCH ? ORDER BY rank LIMIT 100')
-      .all(match);
-    // unicode61 keeps many CJK phrases together; supplement token search with literal substrings.
-    if (/\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u.test(query)) {
-      const known = new Set(ids.map((row) => row.id));
-      for (const m of this.all()) {
-        const haystack = [m.title, m.notes, m.summary, ...m.transcript.map((s) => s.text)].join(
-          '\n',
-        );
-        if (!known.has(m.id) && terms.every((term) => haystack.includes(term)))
-          ids.push({ id: m.id });
-        if (ids.length >= 100) break;
-      }
-    }
-    return ids.map((x) => this.get(x.id));
+    if (!terms.length) return this.all().map(({ id }) => ({ id }));
+    const phrase = (tokens, prefix) =>
+      '"' + tokens.join(' ').replaceAll('"', '""') + '"' + (prefix ? '*' : '');
+    const parts = terms.flatMap((term) => {
+      const tokens = searchable(term)
+        .trim()
+        .split(/\s+/)
+        .filter((token) => /[\p{L}\p{N}]/u.test(token));
+      if (!tokens.length) return [];
+      if (!any) return [phrase(tokens, !cjkCharacter.test(tokens.at(-1)))];
+      const out = [];
+      let run = [];
+      const pairs = () => {
+        if (run.length === 1) out.push(phrase(run, false));
+        for (let i = 0; i + 1 < run.length; i++) out.push(phrase(run.slice(i, i + 2), false));
+        run = [];
+      };
+      for (const token of tokens)
+        if (cjkCharacter.test(token)) run.push(token);
+        else {
+          pairs();
+          out.push(phrase([token], true));
+        }
+      pairs();
+      return out;
+    });
+    if (!parts.length) return [];
+    return this.db
+      .prepare('SELECT id FROM meeting_search WHERE meeting_search MATCH ? ORDER BY rank LIMIT 500')
+      .all(parts.join(any ? ' OR ' : ' AND '))
+      .map(({ id }) => ({ id }));
   }
   folders() {
     return this.db.prepare('SELECT * FROM folders ORDER BY name').all();
@@ -392,9 +449,9 @@ export class Store {
       version: 1,
       exportedAt: new Date().toISOString(),
       audioIncluded: false,
-      // Earlier transcript versions stay on this Mac: a restore never brings them back, and after
-      // a few retries they are most of a notebook's size.
-      meetings: this.all(true).map(({ transcriptVersions, ...m }) => ({
+      // Earlier transcript versions (kept beside each meeting) stay on this Mac: a restore never
+      // brings them back, and after a few retries they are most of a notebook's size.
+      meetings: this.all(true).map((m) => ({
         ...m,
         recordings: m.recordings.map(({ id, startedAt, duration, status }) => ({
           id,
@@ -483,7 +540,6 @@ export class Store {
           ...segmentLocale(s),
         })),
         recordings: [],
-        transcriptVersions: [],
       };
     });
     const messages = (input.messages ?? []).map((m) => {
@@ -555,6 +611,14 @@ const isLocale = (value) =>
 export function validateLocale(value) {
   if (!isLocale(value)) throw new Error('Invalid recognition language.');
 }
+// Chinese, Japanese and Korean text has no spaces between words, so each character is indexed as
+// a token of its own and searched as a phrase; "React" inside a Chinese sentence is then a word.
+const cjkCharacter = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+const searchable = (value) =>
+  value.replace(
+    /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu,
+    ' $& ',
+  );
 // A backup holds the whole notebook; any other import is one transcript. Checked against the file
 // size before reading, and against the text after.
 export function checkImportSize(path, size) {

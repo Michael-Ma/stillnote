@@ -360,7 +360,7 @@ test('recording transcripts preserve manual text, other sessions and prior retry
     ['Manual transcript', 'Recovered first recording', 'Second session'],
   );
   assert.deepEqual(
-    saved.transcriptVersions[0].segments.map((segment) => segment.text),
+    store.transcriptVersions(note.id)[0].segments.map((segment) => segment.text),
     ['Corrected earlier window', 'Later window'],
   );
   assert.equal(saved.notes, 'Keep these rough notes.');

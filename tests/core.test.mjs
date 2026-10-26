@@ -81,6 +81,24 @@ test('search safely handles punctuation and untrusted FTS syntax', (t) => {
   assert.doesNotThrow(() => s.search('" OR *'));
   assert.equal(s.search('quoted').length, 1);
 });
+test('search finds words inside Chinese text, CJK phrases, and any word of a question', (t) => {
+  const { s } = fixture(t);
+  const pricing = s.create({
+    title: '定价评审',
+    notes: '我们用React开发新的定价页面。The Q4 headcount plan is final.',
+  });
+  const training = s.create({ title: 'Hiring', notes: 'Interview training starts next month.' });
+  const korean = s.create({ title: 'Standup', notes: '회의를 시작합니다' });
+  const ids = (results) => results.map((r) => r.id);
+  assert.deepEqual(ids(s.search('react')), [pricing.id], 'an English word inside a Chinese run');
+  assert.deepEqual(ids(s.search('定价页面')), [pricing.id]);
+  assert.deepEqual(ids(s.search('页定')), [], 'characters must be adjacent, in order');
+  assert.deepEqual(ids(s.search('Headcount pl')), [pricing.id], 'the last word may be unfinished');
+  assert.deepEqual(ids(s.search('training headcount')), [], 'the search box wants every word');
+  assert.deepEqual(ids(s.search('회의')), [korean.id]);
+  assert.equal(s.search('When does interview training start?', { any: true })[0].id, training.id);
+  assert.equal(s.search('定价页面什么时候上线？', { any: true })[0].id, pricing.id);
+});
 test('context is bounded without silent truncation and uses stable source ids', (t) => {
   const { s } = fixture(t);
   const m = s.create({ title: 'Evidence', notes: 'Source content' });
