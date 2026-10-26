@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { cleanError, date, duration, recordingLanguage, time } from '../format.mjs';
+import { recognitionPlan } from '../language-arbiter.mjs';
 import { translator } from '../i18n/index.mjs';
 import { useT } from '../i18n/react.jsx';
 
@@ -381,7 +382,12 @@ export function RecordingAudio({
 }) {
   const t = useT();
   const recordings = meeting.recordings ?? [];
-  const target = recordingLanguage(locale, autoLocales, t.locale, t);
+  // Retry uses the current setting, read the way the main process reads it.
+  const plan = recognitionPlan({ locale, autoLocales });
+  const target = recordingLanguage(plan.label, plan.locales, t.locale, t);
+  const sameLanguage = (recording) =>
+    recording.locale === plan.label &&
+    (plan.label !== 'auto' || (recording.locales ?? []).join() === plan.locales.join());
   return (
     <section className="recordings-panel" aria-label={t('Saved recordings')}>
       {!recordings.length ? (
@@ -417,10 +423,9 @@ export function RecordingAudio({
                     disabled={disabled || !!retrying}
                     onClick={() => onRetry(recording.id)}
                     title={
-                      recordingLanguage(recording.locale ?? '', recording.locales, t.locale, t) !==
-                      target
-                        ? t('Transcribes again in {language}', { language: target })
-                        : undefined
+                      sameLanguage(recording)
+                        ? undefined
+                        : t('Transcribes again in {language}', { language: target })
                     }
                   >
                     {retrying === recording.id ? (

@@ -346,14 +346,22 @@ export function createLiveArbiter({
         leading: locales[0],
         lastRow: null,
         shown: new Map(), // provisional segmentId → locale
+        drawn: new Map(), // provisional segmentId → the text and start last sent for it
         volatile: new Map(), // latest partial per segmentId, every locale
       });
     return sources.get(source);
   };
   const show = (s, event) => {
     s.shown.set(event.segmentId, event.locale);
+    s.drawn.set(event.segmentId, `${event.timestamp}|${event.text}`);
     return { type: 'partial', event: { ...event, type: 'partial', partial: true } };
   };
+  // Waiting pieces are offered on every pass; only new or changed ones are sent again.
+  const showChanged = (s, event) =>
+    s.shown.has(event.segmentId) &&
+    s.drawn.get(event.segmentId) === `${event.timestamp}|${event.text}`
+      ? []
+      : [show(s, event)];
   // Takes provisional text off the screen; it will not become a row of its own.
   const withdraw = (s, ids) => {
     for (const id of ids) s.volatile.delete(id);
@@ -411,6 +419,7 @@ export function createLiveArbiter({
     const winners = [],
       kept = [],
       consumed = new Set();
+    let previous = s.previous;
     for (const group of groupBySlices(pieces, cuts)) {
       if (group.end > horizon + 0.05) {
         kept.push(...group.segments);
@@ -421,14 +430,19 @@ export function createLiveArbiter({
       const winner =
         active.length === 1
           ? { locale: active[0], segments: group.segments.filter((p) => p.locale === active[0]) }
-          : judge(group, s.previous, active, weights);
+          : judge(group, previous, active, weights);
       if (!winner) continue;
-      s.previous = winner.locale;
+      previous = winner.locale;
       winners.push(...winner.segments.sort((a, b) => a.start - b.start));
     }
     s.pending = kept;
     const rows = trimSeams(stitch(winners), s.lastRow);
-    if (rows.length) s.lastRow = rows.at(-1);
+    // The language of what reached the transcript: a late candidate whose rows were all trimmed
+    // away does not become the previous or leading language.
+    if (rows.length) {
+      s.lastRow = rows.at(-1);
+      s.previous = rows.at(-1).locale;
+    }
     const actions = [];
     const emitted = new Set(rows.map((r) => r.segmentId));
     const stale = [...s.shown.keys()].filter((id) => consumed.has(base(id)) && !emitted.has(id));
@@ -436,17 +450,29 @@ export function createLiveArbiter({
     if (stale.length) actions.push({ type: 'discard', segmentIds: stale });
     actions.push(...rows.map((row) => ({ type: 'segment', segment: row })));
     // Speech the leading language finalized but that is not decided yet stays visible.
+    let switched = false;
     if (s.previous && s.previous !== s.leading) {
       const old = [...s.shown].filter(([, locale]) => locale === s.leading).map(([id]) => id);
       for (const id of old) s.shown.delete(id);
       if (old.length) actions.push({ type: 'discard', segmentIds: old });
       s.leading = s.previous;
+      switched = true;
       for (const event of s.volatile.values())
         if (event.locale === s.leading) actions.push(show(s, event));
     }
-    for (const piece of kept)
-      if (piece.locale === s.leading && piece.segmentId !== base(piece.segmentId))
-        actions.push(show(s, { ...piece, timestamp: piece.start }));
+    // A phrase cut into pieces shows as its pieces (not as the pieces and the whole phrase);
+    // after a switch, the new leading language's phrases waiting for a decision show too.
+    const cut = new Set();
+    for (const piece of kept) {
+      if (piece.locale !== s.leading) continue;
+      const whole = piece.segmentId === base(piece.segmentId);
+      if (whole && !switched) continue;
+      if (!whole) cut.add(base(piece.segmentId));
+      actions.push(...showChanged(s, { ...piece, timestamp: piece.start }));
+    }
+    const replaced = [...cut].filter((id) => s.shown.has(id));
+    for (const id of replaced) s.shown.delete(id);
+    if (replaced.length) actions.push({ type: 'discard', segmentIds: replaced });
     return actions;
   }
 

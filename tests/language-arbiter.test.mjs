@@ -434,3 +434,180 @@ test('live: provisional text the helper withdraws, or that goes stale, is never 
   );
   assert.deepEqual(segments(arbiter.flush(21000)), [], 'nothing withdrawn is saved at stop');
 });
+
+// What the renderer would show after applying the arbiter's actions.
+function screen() {
+  const shown = new Map();
+  return {
+    shown,
+    apply(actions) {
+      for (const a of actions)
+        if (a.type === 'partial') shown.set(a.event.segmentId, a.event.text);
+        else if (a.type === 'discard') for (const id of a.segmentIds) shown.delete(id);
+        else shown.delete(a.segment.segmentId);
+      return actions;
+    },
+  };
+}
+
+test('live: a phrase cut into pieces shows once, and waiting pieces are not resent', () => {
+  const arbiter = createLiveArbiter({ locales: ['zh-CN', 'en-US'], startedAt: 0 });
+  const view = screen();
+  view.apply(
+    arbiter.push(
+      {
+        type: 'segment',
+        source: 'microphone',
+        locale: 'en-US',
+        segmentId: 'E1',
+        text: 'Jin tian',
+        timestamp: 0,
+        end: 1.25,
+        confidence: 0.2,
+        runs: [run(0, 0.6, 0.2, 'Jin'), run(0.6, 1.25, 0.2, ' tian')],
+      },
+      1500,
+    ),
+  );
+  view.apply(
+    arbiter.push(
+      {
+        type: 'partial',
+        source: 'microphone',
+        locale: 'en-US',
+        segmentId: 'E2',
+        text: 'kai',
+        timestamp: 1.1,
+        end: 2,
+      },
+      2000,
+    ),
+  );
+  view.apply(
+    arbiter.push(
+      {
+        type: 'segment',
+        source: 'microphone',
+        locale: 'zh-CN',
+        segmentId: 'A',
+        text: '今天开会讨论设计',
+        timestamp: 0,
+        end: 4,
+        confidence: 0.95,
+        runs: [
+          run(0, 1, 0.95, '今天'),
+          run(1, 2, 0.95, '开会'),
+          run(2, 3, 0.95, '讨论'),
+          run(3, 4, 0.95, '设计'),
+        ],
+      },
+      4200,
+    ),
+  );
+  assert.deepEqual([...view.shown.values()], ['今天', '开会讨论设计']);
+  const again = view.apply(arbiter.tick(4600));
+  assert.equal(
+    again.filter((a) => a.type === 'partial').length,
+    0,
+    'unchanged pieces are not resent',
+  );
+});
+
+test('live: after the leading language switches, its waiting sentences show', () => {
+  const arbiter = createLiveArbiter({ locales: ['zh-CN', 'en-US'], startedAt: 0 });
+  const view = screen();
+  const progress = (locale, through, now) =>
+    view.apply(
+      arbiter.push({ type: 'recognition-progress', source: 'microphone', locale, through }, now),
+    );
+  const segment = (locale, segmentId, text, from, to, confidence) => ({
+    type: 'segment',
+    source: 'microphone',
+    locale,
+    segmentId,
+    text,
+    timestamp: from,
+    end: to,
+    confidence,
+    runs: [
+      run(from, (from + to) / 2, confidence, text.split(' ')[0]),
+      run((from + to) / 2, to, confidence, ' ' + text.split(' ')[1]),
+    ],
+  });
+  progress('zh-CN', 0.1, 500);
+  progress('en-US', 0.1, 500);
+  view.apply(arbiter.push(segment('en-US', 'E1', 'Hello everyone', 0, 2, 0.95), 2500));
+  view.apply(arbiter.push(segment('en-US', 'E2', 'Next topic', 3, 5, 0.95), 5500));
+  progress('en-US', 5, 5600);
+  const decided = view.apply(arbiter.push(segment('zh-CN', 'Z1', '哈 喽', 0, 2, 0.3), 5700));
+  assert.deepEqual(
+    decided.filter((a) => a.type === 'segment').map((a) => a.segment.segmentId),
+    ['E1'],
+  );
+  assert.deepEqual(
+    [...view.shown.values()],
+    ['Next topic'],
+    'English leads, so its next sentence shows',
+  );
+});
+
+test('live: a late phrase trimmed away at a seam does not switch the leading language', () => {
+  const arbiter = createLiveArbiter({ locales: ['zh-CN', 'en-US'], startedAt: 0 });
+  const view = screen();
+  const at = (locale, through, now) =>
+    view.apply(
+      arbiter.push({ type: 'recognition-progress', source: 'microphone', locale, through }, now),
+    );
+  const final = (locale, segmentId, text, runs, confidence) => ({
+    type: 'segment',
+    source: 'microphone',
+    locale,
+    segmentId,
+    text,
+    timestamp: runs[0][0],
+    end: runs.at(-1)[1],
+    confidence,
+    runs,
+  });
+  const first = view.apply(
+    arbiter.push(
+      final(
+        'en-US',
+        'E1',
+        'Hello there',
+        [run(0, 1, 0.95, 'Hello'), run(1, 2, 0.95, ' there')],
+        0.95,
+      ),
+      2500,
+    ),
+  );
+  first.push(
+    ...view.apply(arbiter.push(final('zh-CN', 'Z1', '哈喽', [run(0, 2, 0.3, '哈喽')], 0.3), 2600)),
+    ...at('en-US', 3, 2700),
+    ...at('zh-CN', 3, 2700),
+  );
+  assert.deepEqual(
+    first.filter((a) => a.type === 'segment').map((a) => a.segment.segmentId),
+    ['E1'],
+  );
+  // The Chinese model's late, confident version of "there" is dropped at the seam.
+  const late = view.apply(
+    arbiter.push(final('zh-CN', 'Z2', '的儿', [run(1.6, 1.95, 0.9, '的儿')], 0.9), 4000),
+  );
+  assert.equal(late.filter((a) => a.type === 'segment').length, 0);
+  view.apply(
+    arbiter.push(
+      {
+        type: 'partial',
+        source: 'microphone',
+        locale: 'en-US',
+        segmentId: 'E2',
+        text: 'Next',
+        timestamp: 3.2,
+        end: 3.5,
+      },
+      4200,
+    ),
+  );
+  assert.deepEqual([...view.shown.values()], ['Next'], 'English still leads');
+});

@@ -309,9 +309,11 @@ export async function capture(h) {
   await h.page.getByRole('button', { name: 'Pause recording', exact: true }).click();
 
   // Auto language: each sentence is kept in the language that transcribed it convincingly; the
-  // other language's version never reaches the transcript.
-  await h.call('setting', 'autoLocales', ['zh-CN', 'en-US']);
+  // other language's version never reaches the transcript. The candidates are the defaults.
+  // A setting changed behind the interface's back needs a reload for the interface to see it.
   await h.call('setting', 'locale', 'auto');
+  await h.page.reload();
+  await h.page.getByRole('button', { name: 'New note', exact: true }).waitFor();
   const auto = await h.create('E2E auto language');
   await start(h);
   await h.waitForState(
@@ -329,6 +331,15 @@ export async function capture(h) {
   assert.equal(autoSaved.recordings[0].locale, 'auto');
   await h.sheet('Recordings');
   await h.page.getByText('Auto (Chinese + English)', { exact: false }).first().waitFor();
+  assert.equal(
+    await h.page
+      .locator('.saved-recording')
+      .first()
+      .getByRole('button', { name: 'Retry transcription', exact: true })
+      .getAttribute('title'),
+    null,
+    'Retry in the same Auto languages needs no language note',
+  );
   await h.call('setting', 'locale', 'en-US');
   h.assertNoRendererErrors();
 }
