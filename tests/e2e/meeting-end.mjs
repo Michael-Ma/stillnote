@@ -40,9 +40,22 @@ export async function meetingEnd(h) {
   assert.match(await prompt.innerText(), /The call has ended and no one is speaking\./);
   await h.screenshot('meeting-end-prompt');
 
-  // Keep recording: the prompt goes and the recording carries on past the countdown.
-  await prompt.getByRole('button', { name: 'Keep recording', exact: true }).click();
+  // Away from Stillnote (it is not in front), the floating panel says so too, counting down.
+  const panel = await h.panel();
+  assert.equal(
+    await panel.locator('.panel-words strong').innerText(),
+    'The meeting seems to be over',
+  );
+  assert.match(
+    await panel.locator('.panel-words small').innerText(),
+    /^Stopping in \d+ s · The call has ended and no one is speaking\.$/,
+  );
+  await h.panelScreenshot('meeting-end-panel');
+
+  // Keep recording in the panel: both prompts go and the recording carries on past the countdown.
+  await panel.getByRole('button', { name: 'Keep recording', exact: true }).click();
   await until(async () => (await prompt.count()) === 0, 'the prompt stayed');
+  assert.equal(await panel.locator('.panel').count(), 0);
   await page.waitForTimeout(3000);
   assert.equal(await stopButton.count(), 1, 'still recording');
 

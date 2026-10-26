@@ -6,10 +6,10 @@ import {
   shell,
   dialog,
   Menu,
-  Notification,
   powerMonitor,
   powerSaveBlocker,
   protocol,
+  screen,
 } from 'electron';
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -43,8 +43,9 @@ import {
   eventNote,
   meetingForEvent,
   reminderAction,
-  reminderBody,
 } from './reminders.mjs';
+import { detectedPanel, meetingEndPanel, reminderPanel } from './panel.mjs';
+import { panelWindow } from './panel-window.mjs';
 import {
   callServices,
   callTitle,
@@ -141,8 +142,6 @@ if (!app.requestSingleInstanceLock()) {
     watchedAt = 0,
     detectTimer,
     detector = meetingDetector(),
-    // The "Meeting detected" notification on screen, closed once its prompt is acted on in the app.
-    detectedNotice,
     // Back-to-back meetings: what to do once the recording in progress has stopped and saved.
     afterStop,
     // Meeting-end detection for the recording in progress: the detector, the sound of sources
@@ -152,11 +151,8 @@ if (!app.requestSingleInstanceLock()) {
     endSounds = {},
     speechEnd = 0,
     endPrompt,
-    endTimer,
-    notificationsBlocked = false;
+    endTimer;
   const pendingPartials = new Map();
-  // Notifications on screen; a reference keeps each click handler from being garbage collected.
-  const shown = new Set();
   let calendarWait;
   const emit = (event) => {
     if (win && !win.isDestroyed() && !win.webContents.isDestroyed() && !rendererGone)
@@ -348,7 +344,7 @@ if (!app.requestSingleInstanceLock()) {
   }
   function clearEndPrompt() {
     if (!endPrompt) return;
-    endPrompt.notice?.close();
+    panel.hide((shown) => shown.kind === 'meeting-end');
     endPrompt = undefined;
     emit({ type: 'meeting-end-cleared' });
   }
@@ -378,39 +374,20 @@ if (!app.requestSingleInstanceLock()) {
       throw new Error(t('Could not open the meeting link: {error}', { error: error.message }));
     }
   }
-  // A macOS notification that runs `open` when clicked. Tests record it instead of showing it.
-  function notify({ kind, title, body, event }, open) {
-    if (testAdapter) {
-      testAdapter.notify?.({ kind, title, body, event, open });
-      return;
-    }
-    // The Dock icon bounces once too, for when banners are off or go unnoticed.
-    if (win && !win.isDestroyed() && !win.isFocused()) app.dock?.bounce('informational');
-    if (!Notification.isSupported()) return;
-    const notification = new Notification({ title, body });
-    shown.add(notification);
-    // Ones never clicked or closed would otherwise be kept for the life of the app.
-    if (shown.size > 20) shown.delete(shown.values().next().value);
-    notification.on('click', () => {
-      shown.delete(notification);
-      open();
-    });
-    notification.on('close', () => shown.delete(notification));
-    // macOS refuses when notifications are off for Stillnote: say so once, with a way to fix it.
-    notification.on('failed', () => {
-      shown.delete(notification);
-      if (notificationsBlocked) return;
-      notificationsBlocked = true;
-      emit({
-        type: 'warning',
-        permission: 'notifications',
-        message:
-          'macOS didn’t show Stillnote’s meeting notification. Allow notifications for Stillnote in System Settings → Notifications.',
-      });
-    });
-    notification.show();
-    return notification;
-  }
+  // Reminders, "Meeting detected" and "The meeting seems to be over" appear in the floating panel
+  // at the top right (app/panel.mjs), in place of system notifications. Tests watch it and choose.
+  const panel = panelWindow({
+    BrowserWindow,
+    Menu,
+    screen,
+    ipcMain,
+    page: join(root, 'dist/panel.html'),
+    pageUrl: pathToFileURL(join(root, 'dist/panel.html')).href,
+    preload: join(root, 'dist-electron/panel-preload.cjs'),
+    scripted,
+    observe: () =>
+      testAdapter && { show: testAdapter.panel?.bind(testAdapter), menu: testAdapter.panelMenu },
+  });
   function showWindow() {
     if (!win || win.isDestroyed()) return false;
     if (win.isMinimized()) win.restore();
@@ -439,12 +416,8 @@ if (!app.requestSingleInstanceLock()) {
   function promptDetected() {
     const event = currentEvent(calendarEvents, Date.now());
     emit({ type: 'meeting-detected', event });
-    const title = t('Meeting detected — take notes?');
-    const body = event
-      ? t('Click to record “{title}” in Stillnote.', { title: event.title })
-      : t('Click to open Stillnote and start recording.');
     const session = detector.session();
-    detectedNotice = notify({ kind: 'detected', title, body, event }, () => {
+    const takeNotes = () => {
       try {
         // Already recording (the in-app prompt was used, or another meeting): show that note.
         if (recording) {
@@ -461,6 +434,10 @@ if (!app.requestSingleInstanceLock()) {
       } catch (error) {
         console.error('Could not open the detected meeting:', error.message);
       }
+    };
+    void panel.show(detectedPanel(event, { now: Date.now(), t: tr() }), {
+      notes: takeNotes,
+      open: () => showWindow(),
     });
     // Opt-in: Stillnote also comes forward by itself, onto its own prompt. Off by default, since
     // it takes focus while someone is getting into a call.
@@ -1159,6 +1136,7 @@ if (!app.requestSingleInstanceLock()) {
         }
         // A prompt shown under the previous choice is asked again under the new one.
         if (key === 'meetingEnd') clearEndPrompt();
+        if (key === 'meetingDetection' && !value) panel.hide((shown) => shown.kind === 'detected');
         return settings;
       });
       register('transcript', (id, segment) => store.append(id, segment));
@@ -1187,8 +1165,14 @@ if (!app.requestSingleInstanceLock()) {
       });
       // "The meeting seems to be over", while its signal lasts: someone speaking or the call app
       // taking the microphone again withdraws it. Automatic mode stops the recording when the
-      // countdown runs out; away from Stillnote (in the call app) a notification says so too.
+      // countdown runs out; away from Stillnote (in the call app) the floating panel says so too.
       const countdown = testAdapter?.meetingEnd?.countdown ?? 60_000;
+      function keepRecording() {
+        if (!recording || !meetingEnd) return false;
+        meetingEnd.dismiss(Date.now());
+        clearEndPrompt();
+        return true;
+      }
       const endTick = () => {
         if (!recording || !meetingEnd || starting || stopping) return;
         const mode = store.settings().meetingEnd ?? 'auto',
@@ -1200,20 +1184,14 @@ if (!app.requestSingleInstanceLock()) {
           endPrompt = { reason, deadline: mode === 'auto' ? now + countdown : null };
           emit({ type: 'meeting-end', id, recordingId, reason, deadline: endPrompt.deadline });
           if (!win || win.isDestroyed() || !win.isFocused())
-            endPrompt.notice = notify(
-              {
-                kind: 'meeting-end',
-                title: t('The meeting seems to be over'),
-                body:
-                  mode === 'auto'
-                    ? t('Recording stops in 60 seconds. Open Stillnote to keep recording.')
-                    : t('Open Stillnote to stop or keep recording.'),
-              },
-              () => {
+            void panel.show(meetingEndPanel(reason, { deadline: endPrompt.deadline, t: tr() }), {
+              keep: keepRecording,
+              stop: () => stopCapture(),
+              open: () => {
                 if (showWindow() && recording?.id === id)
                   emit({ type: 'open-meeting', id, record: false });
               },
-            );
+            });
         } else if (endPrompt.deadline !== null && now >= endPrompt.deadline) {
           recording = { ...recording, endedBy: endPrompt.reason };
           clearEndPrompt();
@@ -1226,9 +1204,11 @@ if (!app.requestSingleInstanceLock()) {
           throw new Error('Wait for transcription to finish before recording.');
         const m = store.get(id);
         if (m.deletedAt) throw new Error('Restore this meeting before recording.');
-        // A "Meeting detected" notification has served its purpose once a recording starts.
-        detectedNotice?.close();
-        detectedNotice = undefined;
+        // A "Meeting detected" panel, or this meeting's reminder, has served its purpose.
+        panel.hide(
+          (shown) =>
+            shown.kind === 'detected' || (shown.kind === 'reminder' && shown.key === m.eventKey),
+        );
         const recordingId = randomUUID(),
           startedAt = Date.now(),
           plan = recognitionPlan(store.settings()),
@@ -1330,12 +1310,7 @@ if (!app.requestSingleInstanceLock()) {
         return true;
       });
       // "Keep recording" on the meeting-end prompt.
-      register('keep-recording', () => {
-        if (!recording || !meetingEnd) return false;
-        meetingEnd.dismiss(Date.now());
-        clearEndPrompt();
-        return true;
-      });
+      register('keep-recording', keepRecording);
       // Quitting mid-recording (⌘Q, closing the window, Quit & Reopen in System Settings,
       // logging out) stops the recording and lets the helper save its audio, then quits.
       const quitAfterSaving = () => {
@@ -1652,7 +1627,6 @@ if (!app.requestSingleInstanceLock()) {
         const url = {
           'screen-recording':
             'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
-          notifications: 'x-apple.systempreferences:com.apple.Notifications-Settings.extension',
         }[pane];
         if (!url) throw new Error('Unknown settings pane.');
         return openExternal(url);
@@ -1682,7 +1656,11 @@ if (!app.requestSingleInstanceLock()) {
           win.destroy();
         }
       });
-      win.on('closed', () => clearTimeout(closeTimer));
+      // The hidden panel window must not keep Stillnote running once its window has closed.
+      win.on('closed', () => {
+        clearTimeout(closeTimer);
+        panel.destroy();
+      });
       win.on('close', (event) => {
         // Closing the window quits Stillnote; the quit path saves an active recording first.
         if (recording || starting || transcriptionWait) {
@@ -1740,13 +1718,17 @@ if (!app.requestSingleInstanceLock()) {
       });
       // Granola-style reminders: refresh a connected calendar in the background, announce each
       // occurrence shortly before it starts, and on click open (or create) its note, record, and
-      // join the call it links to.
+      // join the call it links to: `join` false only takes notes, and `start` (a service) opens a
+      // new call of that kind instead, for a meeting without a link.
       const announced = new Set();
       let reminderOpening = false;
-      const openFromReminder = (event) => {
+      const openFromReminder = (event, { join = true, start = null } = {}) => {
         if (reminderOpening || afterStop) return;
         const settings = store.settings();
         const action = reminderAction(event, Date.now(), settings.reminderAutoRecord !== false);
+        if (start && !startableServices.includes(start)) return;
+        if (start) store.setting('callService', start);
+        const callUrl = start ? callServices[start].start : join ? action.join?.url : null;
         const openNext = async () => {
           if (quitting || closing || rendererGone || afterCapture) return;
           reminderOpening = true;
@@ -1780,7 +1762,7 @@ if (!app.requestSingleInstanceLock()) {
               );
             }
             // Only confirmed raw capture readiness permits the automatic handoff to the call.
-            if (action.join) await openCall(action.join.url);
+            if (callUrl) await openCall(callUrl);
           } catch (error) {
             emit({ type: 'error', message: error.message });
           } finally {
@@ -1803,16 +1785,28 @@ if (!app.requestSingleInstanceLock()) {
           // Already joined and recording from Home: nothing to remind about.
           if (recording && meetingForEvent(store.all(), eventKey(event))?.id === recording.id)
             continue;
-          const body = reminderBody(
-            event,
-            Date.now(),
-            settings.reminderAutoRecord !== false,
-            tr(),
-            recording ? store.get(recording.id).title : null,
-          );
-          notify({ kind: 'reminder', title: event.title, body, event }, () =>
-            openFromReminder(event),
-          );
+          const content = reminderPanel(event, {
+            now: Date.now(),
+            recording: recording ? store.get(recording.id).title : null,
+            t: tr(),
+          });
+          void panel.show(content, {
+            join: () => openFromReminder(event),
+            notes: () => openFromReminder(event, { join: false }),
+            ...Object.fromEntries(
+              startableServices.map((service) => [
+                `start-${service}`,
+                () => openFromReminder(event, { start: service }),
+              ]),
+            ),
+            open: () => {
+              try {
+                showMeeting({ event, record: false });
+              } catch (error) {
+                emit({ type: 'error', message: error.message });
+              }
+            },
+          });
         }
       };
       const refreshCalendar = () => {

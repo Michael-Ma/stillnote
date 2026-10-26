@@ -264,11 +264,19 @@ test('calls open only fixed or calendar links; reminders join and detection prom
   assert.equal(await call('join-call', `${design.id}@${design.start}`), 'meet');
   assert.equal(opened().at(-1), 'https://meet.google.com/abc-defg-hij');
 
-  // The reminder invites the user to join; its click opens the note and the call.
+  // The reminder panel joins in one click: it opens the note, records and joins the call.
   await until(() => globalThis.__stillnoteReminders.length === 1);
   const reminder = globalThis.__stillnoteReminders[0];
-  assert.match(reminder.body, /Click to join, take notes and start recording\.$/);
+  assert.equal(reminder.title, 'Design call');
+  assert.deepEqual(reminder.primary, { id: 'join', label: 'Join and take notes' });
+  // It is the floating panel window, shown at the top right without taking focus.
+  const panelWindow = BrowserWindow.instances.findLast((w) => w.options.type === 'panel');
+  await until(() => panelWindow.visible);
+  assert.equal(panelWindow.options.focusable, false);
+  assert.deepEqual(panelWindow.bounds, { x: 1512 - 520 - 4, y: 27, width: 520, height: 112 });
+  assert.equal(panelWindow.events.at(-1).title, 'Design call');
   reminder.open();
+  assert.equal(panelWindow.visible, false, 'a choice closes the panel');
   const opening = win.events.findLast((e) => e.type === 'open-meeting');
   assert.equal(opening.record, false); // main owns reminder recording and waits for raw capture
   assert.equal(win.events.findLast((e) => e.type === 'meeting').meeting.title, 'Design call');
@@ -283,8 +291,9 @@ test('calls open only fixed or calendar links; reminders join and detection prom
   globalThis.__stillnoteMicrophone(true);
   await until(() => globalThis.__stillnoteNotifications.some((n) => n.kind === 'detected'));
   const detected = globalThis.__stillnoteNotifications.find((n) => n.kind === 'detected');
-  assert.equal(detected.title, 'Meeting detected — take notes?');
-  assert.equal(detected.body, 'Click to record “Design call” in Stillnote.');
+  assert.equal(detected.title, 'Design call');
+  assert.match(detected.detail, /^Meeting detected · /);
+  assert.deepEqual(detected.primary, { id: 'notes', label: 'Take notes' });
   assert.equal(win.events.findLast((e) => e.type === 'meeting-detected').event.id, 'call');
   assert.equal(raised, 0, 'by default a detected meeting only prompts');
   globalThis.__stillnoteMicrophone(false);
@@ -351,7 +360,8 @@ test('one note per calendar event, and a reminder during a recording switches to
   await call('calendar');
   await until(() => globalThis.__stillnoteReminders.length === 1);
   const [reminder] = globalThis.__stillnoteReminders;
-  assert.match(reminder.body, /Click to save “Weekly sync”, then join and record this meeting\.$/);
+  assert.match(reminder.detail, / · Saves “Weekly sync” first$/);
+  assert.equal(reminder.primary.id, 'join');
   reminder.open();
   assert.equal(events().filter((e) => e.type === 'open-external').length, 0);
   assert.equal((await call('state')).recording.id, current.id);
@@ -602,7 +612,8 @@ test('a meeting that seems over asks, keeps recording on request, then stops and
   assert.ok(prompts()[0].deadline > Date.now());
   const notice = globalThis.__stillnoteNotifications.find((n) => n.kind === 'meeting-end');
   assert.equal(notice.title, 'The meeting seems to be over');
-  assert.match(notice.body, /Recording stops in 60 seconds/);
+  assert.deepEqual([notice.primary.id, ...notice.menu.map((item) => item.id)], ['keep', 'stop']);
+  assert.equal(notice.deadline, prompts()[0].deadline);
 
   // Keep recording: no stop at the deadline, and no new prompt until the call app is used again.
   assert.equal(await call('keep-recording'), true);
@@ -654,4 +665,76 @@ test('the renderer can call exactly the operations main registers', () => {
       .matchAll(/'([\w-]+)'/g),
   ].map((m) => m[1]);
   assert.deepEqual([...registered].sort(), [...allowed].sort());
+});
+const panelHelpers = (call, events) => ({
+  until: async (check) => {
+    for (let i = 0; i < 300 && !(await check()); i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(await check());
+  },
+  opened: () =>
+    events()
+      .filter((e) => e.type === 'open-external')
+      .map((e) => e.url),
+  recordingTitle: async () => {
+    const state = await call('state');
+    return state.recording && !state.starting
+      ? state.meetings.find((m) => m.id === state.recording.id).title
+      : null;
+  },
+});
+test('the reminder panel starts a Zoom call with the notes for a meeting without a link', async (t) => {
+  const { call, win, events } = await setup(t, 'panel-start', undefined, {
+    calendar: [{ id: 'room', title: 'Planning in room 4', startIn: 30_000, color: '#FF2968' }],
+  });
+  const { until, opened, recordingTitle } = panelHelpers(call, events);
+  await call('setting', 'autoEnhance', false);
+  await call('calendar');
+  await until(() => globalThis.__stillnoteReminders.length === 1);
+  const [room] = globalThis.__stillnoteReminders;
+  assert.equal(room.color, '#ff2968', 'the calendar’s color');
+  assert.deepEqual(room.primary, { id: 'notes', label: 'Take notes' });
+  // The chevron's menu (recorded here instead of shown), only for the panel page itself.
+  const panelWindow = BrowserWindow.instances.findLast((w) => w.options.type === 'panel');
+  await until(() => panelWindow.visible);
+  const fromPanel = {
+    sender: panelWindow.webContents,
+    senderFrame: panelWindow.webContents.mainFrame,
+  };
+  const menu = ipcMain.handlers.get('stillnote-panel:menu');
+  await assert.rejects(
+    menu({ sender: win.webContents, senderFrame: win.webContents.mainFrame }, room.id, 0, 0),
+    /Unauthorized panel request/,
+  );
+  assert.equal(await menu(fromPanel, room.id, 300, 60), true);
+  assert.deepEqual(
+    globalThis.__stillnotePanelMenu.map((item) => item.label),
+    ['Start Google Meet and take notes', 'Start Zoom and take notes', 'Dismiss'],
+  );
+  // Start Zoom: the occurrence's note records, then a new Zoom call opens once audio is saved.
+  globalThis.__stillnotePanelMenu[1].click();
+  assert.equal(panelWindow.visible, false);
+  await until(async () => (await recordingTitle()) === 'Planning in room 4');
+  await until(() => opened().length === 1);
+  assert.deepEqual(opened(), ['https://zoom.us/start/videomeeting']);
+  assert.equal((await call('state')).settings.callService, 'zoom');
+  assert.equal(room.act('start-meet'), false, 'a panel already answered does nothing');
+  await call('stop');
+});
+test('the reminder panel can take notes without joining the call', async (t) => {
+  const { call, events } = await setup(t, 'panel-notes', undefined, {
+    calendar: [
+      { id: 'call', title: 'Design call', startIn: 30_000, notes: 'https://zoom.us/j/123' },
+    ],
+  });
+  const { until, opened, recordingTitle } = panelHelpers(call, events);
+  await call('setting', 'autoEnhance', false);
+  await call('calendar');
+  await until(() => globalThis.__stillnoteReminders.length === 1);
+  const [reminder] = globalThis.__stillnoteReminders;
+  assert.equal(reminder.act('notes'), true);
+  await until(async () => (await recordingTitle()) === 'Design call');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(opened(), []);
+  await call('stop');
 });

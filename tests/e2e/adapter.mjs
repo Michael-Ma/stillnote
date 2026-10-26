@@ -97,10 +97,23 @@ export function createTestAdapter({ dataDir }) {
   // Links are recorded instead of opened in the browser or a meeting app.
   const opened = (globalThis.__stillnoteOpened = []);
   return {
-    notify(notification) {
-      log({ type: notification.kind, title: notification.title, body: notification.body });
-      notifications.push(notification);
-      if (notification.kind === 'reminder') reminders.push(notification);
+    // The floating panel: each one is recorded, and tests choose in it (`open` is its main
+    // button, `act(id)` any other choice).
+    panel(panel, choose) {
+      log({
+        type: panel.kind,
+        title: panel.title,
+        detail: panel.detail,
+        primary: panel.primary.id,
+      });
+      const shown = { ...panel, act: choose, open: () => choose(panel.primary.id) };
+      notifications.push(shown);
+      if (panel.kind === 'reminder') reminders.push(shown);
+    },
+    // The panel's menu, opened from its chevron; a test chooses from it.
+    panelMenu(items) {
+      log({ type: 'panel-menu', items: items.map((item) => item.label) });
+      globalThis.__stillnotePanelMenu = items;
     },
     async openExternal(url) {
       log({ type: 'open-external', url });

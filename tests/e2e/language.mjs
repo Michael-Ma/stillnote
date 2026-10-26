@@ -26,15 +26,11 @@ export async function language(h) {
   const body = await page.evaluate(() => document.body.innerText);
   for (const label of english) assert.ok(!body.includes(label), `English left on Home: ${label}`);
 
-  // Main-process text follows too: the meeting reminder is written in Chinese.
-  await page.waitForFunction(() => true);
-  let reminder = '';
-  for (let i = 0; i < 40 && !reminder; i++) {
-    reminder = await h.desktop.evaluate(() => globalThis.__stillnoteReminders[0]?.body ?? '');
-    if (!reminder) await page.waitForTimeout(100);
-  }
-  assert.match(reminder, /分钟后开始|现在开始/);
-  assert.match(reminder, /点按以记笔记/);
+  // Main-process text follows too: the reminder panel is written in Chinese.
+  const panel = await h.panel();
+  await panel.getByRole('button', { name: '记笔记', exact: true }).waitFor();
+  assert.match(await panel.locator('.panel-words small').innerText(), / – /);
+  await h.panelScreenshot('reminder-panel-zh');
 
   // A new note starts with a Chinese placeholder title and a Chinese dock.
   await page.getByRole('button', { name: '新建笔记', exact: true }).first().click();

@@ -6,11 +6,13 @@ export const remindersScenario = {
     { id: 'fixture-standup', title: 'E2E standup', participants: 'Alex, Sam', startIn: 30_000 },
     { id: 'fixture-holiday', title: 'E2E holiday', startIn: 0, minutes: 24 * 60, allDay: true },
     { id: 'fixture-later', title: 'E2E later today', startIn: 3 * 3_600_000 },
+    // Comes due a quarter of a minute in, for a second reminder.
+    { id: 'fixture-retro', title: 'E2E retro', startIn: 75_000 },
   ],
 };
 
 const announced = (h) =>
-  h.desktop.evaluate(() => globalThis.__stillnoteReminders.map((r) => r.event.title));
+  h.desktop.evaluate(() => globalThis.__stillnoteReminders.map((r) => r.title));
 
 export async function reminders(h) {
   const page = await h.launch();
@@ -21,11 +23,14 @@ export async function reminders(h) {
 
   await h.page.waitForTimeout(1000);
   assert.deepEqual(await announced(h), ['E2E standup'], 'only the starting, timed meeting is due');
-  const body = await h.desktop.evaluate(() => globalThis.__stillnoteReminders[0].body);
-  assert.match(body, /^Starts in 1 min · Click to take notes and start recording\.$/);
+  // The floating panel: the meeting, its time, and Take notes (no call link) with more choices.
+  const panel = await h.panel();
+  assert.equal(await panel.locator('.panel-words strong').innerText(), 'E2E standup');
+  assert.match(await panel.locator('.panel-words small').innerText(), /^\d{1,2}:\d{2} [AP]M – /);
+  await h.panelScreenshot('reminder-panel');
 
-  // Clicking the reminder opens a note for that occurrence and starts recording.
-  await h.desktop.evaluate(() => globalThis.__stillnoteReminders[0].open());
+  // Take notes opens a note for that occurrence and starts recording.
+  await panel.getByRole('button', { name: 'Take notes', exact: true }).click();
   await page.getByRole('button', { name: 'Stop recording', exact: true }).waitFor();
   assert.equal(
     await page.getByRole('textbox', { name: 'Meeting title', exact: true }).inputValue(),
@@ -45,7 +50,7 @@ export async function reminders(h) {
 
   // The same occurrence is never announced twice, and Coming up reopens its existing note.
   await h.page.waitForTimeout(800);
-  assert.deepEqual(await announced(h), ['E2E standup']);
+  assert.equal((await announced(h)).filter((title) => title === 'E2E standup').length, 1);
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click();
   const standup = page.locator('.upcoming-event').filter({ hasText: 'E2E standup' });
   await standup.getByRole('button', { name: /^E2E standup/ }).click();
@@ -62,11 +67,17 @@ export async function reminders(h) {
     'the row itself only opens the note',
   );
 
-  // With auto-record off, a reminder only opens the note.
+  // With auto-record off, the next reminder's Take notes only opens its note.
   await h.call('setting', 'reminderAutoRecord', false);
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click();
-  await h.desktop.evaluate(() => globalThis.__stillnoteReminders[0].open());
-  await page.getByRole('textbox', { name: 'Meeting title', exact: true }).waitFor();
+  for (let i = 0; i < 300 && !(await announced(h)).includes('E2E retro'); i++)
+    await page.waitForTimeout(100);
+  const retro = await h.panel();
+  await retro.getByText('E2E retro', { exact: true }).waitFor();
+  await retro.getByRole('button', { name: 'Take notes', exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector('[aria-label="Meeting title"]')?.value === 'E2E retro',
+  );
   await page.waitForTimeout(500);
   assert.equal(await page.getByRole('button', { name: 'Stop recording', exact: true }).count(), 0);
 

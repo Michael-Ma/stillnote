@@ -2405,8 +2405,12 @@ func captureSelfTest() throws {
     othersUsingInput([(pid: own, input: true), (pid: own + 1, input: true)], own: own)
   else { throw problem("Meeting detection counted Stillnote's own microphone use.") }
   _ = microphoneInUseElsewhere()
+  // The reminder panel's bar takes the calendar's color as sRGB hex.
+  guard hexColor(CGColor(srgbRed: 1, green: 0.5, blue: 0, alpha: 1)) == "#ff8000",
+    hexColor(nil) == nil
+  else { throw problem("Calendar colors are not reported as sRGB hex.") }
   emit([
-    "type": "capture-self-test", "status": "passed", "checks": 11,
+    "type": "capture-self-test", "status": "passed", "checks": 12,
     "paddedFrames": 20000, "sampleCount": file.length, "liveAudioInvoked": false,
   ])
 }
@@ -2594,6 +2598,15 @@ let microphoneWatch = MainActor.assumeIsolated { MicrophoneWatch() }
 let events = EKEventStore()
 var transcribing = false
 var transcribingId: String?
+// A calendar's color as #rrggbb in sRGB, for the reminder panel's bar; nil when it has none.
+func hexColor(_ color: CGColor?) -> String? {
+  guard let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+    let parts = color?.converted(to: srgb, intent: .defaultIntent, options: nil)?.components,
+    parts.count >= 3
+  else { return nil }
+  let channel = { (value: CGFloat) in Int((min(max(value, 0), 1) * 255).rounded()) }
+  return String(format: "#%02x%02x%02x", channel(parts[0]), channel(parts[1]), channel(parts[2]))
+}
 @MainActor
 func calendar() async throws {
   let allowed: Bool
@@ -2616,7 +2629,7 @@ func calendar() async throws {
       "end": ISO8601DateFormatter().string(from: e.endDate),
       "participants": (e.attendees ?? []).compactMap { $0.name }.joined(separator: ", "),
       "location": e.location ?? "", "notes": e.notes ?? "", "url": e.url?.absoluteString ?? "",
-      "allDay": e.isAllDay,
+      "allDay": e.isAllDay, "color": hexColor(e.calendar?.cgColor) ?? "",
     ]
   }
   emit(["type": "calendar", "events": rows])

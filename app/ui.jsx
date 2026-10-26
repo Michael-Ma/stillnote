@@ -1025,7 +1025,7 @@ function App() {
           {error && (
             <div className="error-banner" role="alert">
               <span>{t(error)}</span>
-              {['screen-recording', 'notifications'].includes(errorState.permission) && (
+              {errorState.permission === 'screen-recording' && (
                 <button
                   className="banner-action"
                   onClick={() => guard(() => call('open-privacy', errorState.permission))}

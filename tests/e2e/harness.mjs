@@ -128,6 +128,26 @@ export class Harness {
     await this.page.screenshot({ path, fullPage: true });
     return path;
   }
+  // The floating panel window (reminders, detection, meeting end), once one has been shown,
+  // with what it says on screen. Invisible and click-through in scripted runs, it is still
+  // driven and photographed like the main window.
+  async panel() {
+    for (let i = 0; i < 100; i++) {
+      const page = this.desktop.windows().find((w) => w.url().endsWith('/panel.html'));
+      if (page) {
+        this.panelPage ??= (page.on('pageerror', (e) => this.errors.push(e.message)), page);
+        await page.locator('.panel').waitFor();
+        return page;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error('The panel window never opened.');
+  }
+  async panelScreenshot(name) {
+    const path = join(this.output, name + '.png');
+    await (await this.panel()).locator('.panel').screenshot({ path });
+    return path;
+  }
   async saveDialog(path) {
     await this.desktop.evaluate(({ dialog }, filePath) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath });

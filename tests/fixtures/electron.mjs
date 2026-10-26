@@ -24,8 +24,9 @@ Object.assign(app, {
 });
 export class BrowserWindow extends EventEmitter {
   static instances = [];
-  constructor() {
+  constructor(options = {}) {
     super();
+    this.options = options;
     BrowserWindow.instances.push(this);
     this.events = [];
     this.webContents = new EventEmitter();
@@ -45,6 +46,18 @@ export class BrowserWindow extends EventEmitter {
     this.loaded = true;
   }
   show() {}
+  showInactive() {
+    this.visible = true;
+  }
+  hide() {
+    this.visible = false;
+  }
+  setBounds(bounds) {
+    this.bounds = bounds;
+  }
+  setAlwaysOnTop() {}
+  setOpacity() {}
+  setIgnoreMouseEvents() {}
   focus() {}
   isFocused() {
     return true;
@@ -83,7 +96,10 @@ export const dialog = {
   },
 };
 export const Menu = { buildFromTemplate: (items) => items, setApplicationMenu() {} };
-export const Notification = { isSupported: () => false };
+export const screen = {
+  getCursorScreenPoint: () => ({ x: 0, y: 0 }),
+  getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 25, width: 1512, height: 920 } }),
+};
 export const powerSaveBlocker = { start: () => 1, stop() {} };
 export const powerMonitor = { on() {} };
 export const protocol = { registerSchemesAsPrivileged() {}, handle() {} };

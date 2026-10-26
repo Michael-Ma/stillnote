@@ -8,9 +8,7 @@ import {
   eventNote,
   meetingForEvent,
   reminderAction,
-  reminderBody,
 } from '../app/reminders.mjs';
-import { translator } from '../app/i18n/index.mjs';
 
 const now = Date.parse('2026-10-21T10:00:00Z');
 const event = (id, startOffset, minutes = 30, extra = {}) => ({
@@ -48,53 +46,6 @@ test('each occurrence of a recurring meeting has its own key', () => {
   const nextWeek = { ...monday, start: new Date(now + 7 * 86_400_000).toISOString() };
   assert.notEqual(eventKey(monday), eventKey(nextWeek));
   assert.equal(dueReminders([monday], now, new Set([eventKey(nextWeek)])).length, 1);
-});
-
-test('reminder text says when the meeting starts and what a click does', () => {
-  assert.equal(
-    reminderBody(event('a', 60_000), now, true),
-    'Starts in 1 min · Click to take notes and start recording.',
-  );
-  assert.equal(reminderBody(event('a', 0), now, false), 'Starting now · Click to take notes.');
-  assert.match(reminderBody(event('a', -3 * 60_000), now, false), /^Started 3 min ago/);
-  assert.match(reminderBody(event('a', 29_000), now, false), /^Starts in 1 min/);
-  assert.match(reminderBody(event('a', -30_000), now, false), /^Starting now/);
-});
-
-test('during another recording, the reminder says a click saves it and switches', () => {
-  const t = translator('en');
-  assert.equal(
-    reminderBody(event('a', 60_000), now, true, t, 'Weekly sync'),
-    'Starts in 1 min · Click to save “Weekly sync” and record this meeting instead.',
-  );
-  assert.match(
-    reminderBody(
-      { ...event('a', 60_000), notes: 'https://meet.google.com/abc-defg-hij' },
-      now,
-      true,
-      t,
-      'Weekly sync',
-    ),
-    /Click to save “Weekly sync”, then join and record this meeting\.$/,
-  );
-  assert.equal(
-    reminderBody(event('a', 60_000), now, false, t, 'Weekly sync'),
-    'Starts in 1 min · Click to take notes.',
-    'without auto-record a click only opens the note',
-  );
-});
-
-test('a meeting with a call link invites the user to join', () => {
-  const call = event('a', 60_000, 30, { location: 'https://zoom.us/j/123' });
-  assert.equal(
-    reminderBody(call, now, true),
-    'Starts in 1 min · Click to join, take notes and start recording.',
-  );
-  assert.equal(reminderBody(call, now, false), 'Starts in 1 min · Click to join and take notes.');
-  assert.equal(
-    reminderBody(call, now, true, translator('zh-Hans')),
-    '1 分钟后开始 · 点按以加入会议、记笔记并开始录音。',
-  );
 });
 
 test('a reminder click records and joins, unless the meeting is already over', () => {

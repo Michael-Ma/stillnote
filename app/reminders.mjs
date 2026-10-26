@@ -35,33 +35,8 @@ export function dueReminders(events, now, announced, lead = LEAD_MS) {
   });
 }
 
-// `recording` is the title of another meeting being recorded: clicking saves it and switches.
-export function reminderBody(event, now, autoRecord, t = translator('en'), recording = null) {
-  // Round toward the start: 29 s ahead is "in 1 min", not "now".
-  const ms = Date.parse(event.start) - now;
-  const when =
-    ms > 0
-      ? t('Starts in {n} min', { n: Math.ceil(ms / 60_000) })
-      : ms > -60_000
-        ? t('Starting now')
-        : t('Started {n} min ago', { n: Math.floor(-ms / 60_000) });
-  const action =
-    recording !== null && autoRecord
-      ? meetingLink(event)
-        ? t('Click to save “{title}”, then join and record this meeting.', { title: recording })
-        : t('Click to save “{title}” and record this meeting instead.', { title: recording })
-      : meetingLink(event)
-        ? autoRecord
-          ? t('Click to join, take notes and start recording.')
-          : t('Click to join and take notes.')
-        : autoRecord
-          ? t('Click to take notes and start recording.')
-          : t('Click to take notes.');
-  return `${when} · ${action}`;
-}
-
 // What clicking a reminder does: record when that is on, and join the call the event links to.
-// A reminder clicked in Notification Center after the meeting ended only opens the note.
+// A reminder answered after the meeting ended only opens the note.
 export function reminderAction(event, now, autoRecord) {
   const end = Date.parse(event.end);
   const over = Number.isFinite(end) && now >= end;

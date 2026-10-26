@@ -33,12 +33,17 @@ export default {
     '会议 App 不再使用麦克风、日历上的会议已结束，或长时间没有人说话。录音结尾的长静音会被去掉。',
   'Stop after a countdown': '倒计时后自动停止',
   'Only ask': '只提示',
-  'Recording stops in 60 seconds. Open Stillnote to keep recording.':
-    '60 秒后停止录音。打开 Stillnote 可继续录音。',
-  'Open Stillnote to stop or keep recording.': '打开 Stillnote 停止或继续录音。',
   'Removed {time} of silence at the end.': '已去掉结尾 {time} 的静音。',
   'Recording stopped: the meeting seemed to be over.': '会议好像结束了，已停止录音。',
   'Resume recording': '继续录音',
+  'Unauthorized panel request.': '未授权的面板请求。',
+  'Saves “{title}” first': '会先保存“{title}”',
+  'Join and take notes': '加入并记笔记',
+  'Take notes without joining': '只记笔记，不加入',
+  'Start {service} and take notes': '发起 {service} 并记笔记',
+  'More options': '更多选项',
+  'Meeting detected': '检测到会议',
+  'Stopping in {n} s': '{n} 秒后停止录音',
 
   '1:1': '一对一',
   'A language installation is already in progress.': '已有语言正在安装。',
@@ -125,12 +130,6 @@ export default {
   'Claude sign-in is already in progress.': 'Claude 登录正在进行。',
   'Claude sign-in timed out. Please try again.': 'Claude 登录超时，请重试。',
   'Clear search': '清除搜索',
-  'Click to join and take notes.': '点按以加入会议并记笔记。',
-  'Click to join, take notes and start recording.': '点按以加入会议、记笔记并开始录音。',
-  'Click to open Stillnote and start recording.': '点按以打开 Stillnote 并开始录音。',
-  'Click to record “{title}” in Stillnote.': '点按以在 Stillnote 中录制“{title}”。',
-  'Click to take notes and start recording.': '点按以记笔记并开始录音。',
-  'Click to take notes.': '点按以记笔记。',
   'Clicking a reminder opens the meeting’s note and starts recording.':
     '点按提醒会打开会议笔记并开始录音。',
   'Close chat': '关闭对话',
@@ -303,8 +302,6 @@ export default {
   'Loading models…': '正在载入模型…',
   'Looking for Claude Code on this Mac…': '正在这台 Mac 上查找 Claude Code…',
   'macOS credential encryption is unavailable.': 'macOS 凭据加密不可用。',
-  'macOS didn’t show Stillnote’s meeting notification. Allow notifications for Stillnote in System Settings → Notifications.':
-    'macOS 没有显示 Stillnote 的会议通知。请在“系统设置 → 通知”中允许 Stillnote 发送通知。',
   Manage: '管理',
   Me: '我',
   'Meeting · {time}': '会议 · {time}',
@@ -397,10 +394,6 @@ export default {
   'There is no earlier transcript for this recording.': '这段录音没有更早的转写。',
   'Finish recording or transcribing before restoring a transcript.':
     '请等录音或转写结束后再恢复转写。',
-  'Click to save “{title}”, then join and record this meeting.':
-    '点击保存“{title}”，然后加入并录制这场会议。',
-  'Click to save “{title}” and record this meeting instead.':
-    '点击保存“{title}”，改为录制这场会议。',
   'Only web and System Settings links can be opened.': '只能打开网页和系统设置的链接。',
   'Bring Stillnote to the front with its prompt, not only a notification.':
     '把 Stillnote 连同提示一起切到前台，而不只是发通知。',
@@ -524,10 +517,8 @@ export default {
   'Start recording from a reminder': '从提醒开始录音',
   'Start recording on this Mac': '在这台 Mac 上开始录音',
   'Start recording, or paste a transcript you already have.': '开始录音，或粘贴已有的转写。',
-  'Started {n} min ago': '已开始 {n} 分钟',
   'Starting now': '现在开始',
   'Starting…': '正在开始…',
-  'Starts in {n} min': '{n} 分钟后开始',
   'Start {service}': '发起 {service}',
   'Stillnote enhances notes and answers questions with a plan you already have. Audio never leaves this Mac; only the notes and transcripts you use are sent.':
     'Stillnote 用你已有的订阅来增强笔记、回答问题。音频不会离开这台 Mac，只会发送你用到的笔记和转写。',

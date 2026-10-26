@@ -38,12 +38,22 @@ await esbuild({
   external: ['electron'],
   target: 'node22',
 });
-await esbuild({
-  entryPoints: ['app/preload.cjs'],
-  outfile: 'dist-electron/preload.cjs',
-  bundle: true,
-  platform: 'node',
-  format: 'cjs',
-  external: ['electron'],
+for (const name of ['preload', 'panel-preload'])
+  await esbuild({
+    entryPoints: [`app/${name}.cjs`],
+    outfile: `dist-electron/${name}.cjs`,
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    external: ['electron'],
+  });
+// The main window, and the floating panel that replaces system notifications.
+await vite({
+  configFile: false,
+  base: './',
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    rollupOptions: { input: { main: resolve('index.html'), panel: resolve('panel.html') } },
+  },
 });
-await vite({ configFile: false, base: './', build: { outDir: 'dist', emptyOutDir: true } });

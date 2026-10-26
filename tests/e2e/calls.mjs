@@ -96,29 +96,29 @@ export async function calls(h) {
   await page.mouse.move(0, 0);
   await h.screenshot('home-calls');
 
-  // Its reminder invites the user to join.
+  // Its reminder panel joins the call and takes notes in one click.
   await until(() => main(() => globalThis.__stillnoteReminders.length === 1), 'no reminder');
-  const reminder = await main(() => globalThis.__stillnoteReminders[0].body);
-  assert.match(reminder, /^Starts in 1 min · Click to join, take notes and start recording\.$/);
-
-  await joinButton('E2E design review').click();
+  const panel = await h.panel();
+  assert.equal(await panel.locator('.panel-words strong').innerText(), 'E2E design review');
+  await h.panelScreenshot('reminder-panel-join');
+  const before = (await opened()).length;
+  await panel.getByRole('button', { name: 'Join and take notes', exact: true }).click();
   await stopButton.waitFor();
-  assert.equal((await opened()).at(-1), meetLink);
   assert.equal(await title(), 'E2E design review');
   assert.equal(
     await page.getByRole('textbox', { name: 'Participants', exact: true }).inputValue(),
     'Priya, Sam',
   );
-  await stop();
-
-  // Clicking the reminder reopens that note, records again, and joins the call.
-  await home();
-  const before = (await opened()).length;
-  await main(() => globalThis.__stillnoteReminders[0].open());
-  await stopButton.waitFor();
-  assert.equal(await title(), 'E2E design review');
   await until(async () => (await opened()).length === before + 1, 'the reminder did not join');
   assert.equal((await opened()).at(-1), meetLink);
+  await stop();
+
+  // Join & record on Home records that note again and joins the call.
+  await home();
+  await joinButton('E2E design review').click();
+  await stopButton.waitFor();
+  assert.equal((await opened()).at(-1), meetLink);
+  assert.equal(await title(), 'E2E design review');
   await stop();
   const linked = (await h.state()).meetings.filter((m) =>
     m.eventKey?.startsWith('fixture-review@'),
@@ -126,7 +126,7 @@ export async function calls(h) {
   assert.equal(linked.length, 1);
   assert.equal(linked[0].recordings.length, 2);
 
-  // Another app keeps the microphone busy: Stillnote asks once, by notification and in the app.
+  // Another app keeps the microphone busy: Stillnote asks once, in the panel and in the app.
   await home();
   await microphone(true);
   const prompt = page.locator('.meeting-prompt');
@@ -134,17 +134,15 @@ export async function calls(h) {
   assert.match(await prompt.innerText(), /Meeting detected — take notes\?/);
   assert.match(await prompt.innerText(), /E2E design review/);
   assert.equal(await detected(), 1);
-  const notification = await main(() => {
-    const { title, body } = globalThis.__stillnoteNotifications.find((n) => n.kind === 'detected');
-    return { title, body };
-  });
-  assert.equal(notification.title, 'Meeting detected — take notes?');
-  assert.equal(notification.body, 'Click to record “E2E design review” in Stillnote.');
+  assert.equal(await panel.locator('.panel-words strong').innerText(), 'E2E design review');
+  assert.match(await panel.locator('.panel-words small').innerText(), /^Meeting detected · /);
+  await h.panelScreenshot('meeting-detected-panel');
   await h.screenshot('meeting-detected');
   await prompt.getByRole('button', { name: 'Take notes', exact: true }).click();
   await stopButton.waitFor();
   assert.equal(await title(), 'E2E design review');
   assert.equal(await prompt.count(), 0);
+  assert.equal(await panel.locator('.panel').count(), 0, 'the panel goes once notes are taken');
   await stop();
   // The call goes on after the recording stops: still the same session, so no second prompt.
   await page.waitForTimeout(700);
@@ -214,10 +212,8 @@ export async function calls(h) {
   await microphone(true);
   await page.locator('.meeting-prompt').waitFor();
   assert.match(await page.locator('.meeting-prompt').innerText(), /检测到会议，要记笔记吗？/);
-  assert.equal(
-    await main(() => globalThis.__stillnoteNotifications.at(-1).title),
-    '检测到会议，要记笔记吗？',
-  );
+  assert.match(await main(() => globalThis.__stillnoteNotifications.at(-1).detail), /^检测到会议/);
+  await panel.getByRole('button', { name: '记笔记', exact: true }).waitFor();
   await h.screenshot('meeting-detected-zh');
   await page.getByRole('button', { name: '忽略', exact: true }).click();
   await microphone(false);
