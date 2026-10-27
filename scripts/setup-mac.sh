@@ -7,6 +7,12 @@ fail() {
   exit 1
 }
 
+test_only=false
+if (( $# > 0 )); then
+  [[ $# == 1 && "$1" == "--test" ]] || fail "Usage: bash scripts/setup-mac.sh [--test]"
+  test_only=true
+fi
+
 [[ "$(uname -s)" == "Darwin" ]] || fail "Stillnote requires macOS."
 
 command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 ||
@@ -32,7 +38,12 @@ npm run package
 printf '\nChecking the packaged app with a temporary notebook…\n'
 npm run test:package
 
-printf '\nInstalling in Applications…\n'
-npm run install:app
-
-printf '\nReady. Open Stillnote from Applications. In Settings, connect your AI plan, then choose New note → Record.\n'
+if [[ "$test_only" == true ]]; then
+  printf '\nTesting installation and upgrade in a temporary folder…\n'
+  npm run test:install
+  printf '\nTest complete. Your installed Stillnote and existing notebook were not replaced.\n'
+else
+  printf '\nInstalling in Applications…\n'
+  npm run install:app
+  printf '\nReady. Open Stillnote from Applications. In Settings, connect your AI plan, then choose New note → Record.\n'
+fi

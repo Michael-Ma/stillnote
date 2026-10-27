@@ -20,6 +20,14 @@ The first E2E run also exposed a cross-renderer assertion race: the editor had c
 
 The demo uses fictional notes and synthetic audio, recognition, calendar and AI. Meeting-end waits are compressed; floating panels are real screenshots composited into the screencast, with an illustrative countdown. Neither the video nor the deterministic tests establish live transcription accuracy, real provider access, or native placement across displays/full-screen apps/Spaces. No personal notebook, live microphone/system audio, real calendar, account inference, language download, signing or installation was exercised in this review. See [TESTING.md](TESTING.md) for repeatable commands.
 
+## Setup isolation — October 26, 2026
+
+`bash scripts/setup-mac.sh --test` passed end to end: dependency installation, packaging/signature checks, packaged-app smoke test, fresh temporary installation, and upgrade of that temporary app. The test seeded a notebook with notes, a summary, transcript, folder, preferences and two WAVs, created another note through the packaged UI, then verified all of it after replacement. Both WAVs remained byte-for-byte identical and loaded with the expected duration through the app's media protocol.
+
+The test used a copy of the existing app bundle and a disposable notebook; it did not launch or replace `/Applications/Stillnote.app` or open the production notebook. The installed app's archive checksum was unchanged. Running-app protection was exercised against the temporary app. Installer rollback, invalid test roots, symlink rejection, process-inspection failure, mistyped test flags, and failed-build/test routing have regression coverage. The final unit suite passed **210 tests**, and formatting checks passed.
+
+This establishes the tested installation path and retention of seeded current-schema data. It does not certify every historical migration, live capture, or account authentication. The normal installation command remains separate; this verification deliberately left the user's installed app unchanged.
+
 ## Historical October 20 validation
 
 The results below describe the earlier implementation on an Apple Silicon Mac. In particular, the serial legacy recognition results do not certify the later SpeechTranscriber/Auto-language path.

@@ -39,6 +39,16 @@ git pull --ff-only
 bash scripts/setup-mac.sh
 ```
 
+**Want to test setup without replacing your app or touching your notes?** Run:
+
+```sh
+bash scripts/setup-mac.sh --test
+```
+
+This builds the app, installs and upgrades a temporary copy, and checks that sample notes, transcripts and recordings survive. It uses a disposable notebook and leaves your installed app and real data alone. A normal installation replaces only the app; your notebook lives separately in `~/Library/Application Support/Stillnote/`.
+
+For an extra backup before a normal update, quit Stillnote and copy that entire data folder somewhere safe. Copy the whole folder to include recordings; a JSON export does not include audio.
+
 ## Core capabilities
 
 - **Meeting capture:** microphone plus optional system audio, without a meeting bot.

@@ -25,6 +25,9 @@ const desktop = await electron.launch({
 try {
   const page = await desktop.firstWindow();
   await page.getByRole('button', { name: 'New note', exact: true }).waitFor();
+  const initial = await page.evaluate(() => window.stillnote.call('state'));
+  assert.equal(initial.dataDir, dataDir, 'Refuse to write outside the temporary notebook');
+  assert.equal(initial.meetings.length, 0, 'The smoke-test notebook must start empty');
   await page.getByRole('button', { name: 'New note', exact: true }).click();
   await page.getByRole('textbox', { name: 'Meeting title' }).fill('Packaged application check');
   await page
