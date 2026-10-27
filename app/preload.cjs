@@ -28,6 +28,7 @@ const channels = [
   'usage',
   'ai',
   'cancel-ai',
+  'save-image',
   'export',
   'backup',
   'import',

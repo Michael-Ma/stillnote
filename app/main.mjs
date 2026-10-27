@@ -22,6 +22,7 @@ import {
   rmSync,
   statSync,
 } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -45,6 +46,17 @@ import {
   reminderAction,
 } from './reminders.mjs';
 import { detectedPanel, meetingEndPanel, reminderPanel } from './panel.mjs';
+import {
+  imageMarkdown,
+  imageType,
+  imageTypes,
+  imageUrl,
+  maxImageBytes,
+  noteImages,
+  parseImageUrl,
+  replaceImages,
+  withoutImages,
+} from './note-images.mjs';
 import { panelWindow } from './panel-window.mjs';
 import {
   callOnMicrophone,
@@ -88,6 +100,7 @@ protocol.registerSchemesAsPrivileged([
     scheme: 'stillnote-audio',
     privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
   },
+  { scheme: 'stillnote-image', privileges: { standard: true, secure: true } },
 ]);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 app.setName('Stillnote');
@@ -101,6 +114,9 @@ app.setPath(
 // out of the way of the person at the Mac: no Dock icon, never active, and a window that is
 // invisible, takes no focus or clicks, and keeps rendering while behind other windows.
 const scripted = Boolean(process.env.STILLNOTE_MOCK_KEYCHAIN && process.env.STILLNOTE_DATA_DIR);
+// A note image's file, in its meeting's folder beside the recordings (app/note-images.mjs).
+const noteImageFile = (meetingId, name) =>
+  join(meetingAudioDirectory(app.getPath('userData'), meetingId), 'images', name);
 if (scripted) {
   app.commandLine.appendSwitch('use-mock-keychain');
   for (const flag of [
@@ -738,7 +754,7 @@ if (!app.requestSingleInstanceLock()) {
           !activeAI
         ) {
           const sparse = completed.recordings.at(-1)?.diagnostics?.lowCoverage;
-          if (sparse && completed.notes.replace(/\s/g, '').length < 40) {
+          if (sparse && withoutImages(completed.notes, '').replace(/\s/g, '').length < 40) {
             emit({
               type: 'warning',
               message:
@@ -1012,6 +1028,22 @@ if (!app.requestSingleInstanceLock()) {
             resolveRecordingTrack(app.getPath('userData'), meetingId, session, source),
             request,
           );
+        } catch {
+          return new Response(null, { status: 404 });
+        }
+      });
+      // Images in notes (app/note-images.mjs), only from their meeting's own folder.
+      protocol.handle('stillnote-image', async (request) => {
+        const image = parseImageUrl(request.url);
+        if (!image) return new Response(null, { status: 404 });
+        try {
+          store.get(image.meetingId);
+          return new Response(await readFile(noteImageFile(image.meetingId, image.name)), {
+            headers: {
+              'content-type': imageTypes[image.name.split('.').pop()],
+              'x-content-type-options': 'nosniff',
+            },
+          });
         } catch {
           return new Response(null, { status: 404 });
         }
@@ -1593,23 +1625,42 @@ if (!app.requestSingleInstanceLock()) {
       });
       register('ai', ai);
       register('cancel-ai', () => activeAI?.abort());
+      // An exported note carries its images inline, so the Markdown file stands on its own.
       register('export', async (id) =>
         saveExport(
           store
             .get(id)
             .title.replace(/[^\p{L}\p{N} ._-]/gu, '')
             .slice(0, 80) + '.md',
-          markdown(store.get(id)),
+          replaceImages(markdown(store.get(id)), ({ meetingId, name }) => {
+            try {
+              const data = readFileSync(noteImageFile(meetingId, name)).toString('base64');
+              return imageMarkdown(`data:${imageTypes[name.split('.').pop()]};base64,${data}`);
+            } catch {
+              return null;
+            }
+          }),
           ['md'],
         ),
       );
-      register('backup', () =>
-        saveExport(
+      // Backups leave recordings out but keep the images notes show.
+      register('backup', () => {
+        const backup = store.backup(),
+          images = new Map();
+        for (const m of backup.meetings)
+          for (const image of noteImages(`${m.notes}\n${m.summary}`))
+            if (!images.has(image.url) && existsSync(noteImageFile(image.meetingId, image.name)))
+              images.set(image.url, {
+                meetingId: image.meetingId,
+                name: image.name,
+                data: readFileSync(noteImageFile(image.meetingId, image.name)).toString('base64'),
+              });
+        return saveExport(
           'Stillnote-backup-' + new Date().toISOString().slice(0, 10) + '.json',
-          JSON.stringify(store.backup()),
+          JSON.stringify({ ...backup, images: [...images.values()] }),
           ['json'],
-        ),
-      );
+        );
+      });
       register('import', async () => {
         const r = await dialog.showOpenDialog(win, {
           properties: ['openFile'],
@@ -1621,7 +1672,51 @@ if (!app.requestSingleInstanceLock()) {
         const [path] = r.filePaths;
         // An oversized file is refused before it is read into memory.
         checkImportSize(path, statSync(path).size);
-        return store.importFile(path, readFileSync(path, 'utf8'));
+        const raw = readFileSync(path, 'utf8'),
+          result = store.importFile(path, raw);
+        if ('restored' in result) restoreImages(JSON.parse(raw).images);
+        return result;
+      });
+      // A backup's images go back beside their notes: only images of notes in this notebook, of
+      // the kinds Stillnote saves, and never over a file already there.
+      function restoreImages(list) {
+        for (const image of Array.isArray(list) ? list : []) {
+          try {
+            const named = parseImageUrl(imageUrl(image?.meetingId, image?.name));
+            if (!named || typeof image.data !== 'string') continue;
+            store.get(named.meetingId);
+            const bytes = Buffer.from(image.data, 'base64'),
+              path = noteImageFile(named.meetingId, named.name);
+            if (bytes.length > maxImageBytes || imageType(bytes) !== named.name.split('.').pop())
+              continue;
+            if (existsSync(path)) continue;
+            mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+            writeFileSync(path, bytes, { mode: 0o600, flag: 'wx' });
+          } catch (error) {
+            console.error('A backup image could not be restored:', error.message);
+          }
+        }
+      }
+      // An image pasted or dropped into a note's notes: checked by its bytes (not the type the
+      // clipboard claims), saved in the meeting's folder, and named by a URL only Stillnote serves.
+      register('save-image', (meetingId, bytes) => {
+        const m = store.get(meetingId);
+        if (m.deletedAt) throw new Error('Restore this meeting before adding images.');
+        const data =
+          bytes instanceof ArrayBuffer
+            ? new Uint8Array(bytes)
+            : ArrayBuffer.isView(bytes)
+              ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+              : null;
+        if (data && data.byteLength > maxImageBytes)
+          throw new Error('Images must be 20 MB or smaller.');
+        const type = data && imageType(data);
+        if (!type) throw new Error('Only PNG, JPEG, GIF or WebP images can be added.');
+        const name = `${randomUUID().replaceAll('-', '')}.${type}`,
+          path = noteImageFile(m.id, name);
+        mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+        writeFileSync(path, data, { mode: 0o600, flag: 'wx' });
+        return imageUrl(m.id, name);
       });
       register('reveal', () => shell.openPath(app.getPath('userData')));
       // Only the privacy panes Stillnote's own messages point to.

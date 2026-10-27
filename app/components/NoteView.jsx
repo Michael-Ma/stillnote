@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   CalendarDays,
   Download,
@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { IconButton, Rich } from './Content.jsx';
 import { AiConnect } from './AiConnect.jsx';
+import { NoteEditor } from './NoteEditor.jsx';
 import { CoverageWarning } from './RecordingAudio.jsx';
 import { ownLineMatcher } from '../own-lines.mjs';
 import { tidyNotes } from '../meeting-context.mjs';
@@ -126,9 +127,18 @@ export function NoteView({
   ai,
   aiActions,
   onTidyContext,
+  onSaveImage,
   onDeleteForever,
 }) {
   const t = useT();
+  // An image in the notes, shown large until a click or Escape.
+  const [viewing, setViewing] = useState(null);
+  useEffect(() => {
+    if (!viewing) return;
+    const close = (event) => event.key === 'Escape' && setViewing(null);
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [viewing]);
   const isOwn = useMemo(() => ownLineMatcher(meeting.notes), [meeting.notes]);
   // Notes made before invites were cleaned still hold them as they arrived (HTML, dial-ins).
   const untidy = useMemo(() => tidyNotes(meeting.notes, t) !== meeting.notes, [meeting.notes, t]);
@@ -195,12 +205,14 @@ export function NoteView({
       )}
       <div className="document-body">
         {tab === 'notes' ? (
-          <textarea
-            className="note-editor"
-            aria-label={t('My notes')}
-            placeholder={t('Write notes…')}
+          <NoteEditor
+            key={meeting.id}
             value={meeting.notes}
-            onChange={(e) => draft({ notes: e.target.value })}
+            onChange={(notes) => draft({ notes })}
+            label={t('My notes')}
+            hint={t('Write notes…')}
+            onSaveImage={meeting.deletedAt ? null : onSaveImage}
+            onOpenImage={setViewing}
           />
         ) : enhancing ? (
           <>
@@ -261,6 +273,16 @@ export function NoteView({
           </div>
         )}
       </div>
+      {viewing && (
+        <div
+          className="image-viewer"
+          role="dialog"
+          aria-label={t('Image')}
+          onClick={() => setViewing(null)}
+        >
+          <img src={viewing} alt="" />
+        </div>
+      )}
     </article>
   );
 }

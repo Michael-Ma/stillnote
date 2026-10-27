@@ -27,6 +27,7 @@ import {
 } from './format.mjs';
 import { liveValue } from './live-values.mjs';
 import { tidyNotes } from './meeting-context.mjs';
+import { withoutImages } from './note-images.mjs';
 import { resolveLanguage, translator } from './i18n/index.mjs';
 import { I18nProvider } from './i18n/react.jsx';
 import './style.css';
@@ -783,7 +784,12 @@ function App() {
         .filter((m) =>
           !query.trim() || view === 'trash'
             ? !query.trim() ||
-              [m.title, m.notes, m.summary, ...m.transcript.map((s) => s.text)]
+              [
+                m.title,
+                withoutImages(m.notes, ''),
+                withoutImages(m.summary, ''),
+                ...m.transcript.map((s) => s.text),
+              ]
                 .join(' ')
                 .toLowerCase()
                 .includes(query.toLowerCase())
@@ -1080,6 +1086,7 @@ function App() {
                   folders={data.folders}
                   tab={tab}
                   draft={draft}
+                  onSaveImage={(bytes) => guard(() => call('save-image', meeting.id, bytes))}
                   onDeleteForever={() => deleteForever([meeting])}
                   onTidyContext={() => {
                     // The invite as it arrived comes back with Undo.

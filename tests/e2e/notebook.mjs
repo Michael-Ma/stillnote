@@ -124,10 +124,7 @@ export async function notebook(h) {
   await page.getByRole('textbox', { name: 'My notes', exact: true }).fill(immediatelySaved);
   page = await h.restart();
   await h.open(title);
-  assert.equal(
-    await page.getByRole('textbox', { name: 'My notes', exact: true }).inputValue(),
-    immediatelySaved,
-  );
+  assert.equal(await h.notesText(), immediatelySaved);
   const persisted = (await h.state()).meetings.find((m) => m.id === meeting.id);
   assert.equal(persisted.transcript.length, 1);
   assert.equal(persisted.starred, true);
@@ -138,15 +135,11 @@ export async function notebook(h) {
   await h.call('create', { title: 'Old invite note', notes: raw });
   page = await h.restart();
   await h.open('Old invite note');
-  const notesBox = page.getByRole('textbox', { name: 'My notes', exact: true });
   await page.getByRole('button', { name: 'Tidy it', exact: true }).click();
-  assert.equal(
-    await notesBox.inputValue(),
-    'Meeting context\nHi Alex,\nAgenda & goals\nMy own line',
-  );
+  await h.untilNotes('Meeting context\nHi Alex,\nAgenda & goals\nMy own line');
   await page.getByRole('button', { name: 'Tidy it', exact: true }).waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
-  assert.equal(await notesBox.inputValue(), raw);
+  await h.untilNotes(raw);
   // Delete forever, from Trash: a confirmation first, then the note is gone for good.
   await page
     .locator('.note-toolbar')

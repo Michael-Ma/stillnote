@@ -1,6 +1,7 @@
 // Enhanced notes the way Granola writes them: the user's rough notes are the skeleton, the
 // transcript fills in what they missed, and the result reads like a colleague's terse write-up.
 // Pure: builds the instructions and the request text; main.mjs sends them to the provider.
+import { withoutImages } from './note-images.mjs';
 
 export const enhanceInstructions = `You are Stillnote. You turn one meeting into enhanced notes for me, the person who recorded it: what a sharp colleague would write up right after the call.
 
@@ -54,7 +55,7 @@ export function enhanceRequest(meeting, template) {
   const text = [
     `Template: ${template.name}\n${template.prompt}`,
     `<meeting>\n${fence(facts.join('\n'))}\n</meeting>`,
-    `<my_notes>\n${fence(meeting.notes.trim()) || '(empty)'}\n</my_notes>`,
+    `<my_notes>\n${fence(withoutImages(meeting.notes).trim()) || '(empty)'}\n</my_notes>`,
     `<transcript>\n${fence(transcript) || '(empty)'}\n</transcript>`,
     'Write the enhanced notes.',
   ].join('\n\n');

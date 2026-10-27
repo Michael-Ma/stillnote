@@ -1196,6 +1196,62 @@ kbd {
   font-size: var(--text-lg);
   line-height: 1.7;
 }
+/* My notes (components/NoteEditor.jsx): CodeMirror dressed as the plain text box it replaced. */
+.note-editor .cm-editor {
+  min-height: inherit;
+  background: none;
+  color: inherit;
+}
+.note-editor .cm-editor.cm-focused {
+  outline: 0;
+}
+.note-editor .cm-scroller {
+  overflow: visible;
+  font-family: inherit;
+  line-height: inherit;
+}
+.note-editor .cm-content {
+  min-height: 52vh;
+  padding: 0;
+  caret-color: var(--ink);
+}
+.note-editor .cm-line {
+  padding: 0;
+}
+.note-editor .cm-placeholder {
+  color: var(--faint);
+}
+/* Images in notes, in the editor and in enhanced notes. */
+.note-image {
+  display: block;
+  padding: 6px 0;
+}
+.note-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 480px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.note-editor .note-image img {
+  cursor: zoom-in;
+}
+.image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 48px;
+  background: rgba(20, 20, 18, 0.72);
+  cursor: zoom-out;
+}
+.image-viewer img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
 .summary-tools {
   display: flex;
   justify-content: flex-end;

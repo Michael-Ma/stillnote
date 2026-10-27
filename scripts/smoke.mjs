@@ -95,7 +95,7 @@ try {
   await page.locator('.note-row').first().click();
   await page.getByRole('tab', { name: 'My notes', exact: true }).click();
   assert.match(
-    await page.getByRole('textbox', { name: 'My notes', exact: true }).inputValue(),
+    await page.getByRole('textbox', { name: 'My notes', exact: true }).textContent(),
     /revised flow/,
   );
   await page
@@ -110,7 +110,7 @@ try {
   page = await launch();
   await page.locator('.note-row').first().click();
   assert.equal(
-    await page.getByRole('textbox', { name: 'My notes', exact: true }).inputValue(),
+    await page.getByRole('textbox', { name: 'My notes', exact: true }).textContent(),
     'Immediate-close save regression check.',
   );
   await desktop.evaluate(({ BrowserWindow }) =>

@@ -1,6 +1,7 @@
 import React, { useMemo, useRef } from 'react';
 import Markdown from 'react-markdown';
 import { useT } from '../i18n/react.jsx';
+import { parseImageUrl } from '../note-images.mjs';
 export function IconButton({ label, children, className = '', ...props }) {
   return (
     <button className={'icon-button ' + className} aria-label={label} title={label} {...props}>
@@ -40,6 +41,13 @@ export function Rich({ text, onSource, isOwn }) {
         ) : (
           <span>{children}</span>
         ),
+      // Only a note's own images show; any other image is left out rather than shown broken.
+      img: ({ src }) =>
+        src ? (
+          <span className="note-image">
+            <img src={src} alt="" />
+          </span>
+        ) : null,
       ...(isOwn ? { li: mark('li'), p: mark('p') } : {}),
     };
   }, [isOwn, t]);
@@ -49,7 +57,9 @@ export function Rich({ text, onSource, isOwn }) {
   const rendered = useMemo(
     () => (
       <Markdown
-        urlTransform={(url) => (url.startsWith('stillnote://source/') ? url : '')}
+        urlTransform={(url) =>
+          url.startsWith('stillnote://source/') || parseImageUrl(url) ? url : ''
+        }
         components={components}
       >
         {content}

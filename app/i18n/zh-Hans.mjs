@@ -469,6 +469,7 @@ export default {
   'resets {time}': '{time} 重置',
   'Restore it': '恢复',
   'Restore note': '恢复笔记',
+  'Restore this meeting before adding images.': '请先恢复这个会议再添加图片。',
   'Restore this meeting before recording.': '请先恢复这个会议再录音。',
   'Restore this note before transcribing.': '请先恢复这条笔记再转写。',
   'Restore this version': '恢复此版本',
@@ -667,4 +668,7 @@ export default {
   '{rate} kHz · {n} channels': '{rate} kHz · {n} 声道',
   '{speaker} recognition: {error}. Original audio is preserved.':
     '{speaker}的识别出错：{error}。原始音频已保留。',
+  'Images must be 20 MB or smaller.': '图片不能超过 20 MB。',
+  'Only PNG, JPEG, GIF or WebP images can be added.': '只能添加 PNG、JPEG、GIF 或 WebP 图片。',
+  Image: '图片',
 };

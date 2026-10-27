@@ -4,6 +4,7 @@ import { resolve, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { Harness, root } from '../tests/e2e/harness.mjs';
 import { notebook } from '../tests/e2e/notebook.mjs';
+import { images } from '../tests/e2e/images.mjs';
 import { capture, captureScenario } from '../tests/e2e/capture.mjs';
 import { ai, aiScenario } from '../tests/e2e/ai.mjs';
 import { recovery } from '../tests/e2e/recovery.mjs';
@@ -22,7 +23,7 @@ const option = (name) => {
 };
 if (args.includes('--help')) {
   console.log(
-    'Usage: node scripts/e2e.mjs [--suite notebook|capture|ai|recovery|reminders|calls|language|all] [--no-build] [--output path]\nRuns deterministic Electron E2E tests with synthetic audio and AI. No real account or device is used.',
+    'Usage: node scripts/e2e.mjs [--suite notebook|images|capture|ai|recovery|reminders|calls|language|meeting-end|all] [--no-build] [--output path]\nRuns deterministic Electron E2E tests with synthetic audio and AI. No real account or device is used.',
   );
   process.exit(0);
 }
@@ -77,6 +78,19 @@ const suites = {
       'Resume recording continues in the same note; a manual stop trims too',
       'Only ask waits for Stop now',
       'the prompt in Chinese',
+    ],
+  },
+  images: {
+    run: images,
+    scenario: { connected: false },
+    checks: [
+      'a pasted image shows in place, on a line of its own, saved in the meeting’s folder',
+      'Backspace deletes the whole image and Undo brings it back',
+      'clicking an image shows it large',
+      'a file that only claims to be an image is refused',
+      'search ignores image addresses',
+      'images survive a restart',
+      'Markdown export embeds images; backups carry them',
     ],
   },
   recovery: {

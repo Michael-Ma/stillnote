@@ -69,3 +69,15 @@ test('enhanced notes ask for no citations; the rules explain the transcript labe
   assert.match(enhanceInstructions, /"You" is my microphone/);
   assert.match(enhanceInstructions, /"Meeting audio" is everyone else/);
 });
+
+test('images in my notes reach the AI as a placeholder, not an address', () => {
+  const text = enhanceRequest(
+    meeting({
+      notes:
+        'Pricing slide\n![image](stillnote-image://note/63f1fb32-ddc1-453f-900e-f488f6afb7c6/ed81d33f64164ed89b913a7de87601f0.png)\nToo busy',
+    }),
+    templates[0],
+  );
+  assert.match(text, /Pricing slide\n\[image\]\nToo busy/);
+  assert.doesNotMatch(text, /stillnote-image/);
+});

@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, ipcMain } from './fixtures/electron.mjs';
+import { app, BrowserWindow, dialog, ipcMain, protocol } from './fixtures/electron.mjs';
 
 const hook = registerHooks({
   resolve(specifier, context, next) {
@@ -657,6 +657,91 @@ test('a meeting that seems over asks, keeps recording on request, then stops and
   saved = (await call('state')).meetings.find((m) => m.id === meeting.id);
   assert.equal(saved.duration, 60, 'both recordings, trimmed');
   assert.ok(events().some((e) => e.type === 'native-command' && e.op === 'stop'));
+});
+test('images pasted into notes are checked, kept in the meeting’s folder, served, exported and backed up', async (t) => {
+  const { call, dir } = await setup(t, 'note-images');
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+  const meeting = await call('create', { title: 'Screenshots' });
+  const url = await call('save-image', meeting.id, png);
+  const [, name] =
+    url.match(/^stillnote-image:\/\/note\/[0-9a-f-]{36}\/([0-9a-f]{32}\.png)$/) ?? [];
+  assert.ok(name, url);
+  const file = join(dir, 'recordings', meeting.id, 'images', name);
+  assert.deepEqual(new Uint8Array(readFileSync(file)), png);
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+
+  // Only real images of the kinds Stillnote shows, at most 20 MB, in a note that is not in Trash.
+  await assert.rejects(
+    call('save-image', meeting.id, new TextEncoder().encode('<svg onload="x()"/>')),
+    /Only PNG, JPEG, GIF or WebP images can be added\./,
+  );
+  await assert.rejects(call('save-image', meeting.id, 'not bytes'), /Only PNG/);
+  const huge = new Uint8Array(20 * 1024 * 1024 + 1);
+  huge.set(png);
+  await assert.rejects(call('save-image', meeting.id, huge), /20 MB or smaller/);
+  const trashed = await call('create', { title: 'Old' });
+  await call('update', trashed.id, { deletedAt: true });
+  await assert.rejects(call('save-image', trashed.id, png), /Restore this meeting/);
+
+  // The page loads it through stillnote-image:, and nothing outside a meeting's images.
+  const serve = protocol.handlers.get('stillnote-image');
+  const served = await serve(new Request(url));
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get('content-type'), 'image/png');
+  assert.deepEqual(new Uint8Array(await served.arrayBuffer()), png);
+  for (const bad of [
+    url.replace(meeting.id, trashed.id),
+    url.replace('/note/', '/other/'),
+    `stillnote-image://note/${meeting.id}/../../notebook.sqlite`,
+  ])
+    assert.equal((await serve(new Request(bad))).status, 404, bad);
+
+  // Export puts the image inside the Markdown; a backup carries it and a restore puts it back.
+  await call('update', meeting.id, { notes: `Before\n![image](${url})\nAfter` });
+  const saved = [];
+  const saveDialog = dialog.showSaveDialog;
+  t.after(() => (dialog.showSaveDialog = saveDialog));
+  dialog.showSaveDialog = async (_win, { defaultPath }) => {
+    saved.push(join(dir, defaultPath));
+    return { canceled: false, filePath: saved.at(-1) };
+  };
+  await call('export', meeting.id);
+  assert.match(
+    readFileSync(saved.at(-1), 'utf8'),
+    new RegExp(
+      `Before\\n!\\[image\\]\\(data:image/png;base64,${Buffer.from(png).toString('base64')}\\)\\nAfter`,
+    ),
+  );
+  await call('backup');
+  const backupPath = saved.at(-1);
+  const backup = JSON.parse(readFileSync(backupPath, 'utf8'));
+  assert.deepEqual(backup.images, [
+    { meetingId: meeting.id, name, data: Buffer.from(png).toString('base64') },
+  ]);
+  // Entries that are not Stillnote's own images, or not for a note here, are ignored.
+  backup.images.push(
+    {
+      meetingId: meeting.id,
+      name: 'f'.repeat(32) + '.png',
+      data: Buffer.from('<svg/>').toString('base64'),
+    },
+    { meetingId: meeting.id, name: '../escape.png', data: backup.images[0].data },
+    {
+      meetingId: '00000000-0000-4000-8000-000000000000',
+      name: 'e'.repeat(32) + '.png',
+      data: backup.images[0].data,
+    },
+  );
+  writeFileSync(backupPath, JSON.stringify(backup));
+  rmSync(file);
+  const openDialog = dialog.showOpenDialog;
+  t.after(() => (dialog.showOpenDialog = openDialog));
+  dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [backupPath] });
+  await call('import');
+  assert.deepEqual(new Uint8Array(readFileSync(file)), png, 'restored beside its note');
+  assert.ok(!existsSync(join(dir, 'recordings', meeting.id, 'images', 'f'.repeat(32) + '.png')));
+  assert.ok(!existsSync(join(dir, 'recordings', meeting.id, 'escape.png')));
+  assert.ok(!existsSync(join(dir, 'recordings', '00000000-0000-4000-8000-000000000000')));
 });
 test('the renderer can call exactly the operations main registers', () => {
   const read = (file) => readFileSync(new URL(`../app/${file}`, import.meta.url), 'utf8');

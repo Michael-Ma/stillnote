@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { join, basename, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startableServices } from './calls.mjs';
+import { withoutImages } from './note-images.mjs';
 
 // Each template states the meeting's purpose, then its sections, as Granola's template guide
 // suggests; enhance.mjs supplies the shared writing rules.
@@ -223,7 +224,13 @@ export class Store {
           rowid,
           m.id,
           searchable(m.title),
-          searchable([m.notes, m.summary, ...m.transcript.map((s) => s.text)].join('\n')),
+          searchable(
+            [
+              withoutImages(m.notes, ''),
+              withoutImages(m.summary, ''),
+              ...m.transcript.map((s) => s.text),
+            ].join('\n'),
+          ),
         );
   }
   // `alongside` runs in the same transaction (rows that belong with this write).
@@ -760,8 +767,8 @@ function sourceBlock(m, number, transcript = true) {
   return `SOURCE [${number}] meeting_id=${m.id}\n${JSON.stringify({
     title: m.title,
     date: m.createdAt,
-    notes: m.notes,
-    summary: m.summary,
+    notes: withoutImages(m.notes),
+    summary: withoutImages(m.summary),
     ...(transcript
       ? {
           transcript: m.transcript.map((s) => ({

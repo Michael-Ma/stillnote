@@ -148,6 +148,27 @@ export class Harness {
     await (await this.panel()).locator('.panel').screenshot({ path });
     return path;
   }
+  // What My notes says, line by line: a CodeMirror editor has no input value. Images (block
+  // widgets, not lines) are left out; their Markdown is in the note's state.
+  notesText() {
+    return this.page.getByRole('textbox', { name: 'My notes', exact: true }).evaluate((content) =>
+      [...content.querySelectorAll(':scope > .cm-line')]
+        .map((line) =>
+          [...line.childNodes]
+            .filter((node) => !node.classList?.contains('cm-placeholder'))
+            .map((node) => node.textContent)
+            .join(''),
+        )
+        .join('\n'),
+    );
+  }
+  // Waits for My notes to say exactly this (a change made elsewhere reaches the editor after the
+  // render), then checks it.
+  async untilNotes(expected) {
+    for (let i = 0; i < 100 && (await this.notesText()) !== expected; i++)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(await this.notesText(), expected);
+  }
   async saveDialog(path) {
     await this.desktop.evaluate(({ dialog }, filePath) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath });

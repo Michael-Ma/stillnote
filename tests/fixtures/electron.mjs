@@ -102,4 +102,10 @@ export const screen = {
 };
 export const powerSaveBlocker = { start: () => 1, stop() {} };
 export const powerMonitor = { on() {} };
-export const protocol = { registerSchemesAsPrivileged() {}, handle() {} };
+export const protocol = {
+  handlers: new Map(),
+  registerSchemesAsPrivileged() {},
+  handle(scheme, fn) {
+    this.handlers.set(scheme, fn);
+  },
+};
