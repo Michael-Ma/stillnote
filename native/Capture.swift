@@ -1342,26 +1342,47 @@ func inputDevices() -> [InputDevice] {
       transport: transport)
   }.sorted { $0.name < $1.name }
 }
-// Meeting detection: whether another app is using a microphone. macOS 14 lists the processes
-// running audio input, so Stillnote's own capture is left out; macOS 13 can only tell that the
-// default microphone is in use by someone, and the app ignores what starts while it records.
-// Reads CoreAudio state only; never opens an input.
-func othersUsingInput(_ processes: [(pid: Int32, input: Bool)], own: Int32) -> Bool {
-  processes.contains { $0.input && $0.pid != own }
+// Meeting detection: which other apps are using a microphone. macOS 14 lists the processes
+// running audio input, so Stillnote's own capture is left out, and names each by the app it
+// belongs to (Chrome's or Granola's audio helper as Chrome or Granola), so the app can tell a
+// call from another note-taker. macOS 13 can only tell that the default microphone is in use by
+// someone (no apps), and the app ignores what starts while it records. Reads CoreAudio state
+// only; never opens an input.
+func inputApps(
+  _ processes: [(pid: Int32, input: Bool)], own: Int32, app: (Int32) -> String
+) -> [String] {
+  Set(processes.filter { $0.input && $0.pid != own }.map { app($0.pid) }).sorted()
 }
-func microphoneInUseElsewhere() -> Bool {
+// The outermost .app bundle around a process's executable, else what CoreAudio calls it, else
+// the executable's name.
+func owningApp(_ pid: Int32, bundleID: String = "") -> String {
+  var buffer = [CChar](repeating: 0, count: 4096)
+  guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return bundleID }
+  let path = String(cString: buffer)
+  if let app = path.range(of: ".app/"),
+    let id = Bundle(path: String(path[..<app.lowerBound]) + ".app")?.bundleIdentifier
+  {
+    return id
+  }
+  return bundleID.isEmpty ? URL(fileURLWithPath: path).lastPathComponent : bundleID
+}
+func microphoneUsers() -> (active: Bool, apps: [String]?) {
   let system = AudioObjectID(kAudioObjectSystemObject)
   if #available(macOS 14.0, *) {
+    var objects: [Int32: AudioObjectID] = [:]
     let processes = audioIDs(system, kAudioHardwarePropertyProcessObjectList).map {
-      (
-        pid: Int32(bitPattern: audioNumber($0, kAudioProcessPropertyPID)),
-        input: audioNumber($0, kAudioProcessPropertyIsRunningInput) != 0
-      )
+      let pid = Int32(bitPattern: audioNumber($0, kAudioProcessPropertyPID))
+      objects[pid] = $0
+      return (pid: pid, input: audioNumber($0, kAudioProcessPropertyIsRunningInput) != 0)
     }
-    return othersUsingInput(processes, own: getpid())
+    let apps = inputApps(processes, own: getpid()) { pid in
+      let bundleID = objects[pid].map { audioString($0, kAudioProcessPropertyBundleID) }
+      return owningApp(pid, bundleID: bundleID ?? "")
+    }
+    return (!apps.isEmpty, apps)
   }
   let input = audioNumber(system, kAudioHardwarePropertyDefaultInputDevice)
-  return input != 0 && audioNumber(input, kAudioDevicePropertyDeviceIsRunningSomewhere) != 0
+  return (input != 0 && audioNumber(input, kAudioDevicePropertyDeviceIsRunningSomewhere) != 0, nil)
 }
 // Checks every two seconds and reports each change, starting with the current state. CoreAudio is
 // read off the main actor, which also receives recorded audio: a slow audio service (a Bluetooth
@@ -1369,16 +1390,19 @@ func microphoneInUseElsewhere() -> Bool {
 @MainActor
 final class MicrophoneWatch {
   var task: Task<Void, Never>?
-  var active: Bool?
+  var reported: String?
   func start() {
     guard task == nil else { return }
     task = Task { @MainActor [weak self] in
       while !Task.isCancelled {
-        let now = await Task.detached(priority: .utility) { microphoneInUseElsewhere() }.value
+        let now = await Task.detached(priority: .utility) { microphoneUsers() }.value
         guard let self, !Task.isCancelled else { break }
-        if now != self.active {
-          self.active = now
-          emit(["type": "microphone-activity", "active": now])
+        let state = "\(now.active) \(now.apps ?? [])"
+        if state != self.reported {
+          self.reported = state
+          var event: [String: Any] = ["type": "microphone-activity", "active": now.active]
+          if let apps = now.apps { event["apps"] = apps }
+          emit(event)
         }
         do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { break }
       }
@@ -1387,7 +1411,7 @@ final class MicrophoneWatch {
   func stop() {
     task?.cancel()
     task = nil
-    active = nil
+    reported = nil
   }
 }
 // At most three microphone rebuilds in any ten seconds. Refused attempts are not counted, so the
@@ -2398,13 +2422,18 @@ func captureSelfTest() throws {
   guard allowed == [0, 2, 4, 10, 12, 14, 20, 22, 24, 30] else {
     throw problem("Microphone restarts never resume after the limit.")
   }
-  // Meeting detection counts other apps' microphone use, never Stillnote's own capture, and reads
-  // the current state without opening an input.
+  // Meeting detection names the other apps using a microphone, once each, never Stillnote's own
+  // capture, and reads the current state without opening an input.
   let own = getpid()
-  guard !othersUsingInput([(pid: own, input: true), (pid: own + 1, input: false)], own: own),
-    othersUsingInput([(pid: own, input: true), (pid: own + 1, input: true)], own: own)
+  let zoom = { (_: Int32) in "us.zoom.xos" }
+  guard inputApps([(pid: own, input: true), (pid: own + 1, input: false)], own: own, app: zoom)
+    .isEmpty,
+    inputApps(
+      [(pid: own, input: true), (pid: own + 1, input: true), (pid: own + 2, input: true)],
+      own: own, app: zoom) == ["us.zoom.xos"],
+    !owningApp(own).isEmpty
   else { throw problem("Meeting detection counted Stillnote's own microphone use.") }
-  _ = microphoneInUseElsewhere()
+  _ = microphoneUsers()
   // The reminder panel's bar takes the calendar's color as sRGB hex.
   guard hexColor(CGColor(srgbRed: 1, green: 0.5, blue: 0, alpha: 1)) == "#ff8000",
     hexColor(nil) == nil

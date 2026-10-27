@@ -85,6 +85,32 @@ export function currentEvent(events, now, lead = 5 * 60_000) {
   return best;
 }
 
+// Apps that use a microphone without being in a call, by bundle identifier (helpers included:
+// com.granola.app.helper). macOS's screen and audio capture service holds an input for as long as
+// anything records meeting audio, Stillnote included; other note-takers hold the microphone while
+// they take notes, Granola until it decides the call is over. Counting them would hide both a
+// call's start and its end.
+export const nonCallApps = [
+  'com.apple.replayd',
+  'local.stillnote.app',
+  'com.granola.app',
+  'notion.id',
+  'com.goodsnooze.MacWhisper',
+  'com.superduper.superwhisper',
+  'com.apple.VoiceMemos',
+];
+const nonCall = (app) =>
+  nonCallApps.some((id) => {
+    const name = String(app).toLowerCase(),
+      other = id.toLowerCase();
+    return name === other || name.startsWith(`${other}.`);
+  });
+
+// Whether a call is using the microphone, from the helper's report: the apps using it (macOS 14)
+// or, without them (macOS 13), only whether anything else is.
+export const callOnMicrophone = ({ active, apps }) =>
+  Array.isArray(apps) ? apps.some((app) => !nonCall(app)) : active === true;
+
 // Meeting detection. Another app's microphone use counts as a meeting once it has lasted `settle`
 // ms without a break (dictation or a quick voice memo does not, nor do two of them a minute
 // apart); a pause shorter than `gap` (muting, switching microphones) continues the same session.

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   callLink,
+  callOnMicrophone,
   callServices,
   callTitle,
   currentEvent,
@@ -126,6 +127,30 @@ test('a detected call goes into the calendar meeting under way or about to start
     currentEvent([{ ...focus, notes: 'https://meet.google.com/abc-defg-hij' }], now).id,
     'focus',
   );
+});
+
+test('a call is on the microphone only when a call app uses it, not another recorder', () => {
+  // What the helper reported during a Google Meet call that Stillnote recorded with meeting audio.
+  assert.equal(
+    callOnMicrophone({
+      active: true,
+      apps: ['com.apple.replayd', 'com.google.Chrome', 'local.stillnote.app'],
+    }),
+    true,
+  );
+  // After hanging up: macOS's capture service (meeting audio) and Granola, helpers included, stay.
+  assert.equal(
+    callOnMicrophone({
+      active: true,
+      apps: ['com.apple.replayd', 'com.granola.app.helper', 'COM.GRANOLA.APP'],
+    }),
+    false,
+  );
+  assert.equal(callOnMicrophone({ active: true, apps: ['com.granola.appx'] }), true);
+  assert.equal(callOnMicrophone({ active: false, apps: [] }), false);
+  // macOS 13 names no apps: anything else on the microphone counts.
+  assert.equal(callOnMicrophone({ active: true }), true);
+  assert.equal(callOnMicrophone({ active: false }), false);
 });
 
 test('detection waits for the call to settle and prompts once per session', () => {

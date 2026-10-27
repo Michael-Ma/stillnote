@@ -12,7 +12,7 @@
 // and let go again, the calendar signal is spent, and silence counts again from then.
 export function meetingEndDetector({
   held = 60_000,
-  callQuiet = 30_000,
+  callQuiet = 10_000,
   calendarQuiet = 2 * 60_000,
   quiet = 10 * 60_000,
   quietInCall = 20 * 60_000,

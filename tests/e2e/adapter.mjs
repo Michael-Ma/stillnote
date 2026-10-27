@@ -267,10 +267,16 @@ export function createTestAdapter({ dataDir }) {
       log({ type: 'native-killed', signal });
       child.emit('close', 0);
     };
-    // Another app starting or stopping microphone use, as the helper reports it while watching.
+    // Another app starting or stopping microphone use, as the helper reports it while watching:
+    // true or false (macOS 13), or the apps using it (macOS 14).
     let watching = false;
-    globalThis.__stillnoteMicrophone = (active) => {
-      if (watching) emit({ type: 'microphone-activity', active });
+    globalThis.__stillnoteMicrophone = (use) => {
+      if (watching)
+        emit(
+          Array.isArray(use)
+            ? { type: 'microphone-activity', active: use.length > 0, apps: use }
+            : { type: 'microphone-activity', active: use },
+        );
       return watching;
     };
     async function handle(command) {

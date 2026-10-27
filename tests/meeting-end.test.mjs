@@ -20,12 +20,12 @@ test('a call app letting go of the microphone ends the meeting once everyone is 
   end.heard(9 * min);
   assert.equal(end.check(9 * min), null);
   end.microphone(false, 10 * min);
-  assert.equal(end.check(10 * min + 29 * s), null, 'not before 30 s of quiet');
-  assert.equal(end.check(10 * min + 30 * s), 'call');
+  assert.equal(end.check(10 * min + 9 * s), null, 'not before 10 s of quiet');
+  assert.equal(end.check(10 * min + 10 * s), 'call');
   // Someone speaking afterwards (the call app let go while muted) means it is not over.
   end.heard(10 * min + 40 * s);
-  assert.equal(end.check(10 * min + 50 * s), null);
-  assert.equal(end.check(11 * min + 10 * s), 'call');
+  assert.equal(end.check(10 * min + 45 * s), null);
+  assert.equal(end.check(10 * min + 50 * s), 'call');
   // Taking the microphone again (switching devices, unmuting) withdraws it.
   end.microphone(true, 11 * min + 20 * s);
   assert.equal(end.check(11 * min + 30 * s), null);

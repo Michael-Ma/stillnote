@@ -47,6 +47,7 @@ import {
 import { detectedPanel, meetingEndPanel, reminderPanel } from './panel.mjs';
 import { panelWindow } from './panel-window.mjs';
 import {
+  callOnMicrophone,
   callServices,
   callTitle,
   currentEvent,
@@ -504,8 +505,9 @@ if (!app.requestSingleInstanceLock()) {
           return;
         }
         if (e.type === 'microphone-activity') {
-          detector.observe(e.active === true, Date.now());
-          meetingEnd?.microphone(e.active === true, Date.now());
+          const call = callOnMicrophone(e);
+          detector.observe(call, Date.now());
+          meetingEnd?.microphone(call, Date.now());
           detect();
           return;
         }

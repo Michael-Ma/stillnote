@@ -145,13 +145,13 @@ Choose the microphone and meeting language in **Settings › Recording**. **Auto
 
 A reminder's **Join and take notes** action waits for raw audio capture before opening the call. During another recording, it first stops and saves that note, then starts the next one. Clicking the panel's meeting title only opens the note. The panel's dismissal timer pauses while hovered; no macOS notification permission is required. The separate Home **Start** and **Join & record** buttons open the call and begin recording from the renderer, so they do not provide the reminder's capture-before-join ordering.
 
-Meeting-end detection uses other apps' microphone activity, transcript activity, sustained sound, and the linked calendar event. These are heuristics: an unrelated app, an inaccurate transcript, or a long pause can affect the result.
+Meeting-end detection uses call apps' microphone activity (apps that only record, such as macOS's meeting-audio capture or Granola, do not count), transcript activity, sustained sound, and the linked calendar event. These are heuristics: an unrelated app, an inaccurate transcript, or a long pause can affect the result.
 
 | Signal | When the meeting-end prompt can appear |
 | --- | --- |
-| A call app releases the microphone | It held the microphone for at least one minute during this recording, then both the release and last detected speech are at least 30 seconds old. |
+| A call app releases the microphone | It held the microphone for at least one minute during this recording, then both the release and last detected speech are at least 10 seconds old. |
 | Calendar end | The event has ended and there has been no detected speech for two minutes. |
-| Prolonged quiet | No detected speech for ten minutes, or twenty minutes while another app still holds the microphone. This signal requires earlier speech or sustained sound. |
+| Prolonged quiet | No detected speech for ten minutes, or twenty minutes while a call app still holds the microphone. This signal requires earlier speech or sustained sound. |
 
 The default adds a **60-second countdown** after the prompt. Renewed speech can withdraw it; **Keep recording** resets the answered signals. **Only ask** leaves the decision to you. **Off** disables both end prompts and tail trimming. The floating panel also shows the prompt when Stillnote is in the background.
 

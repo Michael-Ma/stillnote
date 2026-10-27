@@ -600,13 +600,15 @@ test('a meeting that seems over asks, keeps recording on request, then stops and
   await call('setting', 'autoEnhance', false);
   const meeting = await call('create', { title: 'Weekly sync' });
   // The call app is on the microphone when recording starts; Stillnote is in the background.
+  // macOS's capture service (recording meeting audio) and Granola keep using it after the call.
   win.isFocused = () => false;
+  const recorders = ['com.apple.replayd', 'com.granola.app'];
   await until(() => globalThis.__stillnoteMicrophone?.(false));
-  globalThis.__stillnoteMicrophone(true);
+  globalThis.__stillnoteMicrophone([...recorders, 'us.zoom.xos']);
   await call('record', meeting.id);
   await until(() => win.events.some((e) => e.type === 'started'));
   await wait(300);
-  globalThis.__stillnoteMicrophone(false);
+  globalThis.__stillnoteMicrophone(recorders);
   await until(() => prompts().length === 1);
   assert.equal(prompts()[0].reason, 'call');
   assert.ok(prompts()[0].deadline > Date.now());
