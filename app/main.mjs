@@ -475,8 +475,9 @@ if (!app.requestSingleInstanceLock()) {
   // started for something else is told to watch, and one that stopped is replaced, at most every
   // five minutes so a broken helper cannot loop.
   function watchMicrophone({ retry = false } = {}) {
-    // A scripted run without the fake helper (smoke tests) must not prompt about real calls.
-    if (scripted && !testAdapter) return;
+    // A scripted run without the fake helper (smoke tests) must not prompt about real calls,
+    // unless it is there to test them (STILLNOTE_WATCH_REAL_MICROPHONE, docs/TESTING.md).
+    if (scripted && !testAdapter && !process.env.STILLNOTE_WATCH_REAL_MICROPHONE) return;
     // Meeting-end detection uses it too, to see the call app let go of the microphone.
     const settings = store.settings();
     if (

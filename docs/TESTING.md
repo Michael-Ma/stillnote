@@ -62,6 +62,7 @@ Unit/IPC regressions also exercise changed or unreadable Claude auth, rejected c
 | `meeting-end` | Countdown/Keep recording, panel and editor clearing, automatic/manual stop, saved trim metadata, Resume, Only ask and Chinese labels | Compressed fixture timing and synthetic sound; not evidence that real meetings end reliably |
 | `capture` | Start/stop/close, WAV structure, playback and seeking, session metadata, retries, sparse coverage, failed-start recovery | Native capture and speech are substituted |
 | `recovery` | Repair of interrupted canonical WAVs, persisted durations/transcripts, playback after restart | Synthetic interruption, not an OS power-loss durability test |
+| `images` | Pasting and dropping images into My notes, block display, Backspace/Undo, the viewer, refused fake images and dropped PDFs, search, restart, Markdown export and backup | Synthetic paste/drop events; the real clipboard and Finder drags are not driven |
 | `notebook` | Autosave, folders, stars, Markdown export, backup/import/restore, CJK search, Trash, immediate-close persistence, compact chat | Native file pickers are stubbed |
 | `ai` | Failed/empty/incomplete streams, cancellation, prior-text preservation, retries, revisions and citations | No real authentication, plan access, quota or model-quality claim |
 
@@ -81,6 +82,10 @@ JSON backups disclose `audioIncluded: false` and exclude raw audio and local aud
 Backup tests verify that contract. Playback after reopening the same data directory is a
 separate guarantee from transporting audio to another machine; JSON restore does not
 restore playable audio files.
+
+## Real call-end check
+
+The `meeting-end` suite proves the logic with fixtures; this checks the installed app against real CoreAudio. Launch `/Applications/Stillnote.app` (or the packaged copy) through LaunchServices as an isolated scripted instance (`STILLNOTE_DATA_DIR` set to a temporary folder, `STILLNOTE_DISABLE_CLAUDE=1`, `STILLNOTE_MOCK_KEYCHAIN=1`) and add `STILLNOTE_WATCH_REAL_MICROPHONE=1`, which lets a scripted run watch the real microphone; drive it over `--remote-debugging-port`. Start a recording (meeting audio makes macOS's `replayd` hold an input throughout, as in a real call), then hold the microphone from another app for more than a minute, for example `ffmpeg -f avfoundation -i :0 -t 75 -f null -`. About ten seconds after it lets go, the window receives `meeting-end { reason: 'call' }`, and `meeting-end-stopped` follows when the 60-second countdown runs out. Keep the room quiet: speech or sound in meeting audio postpones the prompt, as it should. Close the instance by its PID.
 
 ## Test adapter contract
 
