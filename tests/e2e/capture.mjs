@@ -112,6 +112,10 @@ function verifyWaveArtifacts(h, meeting) {
 
 export async function capture(h) {
   await h.launch();
+  // A new notebook records in Auto; the capture checks below run in one fixed language until the
+  // Auto section switches to it.
+  assert.equal((await h.state()).settings.locale, 'auto');
+  await h.call('setting', 'locale', 'en-US');
   await h.call('setting', 'autoEnhance', false);
   await h.call('setting', 'systemAudio', true);
   const first = await h.create(

@@ -390,7 +390,7 @@ export function RecordingAudio({
   onRestore,
   retrying,
   disabled,
-  locale = 'en-US',
+  locale,
   autoLocales,
 }) {
   const t = useT();

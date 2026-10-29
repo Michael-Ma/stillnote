@@ -76,6 +76,10 @@ async function setup(t, name, sessions, extra = {}) {
   });
   const events = () =>
     readFileSync(join(dir, 'adapter-events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  // A new notebook records in Auto. These tests cover capture plumbing in one fixed language;
+  // the ones about Auto switch to it themselves.
+  assert.equal((await call('state')).settings.locale, 'auto');
+  await call('setting', 'locale', 'en-US');
   return { call, win, events, dir };
 }
 test('main IPC consumes the native contract, bounds chat, and closes after 5 seconds', async (t) => {

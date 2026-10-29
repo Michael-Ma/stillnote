@@ -5,6 +5,7 @@ import {
   arbitrateOffline,
   createLiveArbiter,
   judge,
+  recognitionPlan,
   switchPoints,
 } from '../app/language-arbiter.mjs';
 import { mean, scoreSentences } from '../scripts/language-score.mjs';
@@ -637,4 +638,13 @@ test('flush returns expired partial discards even without an intervening timer t
   assert.equal(pending.size, 1);
   apply(arbiter.flush(16_000));
   assert.equal(pending.size, 0);
+});
+
+test('meetings default to Auto (中文 + English) until a language is chosen', () => {
+  assert.deepEqual(recognitionPlan(), { label: 'auto', locales: ['zh-CN', 'en-US'] });
+  assert.deepEqual(recognitionPlan({ locale: undefined, autoLocales: ['en-US', 'ja-JP'] }), {
+    label: 'auto',
+    locales: ['en-US', 'ja-JP'],
+  });
+  assert.deepEqual(recognitionPlan({ locale: 'zh-CN' }), { label: 'zh-CN', locales: ['zh-CN'] });
 });

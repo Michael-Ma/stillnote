@@ -14,12 +14,15 @@ function spoken(segment) {
   return { ...segment, timestamp: words[0][0], end: Math.max(words[0][0], words.at(-1)[1]) };
 }
 
+// Until a language is chosen, meetings are Auto: Chinese and English, picked sentence by sentence.
+export const defaultLocale = 'auto';
+export const defaultAutoLocales = ['zh-CN', 'en-US'];
+
 // What to transcribe with: a fixed language, or both Auto candidates (primary first).
 export function recognitionPlan(settings = {}) {
-  if (settings.locale !== 'auto')
-    return { label: settings.locale ?? 'en-US', locales: [settings.locale ?? 'en-US'] };
-  const locales = settings.autoLocales ?? ['zh-CN', 'en-US'];
-  return { label: 'auto', locales };
+  const locale = settings.locale ?? defaultLocale;
+  if (locale !== 'auto') return { label: locale, locales: [locale] };
+  return { label: 'auto', locales: settings.autoLocales ?? defaultAutoLocales };
 }
 
 export const defaultWeights = {

@@ -5,6 +5,7 @@ import { join, basename, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startableServices } from './calls.mjs';
 import { withoutImages } from './note-images.mjs';
+import { defaultLocale } from './language-arbiter.mjs';
 
 // Each template states the meeting's purpose, then its sections, as Granola's template guide
 // suggests; enhance.mjs supplies the shared writing rules.
@@ -502,7 +503,7 @@ export class Store {
     return {
       inputDevice: null,
       echoCancellation: 'auto',
-      locale: 'en-US',
+      locale: defaultLocale,
       ...Object.fromEntries(
         this.db
           .prepare('SELECT * FROM settings')

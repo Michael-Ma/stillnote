@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { cleanError, languageName, languageOptions } from '../format.mjs';
+import { defaultAutoLocales, defaultLocale } from '../language-arbiter.mjs';
 import { useT } from '../i18n/react.jsx';
 
 // `message` is the translated sentence for a main process without this operation; any other
@@ -16,9 +17,9 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
   const [download, setDownload] = useState(null);
   const alive = useRef(false);
   const installing = useRef(null);
-  const locale = settings.locale ?? 'en-US';
+  const locale = settings.locale ?? defaultLocale;
   const auto = locale === 'auto';
-  const autoLocales = settings.autoLocales ?? ['zh-CN', 'en-US'];
+  const autoLocales = settings.autoLocales ?? defaultAutoLocales;
   const options = languageOptions(languages, t.locale);
   const installed = (code) => options.some((o) => o.locale === code && o.installed);
   // The languages this choice needs that are supported here but not downloaded yet.

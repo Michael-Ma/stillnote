@@ -1220,7 +1220,7 @@ function App() {
                         onRetry: retryRecording,
                         onRestore: restoreTranscript,
                         retrying: retryingRecording,
-                        locale: data.settings.locale ?? 'en-US',
+                        locale: data.settings.locale,
                         autoLocales: data.settings.autoLocales,
                         disabled: !!data.recording || !!meeting.deletedAt || !!busy,
                       }}

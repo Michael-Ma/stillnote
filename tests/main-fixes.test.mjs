@@ -219,7 +219,7 @@ test('a restore keeps line language, source and calendar link, and repairs odd b
 test('settings validate device, echo cancellation, and widened BCP-47 locales', (t) => {
   const { store } = fixture(t);
   assert.equal(store.settings().echoCancellation, 'auto');
-  assert.equal(store.settings().locale, 'en-US');
+  assert.equal(store.settings().locale, 'auto', 'meetings start in Auto (中文 + English)');
   for (const locale of ['en-US', 'zh-Hant-TW', 'yue-CN', 'en', 'abc-12345678-AB'])
     store.setting('locale', locale);
   for (const locale of ['english', 'en_US', 'en-a', 'EN-us', 'en-US-x-test', null])
