@@ -492,7 +492,12 @@ export function createTestAdapter({ dataDir }) {
                 locale,
                 timestamp: 0,
                 end: 2,
-                text: scenario.transcribeCandidates?.[locale]?.text ?? `Fixture text in ${locale}.`,
+                // A Chinese model writes Han; Latin-only text from it reads as English it heard.
+                text:
+                  scenario.transcribeCandidates?.[locale]?.text ??
+                  (locale.startsWith('zh')
+                    ? `测试文本（${locale}）。`
+                    : `Fixture text in ${locale}.`),
                 confidence: scenario.transcribeCandidates?.[locale]?.confidence ?? (i ? 0.2 : 0.9),
               }))
             : [

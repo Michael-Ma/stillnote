@@ -163,7 +163,7 @@ test('main IPC consumes the native contract, bounds chat, and closes after 5 sec
     assert.deepEqual(session.locales, ['zh-CN', 'en-US']);
     assert.deepEqual(
       auto.transcript.filter((s) => s.recordingId === session.id).map((s) => [s.locale, s.text]),
-      [['zh-CN', 'Fixture text in zh-CN.']],
+      [['zh-CN', '测试文本（zh-CN）。']],
     );
     await call('setting', 'locale', 'en-US');
     const fixed = await call('transcribe-recording', meeting.id, stored.recordings[0].id);

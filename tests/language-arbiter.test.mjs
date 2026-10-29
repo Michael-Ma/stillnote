@@ -150,6 +150,9 @@ test('a Chinese model writing only Latin words is hearing English, however short
   });
   const both = ['zh-CN', 'en-US'];
   assert.equal(judge(group('woris', 'No worries.'), 'zh-CN', both).locale, 'en-US');
+  const sureLatin = group('so like', 'So, like');
+  sureLatin.segments[0].confidence = 0.95;
+  assert.equal(judge(sureLatin, 'zh-CN', both).locale, 'en-US', 'even when the Chinese is surer');
   assert.equal(judge(group('loking', 'looking'), null, both).locale, 'en-US');
   assert.equal(judge(group('好的 OK', 'Ok.'), null, both).locale, 'zh-CN', 'Chinese with a term');
   const sure = group('doing');

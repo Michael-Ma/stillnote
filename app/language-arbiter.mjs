@@ -165,6 +165,11 @@ function profile(segments) {
   return { han, words, mostlyLatin: (words > 0 && han === 0) || (words >= 3 && words > 2 * han) };
 }
 const spokenText = (segments) => segments.some((s) => /[\p{L}\p{N}]/u.test(s.text));
+const latinOnly = (candidate) => {
+  if (!isChinese(candidate.locale)) return false;
+  const { han, words } = profile(candidate.segments);
+  return han === 0 && words > 0;
+};
 
 // Duration-weighted confidence, less what the candidate failed to cover compared with the best
 // candidate, less a penalty when a Chinese model wrote mostly Latin (it was hearing English).
@@ -197,8 +202,12 @@ export function scoreCandidates(group, previous, weights = defaultWeights) {
 // source's previous winner, then the first candidate language.
 export function judge(group, previous, locales = [], weights = defaultWeights) {
   // Punctuation on its own ("。") is no speech to keep.
-  const scored = scoreCandidates(group, previous, weights).filter((c) => spokenText(c.segments));
+  let scored = scoreCandidates(group, previous, weights).filter((c) => spokenText(c.segments));
   if (!scored.length) return null;
+  // Latin words with no Han from the Chinese model are its copy of English: whenever another
+  // model wrote something for the same moment, that version is the one to keep.
+  const heard = scored.filter((c) => !latinOnly(c));
+  if (heard.length) scored = heard;
   if (scored.length === 1) {
     const [alone] = scored;
     // While a non-Chinese model listens too, Latin words only the Chinese model wrote are its
