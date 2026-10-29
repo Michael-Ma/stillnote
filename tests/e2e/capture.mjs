@@ -35,6 +35,45 @@ export const captureScenario = {
         },
       ],
     },
+    // Speakers, no headphones: the microphone also hears what meeting audio says.
+    {
+      mode: 'script',
+      script: [
+        {
+          source: 'microphone',
+          at: 0.3,
+          afterMs: 300,
+          candidates: {
+            'zh-CN': { text: 'We give them six week head start.', confidence: 0.3 },
+            'en-US': {
+              text: 'We give them a 6 week head start on the new release.',
+              confidence: 0.95,
+            },
+          },
+        },
+        {
+          source: 'system',
+          at: 0.4,
+          afterMs: 900,
+          candidates: {
+            'zh-CN': { text: 'We give them six week head start.', confidence: 0.3 },
+            'en-US': {
+              text: 'We give them a 6 week head start on the new release.',
+              confidence: 0.96,
+            },
+          },
+        },
+        {
+          source: 'microphone',
+          at: 4,
+          afterMs: 1300,
+          candidates: {
+            'zh-CN': { text: 'Six week sound right.', confidence: 0.3 },
+            'en-US': { text: 'Six weeks sounds right to me, honestly.', confidence: 0.95 },
+          },
+        },
+      ],
+    },
   ],
 };
 
@@ -385,6 +424,26 @@ export async function capture(h) {
     null,
     'Retry in the same Auto languages needs no language note',
   );
+  // On speakers the microphone's copy of meeting audio's sentence is saved first, then removed
+  // once meeting audio's arrives; your own reply stays.
+  const echo = await h.create('E2E speaker echo');
+  await start(h);
+  await h.waitForState(
+    (s, id) =>
+      s.meetings
+        .find((m) => m.id === id)
+        .transcript.some((segment) => segment.text.startsWith('Six weeks sounds')),
+    echo.id,
+  );
+  const echoSaved = await stop(h, echo.id, 1);
+  assert.deepEqual(
+    echoSaved.transcript.map((segment) => [segment.source, segment.text]),
+    [
+      ['system', 'We give them a 6 week head start on the new release.'],
+      ['microphone', 'Six weeks sounds right to me, honestly.'],
+    ],
+  );
+  assert.equal(echoSaved.recordings[0].diagnostics.echoesRemoved, 1);
   await h.call('setting', 'locale', 'en-US');
   h.assertNoRendererErrors();
 }

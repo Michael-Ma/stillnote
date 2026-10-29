@@ -145,6 +145,7 @@ const suites = {
       'multiple sessions',
       'unavailable system audio preserves microphone track',
       'screen-recording denial links to Settings',
+      'speaker echo left out of the transcript',
     ],
   },
   ai: {

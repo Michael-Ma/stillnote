@@ -70,6 +70,7 @@ import {
 import { ClaudeCode } from './providers/claude-code.mjs';
 import { enhanceInstructions, enhanceRequest } from './enhance.mjs';
 import { arbitrateOffline, createLiveArbiter, recognitionPlan } from './language-arbiter.mjs';
+import { createEchoFilter, suppressEcho } from './echo.mjs';
 import { meetingEndDetector, sustainedSound, trailingCut } from './meeting-end.mjs';
 import { resolveLanguage, translator } from './i18n/index.mjs';
 import { helperMessage } from './helper-messages.mjs';
@@ -151,6 +152,10 @@ if (!app.requestSingleInstanceLock()) {
     // Auto language: decides between the candidate languages while a recording runs.
     languageArbiter,
     languageTick,
+    // Speaker echo: keeps the microphone's echoes of meeting audio out of the transcript, and
+    // counts them.
+    echoFilter,
+    echoes = 0,
     // Set once Stillnote is quitting, so nothing starts the helper again.
     quitting = false,
     // Meeting detection: the helper process told to watch the microphone (and when), and the
@@ -235,6 +240,7 @@ if (!app.requestSingleInstanceLock()) {
     languageArbiter = undefined;
     clearInterval(languageTick);
     languageTick = undefined;
+    echoFilter = undefined;
     clearEndPrompt();
     clearInterval(endTimer);
     endTimer = undefined;
@@ -265,12 +271,31 @@ if (!app.requestSingleInstanceLock()) {
         timestamp: Math.max(0, Number(e.timestamp) || 0) + recording.baseDuration,
       };
       if (e.type === 'segment') {
-        store.append(recording.id, segment);
+        appendSegment(segment, e);
         pendingPartials.delete(e.segmentId);
         meetingUpdates.schedule(recording.id);
       } else pendingPartials.set(e.segmentId, segment);
       emit({ ...e, recordingId: recording.recordingId, recording });
     }
+  }
+  // A final row joins the transcript unless it is the microphone's echo of meeting audio, and a
+  // meeting audio row can show microphone rows already saved to have been echoes. The filter reads
+  // the helper's own times (`event`); the saved row also counts earlier recordings' audio. Its
+  // provisional text still goes when the final event reaches the renderer. A filter that fails
+  // keeps the row.
+  function appendSegment(segment, event) {
+    let verdict;
+    try {
+      verdict = echoFilter?.add(event);
+    } catch (error) {
+      console.error('Could not check the row for speaker echo:', error.message);
+    }
+    const { keep, remove } = verdict ?? { keep: true, remove: [] };
+    if (keep) store.append(recording.id, segment);
+    const gone = keep ? remove : [...remove, event];
+    echoes += gone.length;
+    const ids = gone.map((row) => row.segmentId).filter(Boolean);
+    if (ids.length) store.removeSegments(recording.id, recording.recordingId, ids);
   }
   function finishCapture(status, event = {}) {
     if (!recording) return null;
@@ -280,7 +305,11 @@ if (!app.requestSingleInstanceLock()) {
     try {
       if (languageArbiter) applyLanguage(languageArbiter.flush(Date.now()));
       for (const segment of pendingPartials.values())
-        if (segment.text.trim()) store.append(active.id, segment);
+        if (segment.text.trim())
+          appendSegment(segment, {
+            ...segment,
+            timestamp: segment.timestamp - active.baseDuration,
+          });
       const dir = recordingDirectory(app.getPath('userData'), active.id, active.recordingId);
       if (status === 'interrupted') repairRecordingTracks(dir);
       // Without the helper's final word, the track offsets it reported while recording.
@@ -305,6 +334,7 @@ if (!app.requestSingleInstanceLock()) {
       const diagnostics = {
         ...nativeDiagnostics,
         ...(removed ? { trailingSilenceRemoved: removed } : {}),
+        ...(echoes ? { echoesRemoved: echoes } : {}),
         ...assessCoverage(
           segments,
           Math.max(seconds, trackDuration),
@@ -647,7 +677,7 @@ if (!app.requestSingleInstanceLock()) {
           };
           const key = e.segmentId || e.source || e.speaker;
           if (e.type === 'segment') {
-            store.append(recording.id, segment);
+            appendSegment(segment, e);
             pendingPartials.delete(key);
             meetingUpdates.schedule(recording.id);
           } else pendingPartials.set(key, segment);
@@ -1272,6 +1302,8 @@ if (!app.requestSingleInstanceLock()) {
           },
         };
         pendingPartials.clear();
+        echoFilter = createEchoFilter();
+        echoes = 0;
         meetingEnd = meetingEndDetector(testAdapter?.meetingEnd);
         endSounds = {};
         speechEnd = 0;
@@ -1462,11 +1494,14 @@ if (!app.requestSingleInstanceLock()) {
         });
         const candidates = result.segments;
         // Auto: every track came back once per language; keep the better one per sentence.
-        const segments =
+        const decided =
           plan.locales.length > 1 ? arbitrateOffline(candidates, plan.locales) : candidates;
+        // Without headphones the microphone also heard meeting audio: those rows are left out.
+        const { segments, removed } = suppressEcho(decided);
         const diagnostics = {
           ...assessCoverage(segments, session.duration, session.diagnostics?.sourceStats),
           languageFallbacks: result.fallbacks,
+          ...(removed.length ? { echoesRemoved: removed.length } : {}),
         };
         const updated = store.replaceRecordingTranscript(
           meetingId,

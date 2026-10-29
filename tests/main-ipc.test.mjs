@@ -565,6 +565,54 @@ test('successful retry keeps explicit language fallback diagnostics', async (t) 
   assert.deepEqual(updated.recordings[0].diagnostics.languageFallbacks, [fallback]);
 });
 
+test('the microphone’s echo of meeting audio stays out of the transcript, live and on Retry', async (t) => {
+  const row = (source, segmentId, text, timestamp) => ({
+    source,
+    segmentId,
+    speaker: source === 'microphone' ? 'You' : 'Meeting audio',
+    text,
+    timestamp,
+    end: timestamp + 4,
+  });
+  const offer = 'And we might give them early access to the new dashboard in their region.';
+  const head = 'We give them a 6 week head start on the new release.';
+  const own = 'Six weeks sounds right to me, honestly.';
+  const rows = [
+    // The microphone finalizes first: saved, then removed once meeting audio says the same.
+    row('microphone', 'mic-1', offer, 0.3),
+    row('system', 'sys-1', offer, 0.6),
+    // Meeting audio first: the echo never joins the transcript.
+    row('system', 'sys-2', head, 6.7),
+    row('microphone', 'mic-2', head, 6.6),
+    row('microphone', 'mic-3', own, 11),
+  ];
+  const { call } = await setup(
+    t,
+    'echo',
+    [{ mode: 'empty', events: rows.map((r) => ({ type: 'segment', ...r })) }],
+    { transcribeSegments: rows },
+  );
+  await call('setting', 'autoEnhance', false);
+  const note = await call('create', { title: 'Speakers, no headphones' });
+  await call('record', note.id);
+  await waitFor(async () => !(await call('state')).starting);
+  await call('stop');
+  await waitFor(async () => !(await call('state')).recording);
+  const lines = (m) => m.transcript.map((s) => [s.source, s.text]);
+  const expected = [
+    ['system', offer],
+    ['system', head],
+    ['microphone', own],
+  ];
+  const saved = (await call('state')).meetings.find((m) => m.id === note.id);
+  assert.deepEqual(lines(saved), expected);
+  assert.equal(saved.recordings[0].diagnostics.echoesRemoved, 2);
+  assert.notEqual(saved.recordings[0].edited, true, 'removing an echo is not a hand correction');
+  const retried = await call('transcribe-recording', note.id, saved.recordings[0].id);
+  assert.deepEqual(lines(retried), expected);
+  assert.equal(retried.recordings[0].diagnostics.echoesRemoved, 2);
+});
+
 test('quitting while A saves cancels the pending B handoff', async (t) => {
   const { call, events } = await setup(t, 'quit-handoff', undefined, {
     stopDelay: 50,

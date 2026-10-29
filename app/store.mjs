@@ -320,6 +320,19 @@ export class Store {
     m.updatedAt = new Date().toISOString();
     return this.write(m);
   }
+  // Live rows the recording found it should not have kept (the microphone's echo of meeting
+  // audio). Not a correction by hand, so the recording can still be retried without asking.
+  removeSegments(id, recordingId, segmentIds) {
+    const m = this.get(id);
+    const gone = new Set(segmentIds);
+    const kept = m.transcript.filter(
+      (s) => !(s.recordingId === recordingId && gone.has(s.segmentId)),
+    );
+    if (kept.length === m.transcript.length) return m;
+    m.transcript = kept;
+    m.updatedAt = new Date().toISOString();
+    return this.write(m);
+  }
   beginRecording(id, input = {}) {
     const m = this.get(id);
     m.recordings.push({

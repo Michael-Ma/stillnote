@@ -483,8 +483,10 @@ export function createTestAdapter({ dataDir }) {
         const locales = command.locales ?? [command.locale ?? 'en-US'];
         // Several locales (Auto): one candidate per locale; scenario.transcribeCandidates gives
         // each locale's text and confidence, otherwise the first locale is the confident one.
+        // scenario.transcribeSegments replaces them all.
         const segments =
-          locales.length > 1
+          scenario.transcribeSegments ??
+          (locales.length > 1
             ? locales.map((locale, i) => ({
                 source: 'microphone',
                 speaker: 'You',
@@ -507,7 +509,7 @@ export function createTestAdapter({ dataDir }) {
                   text: 'Recovered complete fixture sentence from saved audio.',
                   timestamp: 0,
                 },
-              ];
+              ]);
         emit({
           type: 'retranscription-completed',
           recordingId: command.recordingId,
