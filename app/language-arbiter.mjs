@@ -157,12 +157,14 @@ export function groupBySlices(pieces, cuts) {
 }
 
 // A Han character is about one spoken word, so Chinese text is compared with English by words.
+// Latin words with no Han at all are English heard by the Chinese model, however few ("woris").
 function profile(segments) {
   const text = segments.map((s) => s.text).join(' ');
   const han = count(text, /\p{Script=Han}/gu),
     words = count(text, /[A-Za-z]+/g);
-  return { han, words, mostlyLatin: words >= 3 && words > 2 * han };
+  return { han, words, mostlyLatin: (words > 0 && han === 0) || (words >= 3 && words > 2 * han) };
 }
+const spokenText = (segments) => segments.some((s) => /[\p{L}\p{N}]/u.test(s.text));
 
 // Duration-weighted confidence, less what the candidate failed to cover compared with the best
 // candidate, less a penalty when a Chinese model wrote mostly Latin (it was hearing English).
@@ -194,9 +196,14 @@ export function scoreCandidates(group, previous, weights = defaultWeights) {
 // Picks one candidate for a group. Near-ties prefer the script the audio evidently was, then the
 // source's previous winner, then the first candidate language.
 export function judge(group, previous, locales = [], weights = defaultWeights) {
-  const scored = scoreCandidates(group, previous, weights);
+  // Punctuation on its own ("。") is no speech to keep.
+  const scored = scoreCandidates(group, previous, weights).filter((c) => spokenText(c.segments));
+  if (!scored.length) return null;
   if (scored.length === 1) {
     const [alone] = scored;
+    // While a non-Chinese model listens too, Latin words only the Chinese model wrote are its
+    // copy of English that model placed just beside them ("doing" after "how are you doing?").
+    if (alone.mismatch && locales.some((locale) => !isChinese(locale))) return null;
     return alone.segments.some((s) => s.confidence === undefined) ||
       alone.confidence >= weights.minimumAlone
       ? alone
@@ -304,6 +311,8 @@ export function arbitrateOffline(segments, locales = [], weights = defaultWeight
     const own = segments
       .filter((s) => (s.source ?? 'microphone') === source)
       .map((s) => spoken({ ...s, end: Math.max(s.end ?? s.timestamp, s.timestamp) }));
+    // A language that could not run for this source (a fallback) is not listening alongside.
+    const running = locales.filter((locale) => own.some((s) => s.locale === locale));
     const cuts = boundaries(own, weights.merge);
     const pieces = alignToBoundaries(own, cuts, weights.merge).map((s) => ({
       ...s,
@@ -311,7 +320,7 @@ export function arbitrateOffline(segments, locales = [], weights = defaultWeight
     }));
     const winners = [];
     for (const group of groupBySlices(pieces, cuts)) {
-      const winner = judge(group, previous, locales, weights);
+      const winner = judge(group, previous, running, weights);
       if (!winner) continue;
       previous = winner.locale;
       winners.push(...winner.segments.sort((a, b) => a.start - b.start));

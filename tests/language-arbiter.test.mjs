@@ -137,6 +137,44 @@ test('speech only one language heard is kept only when it is not a guess', () =>
   assert.equal(judge(group(undefined), null).locale, 'en-US', 'unknown confidence is kept');
 });
 
+// Real English meetings in Auto: short phrases the Chinese model wrote as Latin nonsense won
+// over English ("woris" for "No worries"), and lone "。" rows appeared.
+test('a Chinese model writing only Latin words is hearing English, however short', () => {
+  const group = (zh, en) => ({
+    start: 0,
+    end: 1,
+    segments: [
+      { locale: 'zh-CN', text: zh, start: 0, end: 1, confidence: 0.6 },
+      ...(en ? [{ locale: 'en-US', text: en, start: 0, end: 1, confidence: 0.5 }] : []),
+    ],
+  });
+  const both = ['zh-CN', 'en-US'];
+  assert.equal(judge(group('woris', 'No worries.'), 'zh-CN', both).locale, 'en-US');
+  assert.equal(judge(group('loking', 'looking'), null, both).locale, 'en-US');
+  assert.equal(judge(group('好的 OK', 'Ok.'), null, both).locale, 'zh-CN', 'Chinese with a term');
+  const sure = group('doing');
+  sure.segments[0].confidence = 0.9;
+  assert.equal(judge(sure, 'en-US', both), null, 'beside English, a lone Latin copy is dropped');
+  assert.equal(judge(sure, 'zh-CN', ['zh-CN']).locale, 'zh-CN', 'kept when only Chinese runs');
+  // Offline, a language that produced nothing for a source (it could not run) is not a rival.
+  const [kept] = arbitrateOffline(
+    [{ locale: 'zh-CN', segmentId: 'a', text: 'okay', timestamp: 0, end: 1, confidence: 0.9 }],
+    both,
+  );
+  assert.equal(kept?.text, 'okay');
+});
+
+test('punctuation on its own never becomes a row', () => {
+  const lone = {
+    start: 0,
+    end: 0.2,
+    segments: [{ locale: 'zh-CN', text: '。', start: 0, end: 0.2, confidence: 0.9 }],
+  };
+  assert.equal(judge(lone, null), null);
+  lone.segments.push({ locale: 'en-US', text: 'Yes.', start: 0, end: 0.2, confidence: 0.4 });
+  assert.equal(judge(lone, 'zh-CN').locale, 'en-US');
+});
+
 test('near-ties keep the previous language, and old helpers without timing still work', () => {
   const tie = {
     start: 0,

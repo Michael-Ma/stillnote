@@ -24,12 +24,16 @@ export const mean = (values) => values.reduce((a, b) => a + b, 0) / Math.max(1, 
 
 // Each recognized word counts toward the reference sentence nearest its own timing, so a model
 // that returns several sentences as one phrase is still scored sentence by sentence.
+// Punctuation is no speech: a model's leading "," can span the pause before it and would count as
+// seconds of its language inside the previous sentence.
 // `windows`: [{ lang: 'zh' | 'en', text, start, end }]; `languages`: { zh: 'zh-CN', en: 'en-US' }.
 export function scoreSentences(windows, segments, languages) {
   const assigned = windows.map(() => []);
   const words = segments.flatMap((s) =>
     Array.isArray(s.runs) && s.runs.length
-      ? s.runs.map((run) => ({ text: run[3], timestamp: run[0], end: run[1], locale: s.locale }))
+      ? s.runs
+          .filter((run) => /[\p{L}\p{N}]/u.test(run[3]))
+          .map((run) => ({ text: run[3], timestamp: run[0], end: run[1], locale: s.locale }))
       : [{ ...s, end: s.end ?? s.timestamp + 1 }],
   );
   for (const word of words) {
