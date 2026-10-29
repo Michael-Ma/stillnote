@@ -89,7 +89,9 @@ export function currentEvent(events, now, lead = 5 * 60_000) {
 // com.granola.app.helper). macOS's screen and audio capture service holds an input for as long as
 // anything records meeting audio, Stillnote included; other note-takers hold the microphone while
 // they take notes, Granola until it decides the call is over. Counting them would hide both a
-// call's start and its end.
+// call's start and its end. Dictation listens for as long as someone speaks, often longer than a
+// call takes to settle: macOS's own (its speech service, corespeechd), push-to-talk apps that
+// default to the fn key (Wispr Flow, Typeless), and input methods with voice typing.
 export const nonCallApps = [
   'com.apple.replayd',
   'local.stillnote.app',
@@ -98,6 +100,18 @@ export const nonCallApps = [
   'com.goodsnooze.MacWhisper',
   'com.superduper.superwhisper',
   'com.apple.VoiceMemos',
+  'com.apple.CoreSpeech',
+  'com.electron.wispr-flow',
+  'now.typeless.desktop',
+  'com.prakashjoshipax.VoiceInk',
+  'com.electron.aqua-voice',
+  'app.spokenly',
+  'com.seewillow.WillowMac',
+  'com.zeitalabs.jottleai',
+  'com.pais.handy',
+  'com.gizmolabs.openwhispr',
+  'com.tencent.inputmethod.wetype',
+  'com.sogou.inputmethod.sogou',
 ];
 const nonCall = (app) =>
   nonCallApps.some((id) => {
@@ -112,8 +126,9 @@ export const callOnMicrophone = ({ active, apps }) =>
   Array.isArray(apps) ? apps.some((app) => !nonCall(app)) : active === true;
 
 // Meeting detection. Another app's microphone use counts as a meeting once it has lasted `settle`
-// ms without a break (dictation or a quick voice memo does not, nor do two of them a minute
-// apart); a pause shorter than `gap` (muting, switching microphones) continues the same session.
+// ms without a break (a quick voice memo does not, nor do two of them a minute apart; dictation
+// apps never count, see nonCallApps); a pause shorter than `gap` (muting, switching microphones)
+// continues the same session.
 // A session prompts at most once, and never when Stillnote recorded during it. `session` numbers
 // sessions, so a prompt acted on later can tell whether its call is still the one under way.
 export function meetingDetector({ settle = 5000, gap = 90_000 } = {}) {

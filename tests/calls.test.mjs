@@ -148,6 +148,20 @@ test('a call is on the microphone only when a call app uses it, not another reco
   );
   assert.equal(callOnMicrophone({ active: true, apps: ['com.granola.appx'] }), true);
   assert.equal(callOnMicrophone({ active: false, apps: [] }), false);
+  // Dictation held on the fn key, however long someone speaks: macOS's own (its speech service),
+  // push-to-talk apps and their helpers, and an input method's voice typing.
+  for (const app of [
+    'com.apple.CoreSpeech',
+    'com.electron.wispr-flow.helper',
+    'now.typeless.desktop',
+    'com.tencent.inputmethod.wetype',
+  ])
+    assert.equal(callOnMicrophone({ active: true, apps: [app] }), false, app);
+  // Dictating during a call does not hide the call.
+  assert.equal(
+    callOnMicrophone({ active: true, apps: ['com.apple.CoreSpeech', 'us.zoom.xos'] }),
+    true,
+  );
   // macOS 13 names no apps: anything else on the microphone counts.
   assert.equal(callOnMicrophone({ active: true }), true);
   assert.equal(callOnMicrophone({ active: false }), false);
