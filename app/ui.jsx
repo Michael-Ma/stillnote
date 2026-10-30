@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowLeft, AudioLines, Check, Home, Leaf, Plus, Square, X } from 'lucide-react';
 import { IconButton, Rich } from './components/Content.jsx';
@@ -308,7 +308,8 @@ function App() {
     const t = setTimeout(() => setDetected(null), 10 * 60_000);
     return () => clearTimeout(t);
   }, [detected]);
-  useEffect(() => {
+  // In the update itself: an error set as a dialog closes must not show in the dialog too.
+  useLayoutEffect(() => {
     if (modal) dialogRef.current?.showModal();
     else dialogRef.current?.close();
   }, [modal?.kind]);

@@ -96,11 +96,35 @@ export async function notebook(h) {
   assert.equal((await h.state()).meetings.length, 1, 'Reimport must not duplicate meetings');
   const invalidPath = join(h.output, 'invalid-backup.json');
   writeFileSync(invalidPath, JSON.stringify({ version: 1, meetings: [{ id: 'bad', title: 55 }] }));
+  // The dialog closes in the same update that shows the error, so it is never on screen twice.
+  await page.evaluate(() => {
+    window.__alerts = { most: 0 };
+    window.__alerts.watch = new MutationObserver(() => {
+      const shown = [...document.querySelectorAll('[role="alert"]')].filter((alert) =>
+        alert.checkVisibility(),
+      );
+      window.__alerts.most = Math.max(window.__alerts.most, shown.length);
+    });
+    window.__alerts.watch.observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+    });
+  });
   await importFrom(invalidPath);
   await page
     .getByRole('alert')
     .filter({ hasText: 'Could not import invalid-backup.json' })
     .waitFor();
+  assert.equal(
+    await page.evaluate(() => {
+      window.__alerts.watch.disconnect();
+      return window.__alerts.most;
+    }),
+    1,
+    'The import error must not show in the closing dialog as well as the banner',
+  );
   assert.equal(
     (await h.state()).meetings.length,
     1,
@@ -278,6 +302,19 @@ export async function notebook(h) {
   await page.keyboard.press('Escape');
   await page.getByText('E2E linked standup', { exact: true }).first().waitFor();
   await h.screenshot('calendar-link-home');
+  // Settings shows the link and manages it, one dialog replacing the other.
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Recording', exact: true }).click();
+  const links = page.locator('.setting-row').filter({ hasText: 'Calendar links' });
+  await links.getByText('1 calendar read directly', { exact: false }).waitFor();
+  await links.getByRole('button', { name: 'Manage', exact: true }).click();
+  await page.getByRole('heading', { name: 'Add a calendar link', exact: true }).waitFor();
+  await page
+    .getByRole('list', { name: 'Added calendars', exact: true })
+    .getByText('calendar.google.com', { exact: true })
+    .waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: 'Home', exact: true }).click();
   await h.open(title);
   await h.desktop.evaluate(({ BrowserWindow }) =>
