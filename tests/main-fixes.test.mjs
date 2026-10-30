@@ -126,7 +126,7 @@ test('history is bounded after expanding historical citations', () => {
   );
   assert.equal(chatHistory([{ role: 'user', content: 'x'.repeat(60001) }]).length, 0);
 });
-test('oversized transcript import leaves no meeting; successful import is atomic', (t) => {
+test('oversized file import leaves no meeting; successful import is atomic', (t) => {
   const { store } = fixture(t);
   assert.throws(() => store.importFile('huge.TXT', 'x'.repeat(2000001)), /2,000,000-character/);
   assert.equal(store.all().length, 0);
@@ -139,7 +139,9 @@ test('oversized transcript import leaves no meeting; successful import is atomic
   store.index = original;
   const { meeting } = store.importFile('Valid.MD', 'evidence');
   assert.equal(meeting.title, 'Valid');
-  assert.equal(meeting.transcript[0].text, 'evidence');
+  // Markdown that does not read like a transcript is notes (app/import-formats.mjs).
+  assert.equal(meeting.notes, 'evidence');
+  assert.deepEqual(meeting.transcript, []);
   assert.equal(store.search('evidence')[0].id, meeting.id);
 });
 test('backup imports use case-insensitive extensions and portable settings only', (t) => {

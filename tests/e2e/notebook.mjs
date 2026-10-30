@@ -81,15 +81,26 @@ export async function notebook(h) {
   assert.equal(backup.audioIncluded, false);
   assert.equal(backup.meetings.length, 1);
   assert.ok(!/access_token|refresh_token|id_token/.test(JSON.stringify(backup)));
-  await h.openDialog(backupPath);
-  await page.getByRole('button', { name: 'Import transcript or backup', exact: true }).click();
+  const importFrom = async (path) => {
+    await h.openDialog(path);
+    await page.getByRole('button', { name: 'Import notes or transcripts', exact: true }).click();
+    await page.getByRole('heading', { name: 'Import', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Choose files or a folder…', exact: true }).click();
+  };
+  await page.getByRole('button', { name: 'Import notes or transcripts', exact: true }).click();
+  await page.getByRole('heading', { name: 'Import', exact: true }).waitFor();
+  await h.screenshot('import-dialog');
+  await page.keyboard.press('Escape');
+  await importFrom(backupPath);
   await page.getByRole('status').filter({ hasText: 'Imported 0 new meetings' }).waitFor();
   assert.equal((await h.state()).meetings.length, 1, 'Reimport must not duplicate meetings');
   const invalidPath = join(h.output, 'invalid-backup.json');
   writeFileSync(invalidPath, JSON.stringify({ version: 1, meetings: [{ id: 'bad', title: 55 }] }));
-  await h.openDialog(invalidPath);
-  await page.getByRole('button', { name: 'Import transcript or backup', exact: true }).click();
-  await page.getByRole('alert').waitFor();
+  await importFrom(invalidPath);
+  await page
+    .getByRole('alert')
+    .filter({ hasText: 'Could not import invalid-backup.json' })
+    .waitFor();
   assert.equal(
     (await h.state()).meetings.length,
     1,
@@ -98,12 +109,22 @@ export async function notebook(h) {
   await page.getByRole('button', { name: 'Dismiss error', exact: true }).click();
 
   const importPath = join(h.output, 'Imported E2E transcript.txt');
-  writeFileSync(importPath, 'Sam: The import round trip preserves this unique sentence.');
-  await h.openDialog(importPath);
-  await page.getByRole('button', { name: 'Import transcript or backup', exact: true }).click();
+  writeFileSync(
+    importPath,
+    '[00:00:04] Sam: The import round trip preserves this unique sentence.\n[00:00:09] Alex: Agreed.\n',
+  );
+  await importFrom(importPath);
   await page
-    .getByText('Sam: The import round trip preserves this unique sentence.', { exact: true })
+    .getByText('The import round trip preserves this unique sentence.', { exact: true })
     .waitFor();
+  const imported = (await h.state()).meetings.find((m) => m.title === 'Imported E2E transcript');
+  assert.deepEqual(
+    imported.transcript.map((s) => [s.speaker, s.timestamp]),
+    [
+      ['Sam', 4],
+      ['Alex', 9],
+    ],
+  );
   assert.equal((await h.state()).meetings.length, 2);
   await h.open(title);
   await page.getByRole('button', { name: 'Move to Trash', exact: true }).click();

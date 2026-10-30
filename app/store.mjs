@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { startableServices } from './calls.mjs';
 import { withoutImages } from './note-images.mjs';
 import { defaultLocale } from './language-arbiter.mjs';
+import { parseNoteFile } from './import-formats.mjs';
 
 // Each template states the meeting's purpose, then its sections, as Granola's template guide
 // suggests; enhance.mjs supplies the shared writing rules.
@@ -291,11 +292,77 @@ export class Store {
   importFile(path, raw) {
     checkImportSize(path, typeof raw === 'string' ? raw.length : Infinity);
     if (extname(path).toLowerCase() === '.json') return { restored: this.restore(JSON.parse(raw)) };
-    if (raw.length > 2_000_000)
-      throw new Error('Transcript exceeds the 2,000,000-character import limit.');
-    const title = text(basename(path, extname(path)), 300);
-    const segment = { id: randomUUID(), text: raw, speaker: 'Imported transcript', timestamp: 0 };
-    return { meeting: this.create({ title }, [segment]) };
+    const { meetings } = this.importNotes([parseNoteFile(basename(path), raw)]);
+    return { meeting: meetings[0] };
+  }
+  // Notes parsed from other tools (app/import-formats.mjs): all checked, then all written in one
+  // transaction. One whose sourceKey (where it came from) is already here is left out.
+  importNotes(list) {
+    const now = new Date().toISOString();
+    const known = new Set(
+      this.all(true)
+        .map((m) => m.sourceKey)
+        .filter(Boolean),
+    );
+    const folders = new Set(this.folders().map((f) => f.id));
+    let duplicates = 0;
+    const meetings = [];
+    for (const n of list) {
+      const sourceKey = n.sourceKey === undefined ? null : text(n.sourceKey, 300);
+      if (sourceKey && known.has(sourceKey)) {
+        duplicates++;
+        continue;
+      }
+      if (sourceKey) known.add(sourceKey);
+      const transcript = (n.transcript ?? []).map((s) => {
+        if (!Number.isFinite(s.timestamp) || s.timestamp < 0) throw new Error('Invalid timestamp.');
+        return {
+          id: randomUUID(),
+          text: text(s.text),
+          speaker: text(s.speaker ?? 'Speaker').slice(0, 100),
+          timestamp: s.timestamp,
+        };
+      });
+      if (transcript.reduce((sum, s) => sum + s.text.length, 0) > 2_000_000)
+        throw new Error('Transcript exceeds the 2,000,000-character import limit.');
+      const summary = text(n.summary ?? '');
+      meetings.push({
+        id: randomUUID(),
+        title:
+          text(n.title ?? '')
+            .trim()
+            .slice(0, 300) || 'Untitled meeting',
+        createdAt: Number.isFinite(Date.parse(n.createdAt))
+          ? new Date(n.createdAt).toISOString()
+          : now,
+        updatedAt: now,
+        notes: text(n.notes ?? ''),
+        summary,
+        transcript,
+        folderId: folders.has(n.folderId) ? n.folderId : null,
+        templateId: 'general',
+        participants: text(n.participants ?? '').slice(0, 2000),
+        starred: false,
+        deletedAt: null,
+        duration: 0,
+        versions: [],
+        recordings: [],
+        ...(summary ? { summarySource: 'edited', summaryAt: now } : {}),
+        ...(sourceKey ? { sourceKey } : {}),
+      });
+    }
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const m of meetings) {
+        this.db.prepare('INSERT INTO meetings VALUES(?,?)').run(m.id, JSON.stringify(m));
+        this.index(m);
+      }
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+    return { meetings, duplicates };
   }
   append(id, segment) {
     const m = this.get(id);
@@ -679,6 +746,8 @@ export class Store {
         folderId: knownFolders.has(m.folderId) ? m.folderId : null,
         // The calendar occurrence keeps a restored Mac from creating a second note for it.
         ...(typeof m.eventKey === 'string' ? { eventKey: text(m.eventKey, 1100) } : {}),
+        // Where an imported note came from, so importing it again does not copy it.
+        ...(typeof m.sourceKey === 'string' ? { sourceKey: text(m.sourceKey, 300) } : {}),
         versions: m.versions.slice(0, 20).map(({ text, at }) => ({ text, at })),
         summarySource: m.summarySource === 'edited' ? 'edited' : 'ai',
         summaryAt: Number.isFinite(Date.parse(m.summaryAt)) ? m.summaryAt : m.updatedAt,

@@ -246,7 +246,7 @@ export function HomeFeed({
                 {t('Quick note')}
               </button>
               <button className="text-button" onClick={importFile}>
-                {t('Import a transcript')}
+                {t('Import notes or transcripts')}
               </button>
             </div>
           )}

@@ -4,6 +4,7 @@ import { ArrowLeft, AudioLines, Check, Home, Leaf, Plus, Square, X } from 'lucid
 import { IconButton, Rich } from './components/Content.jsx';
 import { HomeFeed } from './components/HomeFeed.jsx';
 import { StartMeeting } from './components/StartMeeting.jsx';
+import { ImportDialog } from './components/ImportDialog.jsx';
 import { Sidebar } from './components/Sidebar.jsx';
 import { NoteToolbar, NoteView } from './components/NoteView.jsx';
 import { EnhancePill, RecordPill } from './components/Dock.jsx';
@@ -657,24 +658,42 @@ function App() {
       });
     });
   }
-  async function importFile() {
+  // Files from the import dialog (app/components/ImportDialog.jsx). One new note opens; otherwise
+  // a notice counts what came in, and files that could not be read are listed with the reason.
+  async function importFiles() {
     await guard(async () => {
       await flushAll();
       const r = await call('import');
       if (!r) return;
-      await load();
-      if (r.meeting) {
-        setSelected(r.meeting.id);
+      setModal(null);
+      const d = await load();
+      const one =
+        r.meetings.length === 1 && !r.backups && d.meetings.find((m) => m.id === r.meetings[0]);
+      if (one) {
+        setSelected(one.id);
         setTab('notes');
-        setSheet('transcript');
+        setSheet(one.transcript.length ? 'transcript' : null);
         setView('all');
-      } else
-        setNotice(
-          t.count(
-            r.restored,
-            'Imported {n} new meeting. Existing meetings were preserved.',
-            'Imported {n} new meetings. Existing meetings were preserved.',
-          ),
+      } else {
+        const parts = [
+          r.meetings.length &&
+            t.count(r.meetings.length, 'Imported {n} note.', 'Imported {n} notes.'),
+          r.backups &&
+            t.count(
+              r.restored,
+              'Imported {n} new meeting. Existing meetings were preserved.',
+              'Imported {n} new meetings. Existing meetings were preserved.',
+            ),
+          r.duplicates && t.count(r.duplicates, '{n} was already here.', '{n} were already here.'),
+        ].filter(Boolean);
+        if (parts.length) setNotice(parts.join(' '));
+        else if (!r.skipped.length) setNotice(t('No notes or transcripts were found there.'));
+      }
+      if (r.skipped.length)
+        setError(
+          t('Could not import {files}', {
+            files: r.skipped.map(({ name, reason }) => `${name} (${t(reason)})`).join('; '),
+          }),
         );
     });
   }
@@ -961,7 +980,7 @@ function App() {
           newFolder={() => setModal({ kind: 'folder', name: '' })}
           renameFolder={(f) => setModal({ kind: 'folder', id: f.id, name: f.name })}
           deleteFolder={deleteFolder}
-          importFile={importFile}
+          importFile={() => setModal({ kind: 'import' })}
           openSettings={settings}
           ai={ai}
           icon={stillnoteIcon}
@@ -1164,7 +1183,7 @@ function App() {
                   callPending={callPending}
                   onEmptyTrash={() => deleteForever(data.meetings.filter((m) => m.deletedAt))}
                   openNote={openNote}
-                  importFile={importFile}
+                  importFile={() => setModal({ kind: 'import' })}
                   setQuery={setQuery}
                 />
               )}
@@ -1364,6 +1383,7 @@ function App() {
                   {
                     settings: t('Settings'),
                     folder: modal?.id ? t('Rename folder') : t('New folder'),
+                    import: t('Import'),
                     transcript: t('Add a transcript'),
                     segment: t('Edit transcript'),
                     history: t('Previous summaries'),
@@ -1408,6 +1428,8 @@ function App() {
                 onReveal={() => guard(() => call('reveal'))}
                 onTemplate={() => setModal({ kind: 'template', name: '', prompt: '' })}
               />
+            ) : modal?.kind === 'import' ? (
+              <ImportDialog onChoose={importFiles} />
             ) : modal?.kind === 'folder' ? (
               <form
                 onSubmit={(e) => {

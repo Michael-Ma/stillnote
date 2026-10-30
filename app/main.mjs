@@ -11,19 +11,21 @@ import {
   protocol,
   screen,
 } from 'electron';
-import { resolve, join, dirname } from 'node:path';
+import { resolve, join, dirname, basename, extname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   readFileSync,
   writeFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
+  readdirSync,
   renameSync,
   rmSync,
   statSync,
 } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import {
@@ -38,6 +40,7 @@ import {
   validateSetting,
 } from './store.mjs';
 import { ChatGPT } from './auth.mjs';
+import { collectImportFiles, noteExtensions, parseNoteFile } from './import-formats.mjs';
 import {
   dueReminders,
   eventKey,
@@ -1702,20 +1705,41 @@ if (!app.requestSingleInstanceLock()) {
       });
       register('import', async () => {
         const r = await dialog.showOpenDialog(win, {
-          properties: ['openFile'],
+          properties: ['openFile', 'openDirectory', 'multiSelections'],
           filters: [
-            { name: 'Transcript or backup', extensions: ['txt', 'md', 'vtt', 'srt', 'json'] },
+            { name: 'Notes, transcripts or a backup', extensions: [...noteExtensions, 'json'] },
           ],
         });
-        if (r.canceled) return null;
-        const [path] = r.filePaths;
-        // An oversized file is refused before it is read into memory.
-        checkImportSize(path, statSync(path).size);
-        const raw = readFileSync(path, 'utf8'),
-          result = store.importFile(path, raw);
-        if ('restored' in result) restoreImages(JSON.parse(raw).images);
-        return result;
+        return r.canceled ? null : importFiles(r.filePaths);
       });
+      // Each file on its own: one that cannot be read is listed with the reason and the rest still
+      // come in. A file's content says where it came from, so importing it again adds nothing.
+      function importFiles(paths) {
+        const notes = [],
+          skipped = [];
+        let restored = 0,
+          backups = 0;
+        for (const path of collectImportFiles(paths, { lstatSync, readdirSync })) {
+          try {
+            // An oversized file is refused before it is read into memory.
+            checkImportSize(path, statSync(path).size);
+            const raw = readFileSync(path, 'utf8');
+            if (extname(path).toLowerCase() === '.json') {
+              restored += store.importFile(path, raw).restored;
+              backups++;
+              restoreImages(JSON.parse(raw).images);
+            } else
+              notes.push({
+                ...parseNoteFile(basename(path), raw),
+                sourceKey: 'file:' + createHash('sha256').update(raw).digest('hex').slice(0, 32),
+              });
+          } catch (error) {
+            skipped.push({ name: basename(path), reason: error.message });
+          }
+        }
+        const { meetings, duplicates } = store.importNotes(notes);
+        return { meetings: meetings.map((m) => m.id), restored, backups, duplicates, skipped };
+      }
       // A backup's images go back beside their notes: only images of notes in this notebook, of
       // the kinds Stillnote saves, and never over a file already there.
       function restoreImages(list) {

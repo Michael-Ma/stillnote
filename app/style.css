@@ -2338,6 +2338,54 @@ dialog::backdrop {
 .modal-footer .danger {
   margin-right: auto;
 }
+.import-dialog {
+  display: grid;
+  gap: 14px;
+}
+.import-kinds {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.import-kinds li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.import-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.import-kinds li > span:last-child {
+  display: grid;
+  gap: 2px;
+  line-height: 1.4;
+}
+.import-kinds strong {
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+.import-kinds small,
+.import-hint {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.import-hint {
+  margin: 0;
+}
+.import-dialog .primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .confirm-body {
   display: grid;
   gap: 16px;

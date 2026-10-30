@@ -1,0 +1,9 @@
+Speaker 1  0:00
+Okay, let's get started with the roadmap.
+
+Michael Ma  0:15
+I think we should ship search first.
+It unblocks the sales team.
+
+Speaker 1  1:02
+Agreed.

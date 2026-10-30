@@ -158,7 +158,7 @@ export function Sidebar({
       )}
       <div className="sidebar-bottom">
         <div className="sidebar-tools">
-          <IconButton label={t('Import transcript or backup')} onClick={importFile}>
+          <IconButton label={t('Import notes or transcripts')} onClick={importFile}>
             <Upload size={16} />
           </IconButton>
           <IconButton label={t('Trash')} onClick={() => navigate('trash')}>

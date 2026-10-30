@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
-import { existsSync, mkdtempSync, writeFileSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -794,6 +803,52 @@ test('images pasted into notes are checked, kept in the meeting’s folder, serv
   assert.ok(!existsSync(join(dir, 'recordings', meeting.id, 'images', 'f'.repeat(32) + '.png')));
   assert.ok(!existsSync(join(dir, 'recordings', meeting.id, 'escape.png')));
   assert.ok(!existsSync(join(dir, 'recordings', '00000000-0000-4000-8000-000000000000')));
+});
+test('import takes several files or a folder, lists unreadable files, and adds nothing twice', async (t) => {
+  const { call, dir } = await setup(t, 'import-files');
+  const fixtures = new URL('./fixtures/import/', import.meta.url);
+  const folder = join(dir, 'Notion export');
+  mkdirSync(join(folder, 'Weekly product sync', 'nested'), { recursive: true });
+  mkdirSync(join(folder, '.hidden'));
+  const notion = 'Weekly product sync 0123456789abcdef0123456789abcdef.md';
+  copyFileSync(new URL(notion, fixtures), join(folder, notion));
+  copyFileSync(
+    new URL('zoom.vtt', fixtures),
+    join(folder, 'Weekly product sync', 'nested', 'call.vtt'),
+  );
+  writeFileSync(join(folder, '.hidden', 'secret.md'), '# Not this');
+  writeFileSync(join(folder, 'image.png'), 'not a note');
+  writeFileSync(join(folder, 'empty.txt'), '  ');
+  writeFileSync(join(folder, 'settings.json'), '{}');
+  const otter = join(dir, 'otter.txt');
+  copyFileSync(new URL('otter.txt', fixtures), otter);
+  const openDialog = dialog.showOpenDialog;
+  t.after(() => (dialog.showOpenDialog = openDialog));
+  let options;
+  dialog.showOpenDialog = async (_win, o) => {
+    options = o;
+    return { canceled: false, filePaths: [folder, otter] };
+  };
+  const first = await call('import');
+  assert.ok(options.properties.includes('multiSelections'));
+  assert.ok(options.properties.includes('openDirectory'));
+  assert.equal(first.meetings.length, 3);
+  assert.equal(first.restored, 0);
+  assert.equal(first.duplicates, 0);
+  assert.deepEqual(first.skipped, [{ name: 'empty.txt', reason: 'The file is empty.' }]);
+  const { meetings } = await call('state');
+  const titles = meetings.map((m) => m.title).sort();
+  assert.deepEqual(titles, ['Weekly product sync', 'call', 'otter']);
+  const sync = meetings.find((m) => m.title === 'Weekly product sync');
+  assert.equal(sync.participants, 'Alice Chen, Bob Park');
+  assert.match(sync.sourceKey, /^file:[0-9a-f]{32}$/);
+  // The same files again: nothing new.
+  const second = await call('import');
+  assert.deepEqual(second.meetings, []);
+  assert.equal(second.duplicates, 3);
+  assert.equal((await call('state')).meetings.length, 3);
+  dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
+  assert.equal(await call('import'), null);
 });
 test('the renderer can call exactly the operations main registers', () => {
   const read = (file) => readFileSync(new URL(`../app/${file}`, import.meta.url), 'utf8');

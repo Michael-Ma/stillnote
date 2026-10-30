@@ -1,17 +1,34 @@
 // 简体中文. Keys are the English strings used in the code; see app/i18n/index.mjs.
 // Missing entries fall back to English; tests/i18n.test.mjs lists any that are missing.
 export default {
+  'A notebook backup (.json) from Settings → Notebook. Notes already here are kept.':
+    '在“设置 → 笔记本”中生成的备份（.json）。已有的笔记会保留。',
   'Cannot trim an unsupported recording track.': '无法裁剪不支持的录音格式。',
   'Audio is recording while transcription prepares.': '音频正在录制，转录正在准备中。',
+  'Captions from Zoom, Teams or Google Meet (.vtt), subtitles (.srt), and text exports from Otter or Fireflies (.txt), split by speaker and time.':
+    'Zoom、Teams 或 Google Meet 的字幕（.vtt）、字幕文件（.srt），以及 Otter 或 Fireflies 导出的文本（.txt），会按说话人和时间拆分。',
+  'Choose at most 2,000 files at a time.': '一次最多选择 2,000 个文件。',
+  'Choose files or a folder…': '选择文件或文件夹…',
+  'Could not import {files}': '无法导入：{files}',
   'Delete folder': '删除文件夹',
   'Deleted “{name}”.': '已删除“{name}”。',
   'Deleted “{name}”. Its {n} note is in My notes.':
     '已删除“{name}”，其中 {n} 条笔记已移回“我的笔记”。',
   'Deleted “{name}”. Its {n} notes are in My notes.':
     '已删除“{name}”，其中 {n} 条笔记已移回“我的笔记”。',
+  'File exceeds the 2,000,000-character import limit.': '文件超过 2,000,000 字符的导入上限。',
   'Folder already exists.': '文件夹已存在。',
+  Import: '导入',
+  'Import notes or transcripts': '导入笔记或转写',
+  'Imported {n} note.': '已导入 {n} 条笔记。',
+  'Imported {n} notes.': '已导入 {n} 条笔记。',
   'Invalid folder.': '文件夹无效。',
+  'Markdown or text from Notion, Obsidian, Granola and other apps (.md, .txt). For a Notion export, unzip it and choose the folder.':
+    'Notion、Obsidian、Granola 等应用导出的 Markdown 或文本（.md、.txt）。Notion 导出的压缩包请先解压，再选择整个文件夹。',
+  'Meeting transcripts': '会议转写',
   'More actions for {name}': '“{name}”的更多操作',
+  'No captions were found in this file.': '这个文件里没有找到字幕。',
+  'No notes or transcripts were found there.': '那里没有找到笔记或转写。',
   'Notebook and folder chats, and existing backups, may still contain quoted content.':
     '笔记本和文件夹聊天，以及现有备份，仍可能保留引用的内容。',
 
@@ -21,6 +38,8 @@ export default {
   Rename: '重命名',
   'Rename folder': '重命名文件夹',
   'Rename…': '重命名…',
+  'Stillnote backup': 'Stillnote 备份',
+  'The file is empty.': '文件是空的。',
   'The meeting window could not open.': '无法打开会议窗口。',
   'Audio capture did not start. Join the call when ready.':
     '音频采集未启动。准备好后请手动加入通话。',
@@ -41,6 +60,7 @@ export default {
   'No one has spoken for a while.': '已经很久没有人说话了。',
   'Keep recording': '继续录音',
   'Stop now': '现在停止',
+  'Unsupported file type.': '不支持的文件类型。',
   'When a meeting seems over': '会议好像结束时',
   'The call app stops using the microphone, the calendar meeting has ended, or no one has spoken for a long time. Long silence at the end of a recording is removed.':
     '会议 App 不再使用麦克风、日历上的会议已结束，或长时间没有人说话。录音结尾的长静音会被去掉。',
@@ -250,8 +270,6 @@ export default {
   'Hide Stillnote': '隐藏 Stillnote',
   'Hide transcript {shortcut}': '隐藏转写 {shortcut}',
   Home: '首页',
-  'Import a transcript': '导入转写',
-  'Import transcript or backup': '导入转写或备份',
   'Imported transcript': '导入的转写',
   'Imported {n} new meeting. Existing meetings were preserved.':
     '已导入 {n} 个新会议，现有会议都已保留。',
@@ -391,6 +409,10 @@ export default {
     '废纸篓里的这条笔记会连同转写和对话从 Stillnote 中删除。',
   'All {n} notes in Trash are deleted from Stillnote, with their transcripts and chats.':
     '废纸篓里的 {n} 条笔记会连同转写和对话从 Stillnote 中删除。',
+  'You can choose several files or a folder. Importing the same file again adds nothing.':
+    '可以一次选择多个文件或一个文件夹。同一个文件再次导入不会重复添加。',
+  '{n} was already here.': '{n} 条之前已导入。',
+  '{n} were already here.': '{n} 条之前已导入。',
   '{size} of saved audio moves to the macOS Trash.': '{size} 录音会移到 macOS 的废纸篓。',
   'Deleted {n} note forever.': '已永久删除 {n} 条笔记。',
   'Deleted {n} notes forever.': '已永久删除 {n} 条笔记。',
