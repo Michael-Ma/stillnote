@@ -1,5 +1,14 @@
 import React from 'react';
-import { CalendarDays, FileText, LoaderCircle, Plus, RefreshCw, Star, Video } from 'lucide-react';
+import {
+  CalendarCog,
+  CalendarDays,
+  FileText,
+  LoaderCircle,
+  Plus,
+  RefreshCw,
+  Star,
+  Video,
+} from 'lucide-react';
 import { dateFormat, dayLabel } from '../format.mjs';
 import { eventKey, eventNote } from '../reminders.mjs';
 import { callServices, meetingLink } from '../calls.mjs';
@@ -48,7 +57,7 @@ export function HomeFeed({
   title,
   calendarBusy,
   calendar,
-  calendarLinks,
+  manageCalendars,
   newNote,
   startMeeting,
   joinMeeting,
@@ -81,16 +90,21 @@ export function HomeFeed({
         <section className="upcoming">
           <div className="section-heading">
             <h1>{t('Coming up')}</h1>
-            {connected && (
-              <IconButton
-                label={t('Refresh calendar')}
-                className="small"
-                onClick={() => calendar()}
-                disabled={calendarBusy}
-              >
-                <RefreshCw size={14} className={calendarBusy ? 'spin' : ''} />
+            <div className="section-actions">
+              <IconButton label={t('Manage calendars')} className="small" onClick={manageCalendars}>
+                <CalendarCog size={14} />
               </IconButton>
-            )}
+              {connected && (
+                <IconButton
+                  label={t('Refresh calendar')}
+                  className="small"
+                  onClick={() => calendar()}
+                  disabled={calendarBusy}
+                >
+                  <RefreshCw size={14} className={calendarBusy ? 'spin' : ''} />
+                </IconButton>
+              )}
+            </div>
           </div>
           <div className="upcoming-card">
             {days.length ? (
@@ -158,7 +172,7 @@ export function HomeFeed({
                   <strong>{t('Your meetings, all in one place')}</strong>
                   <p>{t('Connect the calendars on your Mac, or add a calendar link.')}</p>
                 </div>
-                <button className="text-button" onClick={calendarLinks}>
+                <button className="text-button" onClick={manageCalendars}>
                   {t('Use a link')}
                 </button>
                 <button

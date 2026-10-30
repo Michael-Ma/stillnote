@@ -126,6 +126,14 @@ const suites = {
     scenario: {
       connected: false,
       calendarFeed: calendarFeed('E2E linked standup'),
+      calendar: [
+        { id: 'mac-work', title: 'E2E Mac planning', startIn: 7_200_000, calendarId: 'work' },
+        { id: 'mac-home', title: 'E2E Mac dentist', startIn: 10_800_000, calendarId: 'home' },
+      ],
+      calendars: [
+        { id: 'work', name: 'Work', account: 'Google', color: '#3366cc' },
+        { id: 'home', name: 'Family', account: 'iCloud', color: '#cc3366' },
+      ],
       sources: {
         granola: {
           list_meetings: {
@@ -166,6 +174,7 @@ const suites = {
       'Markdown export',
       'import from Granola',
       'calendar link without the Mac calendar',
+      'calendars managed in Settings: connect, turn one off, disconnect',
       'backup',
       'idempotent restore',
       'invalid import atomicity',

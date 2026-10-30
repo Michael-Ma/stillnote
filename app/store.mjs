@@ -887,6 +887,13 @@ export function validateSetting(key, value) {
     ].includes(key)
   ) {
     if (typeof value !== 'boolean') throw new Error('Invalid preference.');
+  } else if (key === 'hiddenCalendars') {
+    if (
+      !Array.isArray(value) ||
+      value.length > 500 ||
+      !value.every((id) => typeof id === 'string' && id && id.length <= 300)
+    )
+      throw new Error('Invalid calendar list.');
   } else if (['templates', 'recipes'].includes(key)) {
     if (!Array.isArray(value)) throw new Error('Invalid templates or recipes.');
     for (const item of value) {

@@ -285,36 +285,60 @@ export async function notebook(h) {
   const fromNotion = (await h.state()).meetings.find((m) => m.title === 'E2E Notion weekly sync');
   assert.equal(fromNotion.notes, 'Decisions from Notion');
 
-  // A calendar link: meetings on Home without the Mac's Calendar app.
+  // Every calendar is managed in Settings, and Home's button goes straight there.
   await page.getByRole('button', { name: 'Home', exact: true }).click();
-  await page.getByRole('button', { name: 'Use a link', exact: true }).click();
-  await page.getByRole('heading', { name: 'Add a calendar link', exact: true }).waitFor();
-  await page
+  const closeSettings = async () => {
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  };
+  const manage = async () => {
+    await page.getByRole('button', { name: 'Manage calendars', exact: true }).click();
+    await calendars.getByRole('heading', { name: 'Calendars', exact: true }).waitFor();
+  };
+  const calendars = page.locator('.calendar-settings');
+  const coming = page.locator('.upcoming');
+  await manage();
+  await calendars.getByRole('button', { name: 'Connect', exact: true }).click();
+  const family = calendars.getByRole('switch', { name: 'Family', exact: true });
+  await family.waitFor();
+  assert.equal(await family.isChecked(), true);
+
+  // A link sits beside them, without the Mac's Calendar app.
+  await calendars
     .getByLabel('Calendar link', { exact: true })
     .fill('https://calendar.google.com/calendar/ical/e2e/private-e2e/basic.ics');
-  await h.screenshot('calendar-link');
-  await page.getByRole('button', { name: 'Add calendar', exact: true }).click();
-  await page
-    .getByRole('list', { name: 'Added calendars', exact: true })
-    .getByText('calendar.google.com', { exact: true })
-    .waitFor();
+  await calendars.getByRole('button', { name: 'Add calendar', exact: true }).click();
+  const links = calendars.getByRole('list', { name: 'Added calendars', exact: true });
+  await links.getByText('calendar.google.com', { exact: true }).waitFor();
   assert.ok(!JSON.stringify(await h.state()).includes('private-e2e'));
-  await page.keyboard.press('Escape');
-  await page.getByText('E2E linked standup', { exact: true }).first().waitFor();
+  await h.screenshot('calendar-settings');
+
+  // One calendar off: its meetings leave Home and the others stay.
+  await family.click();
+  await h.waitForState((s) => s.settings.hiddenCalendars?.includes('home'));
+  await closeSettings();
+  await coming.getByText('E2E Mac planning', { exact: true }).first().waitFor();
+  await coming.getByText('E2E linked standup', { exact: true }).first().waitFor();
+  assert.equal(await coming.getByText('E2E Mac dentist', { exact: true }).count(), 0);
   await h.screenshot('calendar-link-home');
-  // Settings shows the link and manages it, one dialog replacing the other.
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('button', { name: 'Recording', exact: true }).click();
-  const links = page.locator('.setting-row').filter({ hasText: 'Calendar links' });
-  await links.getByText('1 calendar read directly', { exact: false }).waitFor();
-  await links.getByRole('button', { name: 'Manage', exact: true }).click();
-  await page.getByRole('heading', { name: 'Add a calendar link', exact: true }).waitFor();
-  await page
-    .getByRole('list', { name: 'Added calendars', exact: true })
-    .getByText('calendar.google.com', { exact: true })
-    .waitFor();
-  await page.keyboard.press('Escape');
-  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+
+  // Disconnect: the Mac's meetings go, the link stays, and connecting brings them back.
+  await manage();
+  await calendars.getByRole('button', { name: 'Disconnect', exact: true }).click();
+  await calendars.getByRole('button', { name: 'Connect', exact: true }).waitFor();
+  assert.equal((await h.state()).settings.calendarConnected, false);
+  await closeSettings();
+  await coming.getByText('E2E Mac planning', { exact: true }).waitFor({ state: 'detached' });
+  await coming.getByText('E2E linked standup', { exact: true }).first().waitFor();
+  await manage();
+  await calendars.getByRole('button', { name: 'Connect', exact: true }).click();
+  await family.waitFor();
+  assert.equal(await family.isChecked(), false, 'a calendar turned off stays off');
+  await calendars.getByRole('button', { name: 'Remove calendar.google.com', exact: true }).click();
+  await links.waitFor({ state: 'detached' });
+  await closeSettings();
+  await coming.getByText('E2E linked standup', { exact: true }).waitFor({ state: 'detached' });
+  await coming.getByText('E2E Mac planning', { exact: true }).first().waitFor();
   await page.getByRole('button', { name: 'Home', exact: true }).click();
   await h.open(title);
   await h.desktop.evaluate(({ BrowserWindow }) =>

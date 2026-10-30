@@ -42,7 +42,7 @@ import {
 } from './store.mjs';
 import { ChatGPT } from './auth.mjs';
 import { collectImportFiles, noteExtensions, parseNoteFile } from './import-formats.mjs';
-import { CalendarFeeds, mergeCalendars, recognizeFeed } from './calendar-feed.mjs';
+import { CalendarFeeds, mergeCalendars, recognizeFeed, visibleEvents } from './calendar-feed.mjs';
 import { McpConnections } from './mcp-auth.mjs';
 import { sourceImport } from './source-import.mjs';
 import {
@@ -155,6 +155,7 @@ if (!app.requestSingleInstanceLock()) {
     // What Home and reminders use: the Mac's calendars and any calendar links, merged.
     calendarEvents = [],
     macEvents = [],
+    macCalendars = [],
     feedEvents = [],
     calendarFeeds,
     powerId,
@@ -243,6 +244,7 @@ if (!app.requestSingleInstanceLock()) {
     starting,
     calendar: calendarEvents,
     calendarFeeds: calendarFeeds?.list() ?? [],
+    macCalendars,
     dataDir: app.getPath('userData'),
     systemLanguages: systemLanguages(),
   });
@@ -763,10 +765,15 @@ if (!app.requestSingleInstanceLock()) {
         if (e.type === 'stopped')
           completed = finishCapture(e.status === 'failed' ? 'failed' : 'completed', e);
         if (e.type === 'calendar') {
-          macEvents = e.events;
-          calendarEvents = mergeCalendars(macEvents, feedEvents);
-          meetingEnd?.calendar(recordingEventEnd());
-          if (!store.settings().calendarConnected) store.setting('calendarConnected', true);
+          // Only asking connects. A refresh that was on its way when the calendars were
+          // disconnected is dropped, or it would connect them again.
+          if (calendarWait?.explicit && !store.settings().calendarConnected)
+            store.setting('calendarConnected', true);
+          if (store.settings().calendarConnected) {
+            macEvents = e.events;
+            macCalendars = e.calendars ?? [];
+          }
+          rebuildCalendar();
           calendarWait?.resolve(calendarEvents);
           calendarWait = undefined;
         }
@@ -774,7 +781,8 @@ if (!app.requestSingleInstanceLock()) {
           // Without calendar access, week-old events must not keep sending reminders.
           if (e.op === 'calendar') {
             macEvents = [];
-            calendarEvents = mergeCalendars(macEvents, feedEvents);
+            macCalendars = [];
+            rebuildCalendar();
           }
           if (!e.op || e.op === 'calendar') {
             calendarWait?.reject(new Error(e.message));
@@ -794,7 +802,17 @@ if (!app.requestSingleInstanceLock()) {
             finishCapture('startfailed', e);
         }
         if (!muted)
-          emit({ ...e, ...(e.type === 'calendar' ? { events: calendarEvents } : {}), recording });
+          emit({
+            ...e,
+            ...(e.type === 'calendar'
+              ? {
+                  events: calendarEvents,
+                  calendars: macCalendars,
+                  connected: !!store.settings().calendarConnected,
+                }
+              : {}),
+            recording,
+          });
         if (
           completed &&
           e.status !== 'failed' &&
@@ -868,7 +886,8 @@ if (!app.requestSingleInstanceLock()) {
     return child;
   }
   const send = (obj) => helper().stdin.write(JSON.stringify(obj) + '\n');
-  function loadCalendar({ quiet = false } = {}) {
+  // `explicit`: the person asked to connect the Mac's calendars.
+  function loadCalendar({ quiet = false, explicit = false } = {}) {
     if (calendarWait) return Promise.reject(new Error('Calendar is already loading.'));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -877,6 +896,7 @@ if (!app.requestSingleInstanceLock()) {
       }, 60000);
       calendarWait = {
         quiet,
+        explicit,
         resolve: (r) => {
           clearTimeout(timer);
           resolve(r);
@@ -889,12 +909,28 @@ if (!app.requestSingleInstanceLock()) {
       send({ op: 'calendar' });
     });
   }
-  // The calendar links' meetings beside the Mac's; a link that fails keeps its last meetings.
+  // What Home, reminders and detection use: the Mac's calendars still turned on, and the links.
+  function rebuildCalendar() {
+    calendarEvents = mergeCalendars(
+      visibleEvents(macEvents, store.settings().hiddenCalendars),
+      feedEvents,
+    );
+    meetingEnd?.calendar(recordingEventEnd());
+    return calendarEvents;
+  }
+  const announceCalendar = () =>
+    emit({
+      type: 'calendar-feeds',
+      events: calendarEvents,
+      feeds: calendarFeeds.list(),
+      calendars: macCalendars,
+      connected: !!store.settings().calendarConnected,
+    });
+  // A link that fails keeps its last meetings.
   async function refreshFeeds() {
     feedEvents = await calendarFeeds.events();
-    calendarEvents = mergeCalendars(macEvents, feedEvents);
-    meetingEnd?.calendar(recordingEventEnd());
-    emit({ type: 'calendar-feeds', events: calendarEvents, feeds: calendarFeeds.list() });
+    rebuildCalendar();
+    announceCalendar();
     return calendarEvents;
   }
   function register(name, fn) {
@@ -1261,6 +1297,10 @@ if (!app.requestSingleInstanceLock()) {
         // A prompt shown under the previous choice is asked again under the new one.
         if (key === 'meetingEnd') clearEndPrompt();
         if (key === 'meetingDetection' && !value) panel.hide((shown) => shown.kind === 'detected');
+        if (key === 'hiddenCalendars') {
+          rebuildCalendar();
+          announceCalendar();
+        }
         return settings;
       });
       register('transcript', (id, segment) => store.append(id, segment));
@@ -1617,11 +1657,30 @@ if (!app.requestSingleInstanceLock()) {
         emit({ type: 'meeting', meeting: m });
         return m;
       });
-      // Someone using only calendar links is never asked for access to the Mac's calendars.
+      // The Mac's calendars are read only once someone connects them: never for someone using only
+      // calendar links, and never again after Disconnect.
       register('calendar', async ({ mac = false } = {}) => {
-        const useMac = mac || store.settings().calendarConnected || !calendarFeeds.list().length;
-        await Promise.all([useMac ? loadCalendar() : null, refreshFeeds()]);
+        const useMac = mac || store.settings().calendarConnected;
+        await Promise.all([useMac ? loadCalendar({ explicit: mac }) : null, refreshFeeds()]);
         return calendarEvents;
+      });
+      // Stops reading the Mac's calendars. macOS keeps Stillnote's permission, which only the
+      // person can take back, in System Settings; notes made from these meetings stay.
+      register('calendar-mac', async (action) => {
+        if (action === 'disconnect') {
+          store.setting('calendarConnected', false);
+          macEvents = [];
+          macCalendars = [];
+          rebuildCalendar();
+          announceCalendar();
+          return null;
+        }
+        // Accounts are the Mac's to add: Stillnote reads what is there.
+        if (action === 'open-accounts')
+          return openExternal(
+            'x-apple.systempreferences:com.apple.Internet-Accounts-Settings.extension',
+          );
+        throw new Error('Unknown calendar action.');
       });
       // Calendar links: main alone holds them. The renderer sees hosts, and clipboard text only
       // ever comes back as "there is a calendar link from this host".

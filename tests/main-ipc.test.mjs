@@ -271,7 +271,7 @@ test('calls open only fixed or calendar links; reminders join and detection prom
   assert.equal((await call('start-call', 'zoom')).callService, 'zoom');
   assert.deepEqual(opened(), ['https://zoom.us/start/videomeeting']);
 
-  const [design, desk] = await call('calendar');
+  const [design, desk] = await call('calendar', { mac: true });
   await assert.rejects(call('join-call', 'unknown@2026-10-25'), /no longer in your calendar/);
   await assert.rejects(call('join-call', `${desk.id}@${desk.start}`), /no Google Meet/);
   assert.equal(await call('join-call', `${design.id}@${design.start}`), 'meet');
@@ -370,7 +370,7 @@ test('one note per calendar event, and a reminder during a recording switches to
     const state = await call('state');
     return state.recording?.id === current.id && !state.starting;
   });
-  await call('calendar');
+  await call('calendar', { mac: true });
   await until(() => globalThis.__stillnoteReminders.length === 1);
   const [reminder] = globalThis.__stillnoteReminders;
   assert.match(reminder.detail, / · Saves “Weekly sync” first$/);
@@ -533,7 +533,7 @@ test('a reminder never opens the call when its new capture fails', async (t) => 
       },
     ],
   });
-  await call('calendar');
+  await call('calendar', { mac: true });
   await waitFor(() => globalThis.__stillnoteReminders.length === 1);
   globalThis.__stillnoteReminders[0].open();
   await waitFor(() => win.events.some((e) => e.type === 'error'));
@@ -638,7 +638,7 @@ test('quitting while A saves cancels the pending B handoff', async (t) => {
   const note = await call('create', { title: 'Current call' });
   await call('record', note.id);
   await waitFor(async () => !(await call('state')).starting);
-  await call('calendar');
+  await call('calendar', { mac: true });
   await waitFor(() => globalThis.__stillnoteReminders.length === 1);
   globalThis.__stillnoteReminders[0].open();
   app.emit('before-quit', { preventDefault() {} });
@@ -944,6 +944,62 @@ test('calendar links stay in main: added, merged into the calendar, never asking
   await assert.rejects(call('calendar-feeds', 'open', 'https://evil.example'), /Unknown calendar/);
   await assert.rejects(call('calendar-feeds', 'explode'), /Unknown calendar action/);
 });
+test('the Mac’s calendars: connected only on request, each can be off, and Disconnect holds', async (t) => {
+  const { call, events } = await setup(t, 'calendar-settings', undefined, {
+    calendar: [
+      { id: 'planning', title: 'Planning', startIn: 7_200_000, calendarId: 'work' },
+      { id: 'dentist', title: 'Dentist', startIn: 10_800_000, calendarId: 'family' },
+    ],
+    calendars: [
+      { id: 'work', name: 'Work', account: 'Google', color: '#3366cc' },
+      { id: 'family', name: 'Family', account: 'iCloud', color: '#cc3366' },
+      { id: 'quiet', name: 'Nothing this week', account: 'iCloud', color: '' },
+    ],
+    calendarDelay: 60,
+  });
+  const titles = async () => (await call('state')).calendar.map((e) => e.title);
+  const asked = () => events().filter((e) => e.type === 'native-command' && e.op === 'calendar');
+  // Nothing is read until someone connects.
+  assert.deepEqual(await call('calendar'), []);
+  assert.equal(asked().length, 0);
+  assert.equal((await call('state')).settings.calendarConnected, undefined);
+  await call('calendar', { mac: true });
+  let state = await call('state');
+  assert.equal(state.settings.calendarConnected, true);
+  assert.deepEqual(await titles(), ['Planning', 'Dentist']);
+  assert.deepEqual(
+    state.macCalendars.map((c) => c.name),
+    ['Work', 'Family', 'Nothing this week'],
+  );
+  // One calendar off: only its meetings go.
+  await call('setting', 'hiddenCalendars', ['family']);
+  assert.deepEqual(await titles(), ['Planning']);
+  // A refresh on its way during Disconnect does not connect the calendars again.
+  const refresh = call('calendar');
+  await call('calendar-mac', 'disconnect');
+  await refresh;
+  state = await call('state');
+  assert.equal(state.settings.calendarConnected, false);
+  assert.deepEqual(state.calendar, []);
+  assert.deepEqual(state.macCalendars, []);
+  const before = asked().length;
+  assert.deepEqual(await call('calendar'), []);
+  assert.equal(asked().length, before, 'disconnected calendars are not read');
+  // Connecting again brings them back, and a calendar turned off stays off.
+  await call('calendar', { mac: true });
+  assert.deepEqual(await titles(), ['Planning']);
+  await call('setting', 'hiddenCalendars', []);
+  assert.deepEqual(await titles(), ['Planning', 'Dentist']);
+  await call('calendar-mac', 'open-accounts');
+  assert.ok(
+    events().some(
+      (e) =>
+        e.type === 'open-external' && /^x-apple\.systempreferences:.*Internet-Accounts/.test(e.url),
+    ),
+  );
+  await assert.rejects(call('calendar-mac', 'explode'), /Unknown calendar action/);
+  await assert.rejects(call('setting', 'hiddenCalendars', 'all'), /Invalid calendar list/);
+});
 test('the renderer can call exactly the operations main registers', () => {
   const read = (file) => readFileSync(new URL(`../app/${file}`, import.meta.url), 'utf8');
   const registered = [...read('main.mjs').matchAll(/register\(\s*'([\w-]+)'/g)].map((m) => m[1]);
@@ -977,7 +1033,7 @@ test('the reminder panel starts a Zoom call with the notes for a meeting without
   });
   const { until, opened, recordingTitle } = panelHelpers(call, events);
   await call('setting', 'autoEnhance', false);
-  await call('calendar');
+  await call('calendar', { mac: true });
   await until(() => globalThis.__stillnoteReminders.length === 1);
   const [room] = globalThis.__stillnoteReminders;
   assert.equal(room.color, '#ff2968', 'the calendar’s color');
@@ -1017,7 +1073,7 @@ test('the reminder panel can take notes without joining the call', async (t) => 
   });
   const { until, opened, recordingTitle } = panelHelpers(call, events);
   await call('setting', 'autoEnhance', false);
-  await call('calendar');
+  await call('calendar', { mac: true });
   await until(() => globalThis.__stillnoteReminders.length === 1);
   const [reminder] = globalThis.__stillnoteReminders;
   assert.equal(reminder.act('notes'), true);

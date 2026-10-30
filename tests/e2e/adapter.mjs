@@ -593,20 +593,27 @@ export function createTestAdapter({ dataDir }) {
           emit({ type: 'language-installed', locale: command.locale, installed });
         }
       }
-      if (command.op === 'calendar')
-        emit({
-          type: 'calendar',
-          // Fixture events start relative to the request, so reminders fall due during the test;
-          // an absolute `start` keeps README screenshots on round times.
-          events: (scenario.calendar ?? []).map(({ startIn, start, minutes = 30, ...event }) => {
-            const at = start ? Date.parse(start) : Date.now() + startIn;
-            return {
-              ...event,
-              start: new Date(at).toISOString(),
-              end: new Date(at + minutes * 60_000).toISOString(),
-            };
-          }),
-        });
+      if (command.op === 'calendar') {
+        const answer = () =>
+          emit({
+            type: 'calendar',
+            // Each calendar the scenario's events name, and any it lists with nothing this week.
+            calendars: scenario.calendars ?? [],
+            // Fixture events start relative to the request, so reminders fall due during the test;
+            // an absolute `start` keeps README screenshots on round times.
+            events: (scenario.calendar ?? []).map(({ startIn, start, minutes = 30, ...event }) => {
+              const at = start ? Date.parse(start) : Date.now() + startIn;
+              return {
+                ...event,
+                start: new Date(at).toISOString(),
+                end: new Date(at + minutes * 60_000).toISOString(),
+              };
+            }),
+          });
+        // A slow answer lets a test act while the refresh is on its way.
+        if (scenario.calendarDelay) setTimeout(answer, scenario.calendarDelay);
+        else answer();
+      }
     }
     return child;
   }

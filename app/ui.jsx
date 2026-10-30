@@ -5,7 +5,6 @@ import { IconButton, Rich } from './components/Content.jsx';
 import { HomeFeed } from './components/HomeFeed.jsx';
 import { StartMeeting } from './components/StartMeeting.jsx';
 import { ImportDialog } from './components/ImportDialog.jsx';
-import { CalendarLinks } from './components/CalendarLinks.jsx';
 import { Sidebar } from './components/Sidebar.jsx';
 import { NoteToolbar, NoteView } from './components/NoteView.jsx';
 import { EnhancePill, RecordPill } from './components/Dock.jsx';
@@ -179,16 +178,31 @@ function App() {
         setData((d) =>
           d ? { ...d, meetings: d.meetings.filter((m) => !e.ids.includes(m.id)) } : d,
         );
-      // A calendar that loads is connected; Settings words the reminder switch from that.
+      // Settings words the reminder switch from whether a calendar is connected.
       if (e.type === 'calendar')
         setData((d) =>
           d
-            ? { ...d, calendar: e.events, settings: { ...d.settings, calendarConnected: true } }
+            ? {
+                ...d,
+                calendar: e.events,
+                macCalendars: e.calendars,
+                settings: { ...d.settings, calendarConnected: e.connected },
+              }
             : d,
         );
-      // Calendar links refreshed: their meetings, and any link that has stopped working.
+      // Calendars changed in Settings, or links refreshed: any link that stopped working shows.
       if (e.type === 'calendar-feeds')
-        setData((d) => (d ? { ...d, calendar: e.events, calendarFeeds: e.feeds } : d));
+        setData((d) =>
+          d
+            ? {
+                ...d,
+                calendar: e.events,
+                calendarFeeds: e.feeds,
+                macCalendars: e.calendars,
+                settings: { ...d.settings, calendarConnected: e.connected },
+              }
+            : d,
+        );
       if (e.type === 'meeting-detected') setDetected({ event: e.event, at: Date.now() });
       if (e.type === 'meeting-end') setEndPrompt(e);
       if (['meeting-end-cleared', 'stopped'].includes(e.type)) setEndPrompt(null);
@@ -1214,7 +1228,7 @@ function App() {
                   title={title}
                   calendarBusy={calendarBusy}
                   calendar={calendar}
-                  calendarLinks={() => setModal({ kind: 'calendar-links' })}
+                  manageCalendars={() => settings('calendars')}
                   newNote={newNote}
                   startMeeting={(input) => oneCall(() => startMeeting(input))}
                   joinMeeting={joinMeeting}
@@ -1422,7 +1436,6 @@ function App() {
                     settings: t('Settings'),
                     folder: modal?.id ? t('Rename folder') : t('New folder'),
                     import: t('Import'),
-                    'calendar-links': t('Add a calendar link'),
                     transcript: t('Add a transcript'),
                     segment: t('Edit transcript'),
                     history: t('Previous summaries'),
@@ -1466,15 +1479,8 @@ function App() {
                 }
                 onReveal={() => guard(() => call('reveal'))}
                 onTemplate={() => setModal({ kind: 'template', name: '', prompt: '' })}
-                onCalendarLinks={() => setModal({ kind: 'calendar-links' })}
-              />
-            ) : modal?.kind === 'calendar-links' ? (
-              <CalendarLinks
-                call={call}
-                feeds={data.calendarFeeds}
-                onChange={({ feeds, events }) =>
-                  setData((d) => ({ ...d, calendar: events, calendarFeeds: feeds }))
-                }
+                calendar={calendar}
+                calendarBusy={calendarBusy}
               />
             ) : modal?.kind === 'import' ? (
               <ImportDialog

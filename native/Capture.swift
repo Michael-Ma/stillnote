@@ -2659,9 +2659,17 @@ func calendar() async throws {
       "participants": (e.attendees ?? []).compactMap { $0.name }.joined(separator: ", "),
       "location": e.location ?? "", "notes": e.notes ?? "", "url": e.url?.absoluteString ?? "",
       "allDay": e.isAllDay, "color": hexColor(e.calendar?.cgColor) ?? "",
+      "calendarId": e.calendar?.calendarIdentifier ?? "",
     ]
   }
-  emit(["type": "calendar", "events": rows])
+  // Every calendar, with or without meetings this week, so Settings can list them all.
+  let calendars = events.calendars(for: .event).map { c -> [String: Any] in
+    [
+      "id": c.calendarIdentifier, "name": c.title, "account": c.source?.title ?? "",
+      "color": hexColor(c.cgColor) ?? "",
+    ]
+  }
+  emit(["type": "calendar", "events": rows, "calendars": calendars])
 }
 func command(_ data: Data) {
   guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],

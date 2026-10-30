@@ -22,6 +22,7 @@ const channels = [
   'delete-forever',
   'calendar',
   'calendar-feeds',
+  'calendar-mac',
   'start-call',
   'join-call',
   'audio-devices',

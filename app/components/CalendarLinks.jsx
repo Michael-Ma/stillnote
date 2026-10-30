@@ -8,7 +8,7 @@ import { IconButton } from './Content.jsx';
 // link is a secret: it goes to main and never comes back; here only its host is shown. While this
 // dialog is open, main looks for a calendar link on the clipboard, so copying one in the browser
 // and coming back is enough.
-export function CalendarLinks({ call, feeds, onChange }) {
+export function CalendarLinks({ call, feeds }) {
   const t = useT();
   const [link, setLink] = useState('');
   const [copied, setCopied] = useState(null);
@@ -27,7 +27,7 @@ export function CalendarLinks({ call, feeds, onChange }) {
     setBusy(true);
     setError('');
     try {
-      onChange(await call('calendar-feeds', action, input));
+      await call('calendar-feeds', action, input);
       setLink('');
       setCopied(null);
     } catch (e) {
@@ -66,6 +66,26 @@ export function CalendarLinks({ call, feeds, onChange }) {
         <p className="modal-error" role="alert">
           {error}
         </p>
+      )}
+      {feeds.length > 0 && (
+        <ul className="calendar-feeds" aria-label={t('Added calendars')}>
+          {feeds.map((feed) => (
+            <li key={feed.id}>
+              <span>
+                <strong>{feed.host}</strong>
+                {feed.problem && <small role="alert">{t(feed.problem)}</small>}
+              </span>
+              <IconButton
+                label={t('Remove {host}', { host: feed.host })}
+                className="small danger"
+                disabled={busy}
+                onClick={() => run('remove', feed.id)}
+              >
+                <Trash2 size={14} />
+              </IconButton>
+            </li>
+          ))}
+        </ul>
       )}
       <ul className="import-kinds">
         {guides.map(([id, name, text]) => (
@@ -125,29 +145,6 @@ export function CalendarLinks({ call, feeds, onChange }) {
           </button>
         </div>
       </form>
-      {feeds.length > 0 && (
-        <>
-          <h3 className="import-section">{t('Added calendars')}</h3>
-          <ul className="calendar-feeds" aria-label={t('Added calendars')}>
-            {feeds.map((feed) => (
-              <li key={feed.id}>
-                <span>
-                  <strong>{feed.host}</strong>
-                  {feed.problem && <small role="alert">{t(feed.problem)}</small>}
-                </span>
-                <IconButton
-                  label={t('Remove {host}', { host: feed.host })}
-                  className="small danger"
-                  disabled={busy}
-                  onClick={() => run('remove', feed.id)}
-                >
-                  <Trash2 size={14} />
-                </IconButton>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
     </div>
   );
 }

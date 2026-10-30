@@ -165,6 +165,11 @@ export function parseFeed(document, { feed = 'feed', from, to }) {
   return found.sort((a, b) => a.start.localeCompare(b.start));
 }
 
+// The Mac's events without the calendars turned off in Settings. Links have no calendarId: a link
+// is one calendar, and removing it is how it is turned off.
+export const visibleEvents = (events, hidden = []) =>
+  events.filter((event) => !hidden.includes(event.calendarId));
+
 // The Mac's events and the links' together; a meeting in both stays as the Mac's, whose id its
 // note may already carry.
 export function mergeCalendars(mac, feeds) {

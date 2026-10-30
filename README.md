@@ -58,7 +58,7 @@ For an extra backup before a normal update, quit Stillnote and copy that entire 
 - **Images in notes:** paste or drop a screenshot or photo into **My notes** and it shows in place between your lines (PNG, JPEG, GIF or WebP, up to 20 MB). Click it to see it large; Backspace at the start of the line below removes it, and Undo brings it back. The note text stays plain Markdown.
 - **Enhanced notes:** modeled on Granola's. Your rough notes are the skeleton and stay in dark text; details, missed topics and next steps from the transcript are added in lighter text. Short topic headings, terse bullets, no filler, in the language you wrote in. Templates (1:1, customer discovery, standup, interview, or your own) set the sections. Previous summaries remain available. Optionally enhance automatically when recording ends.
 - **Meeting chat:** ask about one meeting, a folder, or your notebook. Source citations open the corresponding transcript. Apply a chat answer to your enhanced notes explicitly.
-- **Your calendar:** read meetings from accounts configured in Apple Calendar, or directly from a Google, Outlook or iCloud calendar's private link, without Apple Calendar. Create a note from an event; each occurrence keeps one note.
+- **Your calendar:** read meetings from accounts configured in Apple Calendar, or directly from a Google, Outlook or iCloud calendar's private link, without Apple Calendar. **Settings → Calendars** connects or disconnects them and turns individual calendars off. Create a note from an event; each occurrence keeps one note.
 - **Bring your notes with you:** import captions and transcripts (Zoom, Teams, Meet, Otter, Fireflies), Markdown notes and Notion exports, or connect Granola or Notion and import straight from them. Importing the same thing again adds nothing.
 - **Meeting reminders:** a floating panel at the top right shows the calendar's color and meeting time about a minute before it starts. **Join and take notes** opens the note, starts capture when enabled, then opens its Google Meet, Zoom or Teams link. The menu can take notes without joining, or start a new Meet/Zoom call for an event without a link. Stillnote must be running; these panels replace system notifications.
 - **Start or join a call in one click:** **Start Google Meet** (or Zoom) on Home opens a new meeting in your browser or meeting app and records it in a new note; **Join & record** on a calendar meeting opens its call link and records in its note.
@@ -133,7 +133,7 @@ Stillnote runs your own, unmodified `claude` program in print mode with built-in
 
 ## Take your first note
 
-1. Choose **New note**, or connect your Mac calendars and select a meeting under **Coming up**.
+1. Choose **New note**, or connect a calendar and select a meeting under **Coming up**.
 2. Press **Record** in the dock at the bottom.
 3. Grant **Microphone** and, for meeting audio, **Screen & System Audio Recording** access in macOS. The legacy speech engine also requests **Speech Recognition** permission; modern SpeechTranscriber uses installed on-device language models.
 4. Write a few notes while the transcript accumulates.

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ArrowUpRight,
+  CalendarDays,
   Check,
   Download,
   Folder,
@@ -13,6 +14,8 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { RecordingSettings } from './RecordingSettings.jsx';
+import { CalendarSettings } from './CalendarSettings.jsx';
+import { Toggle } from './Content.jsx';
 import { claudeSummary, modelKey, usageSummary } from '../ai-view.mjs';
 import { useT } from '../i18n/react.jsx';
 
@@ -23,22 +26,9 @@ const sections = [
   ['general', msg('General'), Languages],
   ['ai', msg('AI'), Sparkles],
   ['capture', msg('Recording'), Mic],
+  ['calendars', msg('Calendars'), CalendarDays],
   ['notebook', msg('Notebook'), NotebookPen],
 ];
-
-function Toggle({ id, checked, onChange, disabled = false }) {
-  return (
-    <input
-      id={id}
-      type="checkbox"
-      role="switch"
-      className="switch"
-      checked={checked}
-      disabled={disabled}
-      onChange={(e) => onChange(e.target.checked)}
-    />
-  );
-}
 
 function ProviderCard({ id, name, active, ready, onUse, children, status }) {
   const t = useT();
@@ -85,7 +75,8 @@ export function SettingsDialog({
   onBackup,
   onReveal,
   onTemplate,
-  onCalendarLinks,
+  calendar,
+  calendarBusy,
   onUsage,
 }) {
   const t = useT();
@@ -334,7 +325,9 @@ export function SettingsDialog({
                 <small>
                   {data.settings.calendarConnected || data.calendarFeeds.length > 0
                     ? t('Notify me a minute before calendar meetings while Stillnote is open.')
-                    : t('Connect your calendar on Home to get a reminder before each meeting.')}
+                    : t(
+                        'Connect a calendar under Calendars to get a reminder before each meeting.',
+                      )}
                 </small>
               </div>
               <Toggle
@@ -342,27 +335,6 @@ export function SettingsDialog({
                 checked={data.settings.meetingReminders ?? true}
                 onChange={(v) => guard(() => setting('meetingReminders', v))}
               />
-            </div>
-            <div className="setting-row">
-              <div>
-                <label>{t('Calendar links')}</label>
-                <small>
-                  {data.calendarFeeds.some((feed) => feed.problem)
-                    ? t('A calendar link has stopped working.')
-                    : data.calendarFeeds.length
-                      ? t.count(
-                          data.calendarFeeds.length,
-                          '{n} calendar read directly, without the Mac’s Calendar app.',
-                          '{n} calendars read directly, without the Mac’s Calendar app.',
-                        )
-                      : t(
-                          'Read Google, Outlook or iCloud calendars without the Mac’s Calendar app.',
-                        )}
-                </small>
-              </div>
-              <button className="secondary" onClick={onCalendarLinks}>
-                {data.calendarFeeds.length ? t('Manage') : t('Add a link')}
-              </button>
             </div>
             <div className="setting-row">
               <div>
@@ -434,6 +406,16 @@ export function SettingsDialog({
               )}
             </p>
           </section>
+        )}
+        {section === 'calendars' && (
+          <CalendarSettings
+            data={data}
+            call={call}
+            setting={setting}
+            guard={guard}
+            calendar={calendar}
+            calendarBusy={calendarBusy}
+          />
         )}
         {section === 'notebook' && (
           <section>

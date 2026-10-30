@@ -9,7 +9,9 @@ import {
   mergeCalendars,
   parseFeed,
   recognizeFeed,
+  visibleEvents,
 } from '../app/calendar-feed.mjs';
+import { Store } from '../app/store.mjs';
 import { meetingLink } from '../app/calls.mjs';
 
 const ics = (name) => readFileSync(new URL(`./fixtures/calendar/${name}`, import.meta.url), 'utf8');
@@ -152,4 +154,31 @@ test('links stay encrypted and out of sight, a bad link is refused, outages keep
   assert.equal(feeds.list().length, 1);
   assert.deepEqual(feeds.remove(listed[0].id), []);
   assert.deepEqual(await feeds.events(), []);
+});
+
+test('a calendar turned off leaves its meetings out; links and unknown calendars stay', () => {
+  const events = [
+    { id: 'work', calendarId: 'a' },
+    { id: 'family', calendarId: 'b' },
+    { id: 'link' },
+  ];
+  assert.deepEqual(
+    visibleEvents(events, ['b']).map((e) => e.id),
+    ['work', 'link'],
+  );
+  assert.equal(visibleEvents(events).length, 3);
+  assert.equal(visibleEvents(events, []).length, 3);
+});
+
+test('turned-off calendars are checked, and stay on this Mac', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'stillnote-hidden-'));
+  const s = new Store(dir);
+  t.after(() => {
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  assert.deepEqual(s.setting('hiddenCalendars', ['a', 'b']).hiddenCalendars, ['a', 'b']);
+  for (const bad of ['a', [1], [''], ['x'.repeat(301)], Array(501).fill('a')])
+    assert.throws(() => s.setting('hiddenCalendars', bad), /Invalid calendar list/);
+  assert.equal('hiddenCalendars' in s.backup().settings, false, 'calendar ids are this Mac’s');
 });

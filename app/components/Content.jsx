@@ -9,6 +9,19 @@ export function IconButton({ label, children, className = '', ...props }) {
     </button>
   );
 }
+export function Toggle({ id, checked, onChange, disabled = false }) {
+  return (
+    <input
+      id={id}
+      type="checkbox"
+      role="switch"
+      className="switch"
+      checked={checked}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.checked)}
+    />
+  );
+}
 // Text of a hast node without nested lists, so a parent bullet is judged on its own words.
 const ownText = (node) =>
   (node?.children ?? [])
