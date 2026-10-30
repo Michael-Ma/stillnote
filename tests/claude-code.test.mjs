@@ -45,8 +45,9 @@ function fixture(t, vars = {}, options = {}) {
   const calls = () =>
     existsSync(log)
       ? readFileSync(log, 'utf8')
-          .trim()
           .split('\n')
+          // The fake creates the file before writing to it; only newline-ended lines are complete.
+          .slice(0, -1)
           .map((line) => JSON.parse(line))
       : [];
   return { claude, calls, changes, dir };
@@ -239,13 +240,25 @@ test('Terminal setup scripts only run the official installer and CLI login', () 
 });
 
 test('abort during authentication never starts inference', async (t) => {
-  const { claude, calls } = fixture(t, { FAKE_CLAUDE_STATUS_DELAY: '80' });
+  const { claude, calls } = fixture(t);
   const controller = new AbortController();
-  const request = ask(claude, { signal: controller.signal }).promise;
-  while (!calls().some((call) => call.args.includes('status')))
-    await new Promise((r) => setTimeout(r, 5));
-  controller.abort();
-  await assert.rejects(request, (error) => error.name === 'AbortError');
+  const spawnCLI = claude.spawn;
+  const spawned = [];
+  claude.spawn = (command, args, options) => {
+    spawned.push(args);
+    const child = spawnCLI(command, args, options);
+    // Abort as the probe starts, so it is always in flight and there is no clock to race.
+    if (args.includes('status')) controller.abort();
+    return child;
+  };
+  await assert.rejects(
+    ask(claude, { signal: controller.signal }).promise,
+    (error) => error.name === 'AbortError',
+  );
+  // The probe approved the sign-in, so only the abort stood between it and inference.
+  assert.equal(claude.status().ready, true);
+  // A killed child never reads stdin and so never logs, which is why the spawn is checked too.
+  assert.equal(spawned.filter((args) => args[0] === '-p').length, 0);
   assert.equal(calls().filter((call) => call.args[0] === '-p').length, 0);
 });
 test('abort during locate never starts inference', async (t) => {

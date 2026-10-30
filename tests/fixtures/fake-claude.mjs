@@ -54,8 +54,6 @@ if (args[0] === '--version') {
   console.log('2.1.299 (Claude Code)');
 } else if (commandArgs[0] === 'auth' && commandArgs[1] === 'status') {
   log({});
-  if (env.FAKE_CLAUDE_STATUS_DELAY)
-    await new Promise((resolve) => setTimeout(resolve, Number(env.FAKE_CLAUDE_STATUS_DELAY)));
   const auth = env.FAKE_CLAUDE_AUTH ?? 'subscription';
   if (auth === 'unreadable') {
     console.log('broken status');
