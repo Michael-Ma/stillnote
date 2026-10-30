@@ -174,6 +174,34 @@ export async function notebook(h) {
     .click();
   await page.getByText('Nothing in Trash', { exact: true }).waitFor();
   assert.equal((await h.state()).meetings.filter((m) => m.deletedAt).length, 0);
+
+  // A folder is renamed and deleted from its menu; its notes go back to My notes, Undo returns them.
+  const folders = page.getByRole('navigation', { name: 'Folders', exact: true });
+  await folders
+    .getByRole('button', { name: 'E2E product', exact: true })
+    .click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Rename…', exact: true }).click();
+  await page.getByLabel('Folder name', { exact: true }).fill('E2E launches');
+  await page.getByRole('button', { name: 'Rename', exact: true }).click();
+  const folderButton = folders.getByRole('button', { name: 'E2E launches', exact: true });
+  await folderButton.click();
+  await page.getByText(title, { exact: true }).first().waitFor();
+  await folders.getByRole('button', { name: 'More actions for E2E launches', exact: true }).click();
+  await h.screenshot('folder-menu');
+  await page.getByRole('menuitem', { name: 'Delete folder', exact: true }).click();
+  await page
+    .getByRole('status')
+    .filter({ hasText: 'Deleted “E2E launches”. Its 1 note is in My notes.' })
+    .waitFor();
+  await folderButton.waitFor({ state: 'detached' });
+  await page.getByRole('heading', { name: 'My notes', exact: true }).waitFor();
+  let state = await h.state();
+  assert.deepEqual(state.folders, []);
+  assert.equal(state.meetings.find((m) => m.id === meeting.id).folderId, null);
+  await page.getByRole('status').getByRole('button', { name: 'Undo', exact: true }).click();
+  await folderButton.waitFor();
+  state = await h.state();
+  assert.equal(state.meetings.find((m) => m.id === meeting.id).folderId, state.folders[0].id);
   await page.getByRole('button', { name: 'Home', exact: true }).click();
   await h.open(title);
   await h.desktop.evaluate(({ BrowserWindow }) =>

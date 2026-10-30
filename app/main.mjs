@@ -1188,6 +1188,9 @@ if (!app.requestSingleInstanceLock()) {
       });
       register('search', (query) => store.search(query));
       register('folder', (name) => store.addFolder(name));
+      register('rename-folder', (id, name) => store.renameFolder(id, name));
+      register('delete-folder', (id) => store.deleteFolder(id));
+      register('restore-folder', (snapshot) => store.restoreFolder(snapshot));
       register('setting', (key, value) => {
         const settings = store.setting(key, value);
         if (key === 'uiLanguage') buildMenu();

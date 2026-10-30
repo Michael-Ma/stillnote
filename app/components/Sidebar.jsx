@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Folder,
   Home,
   Lock,
   MessageCircle,
+  MoreHorizontal,
+  Pencil,
   Plus,
   Search,
   Settings,
@@ -29,12 +31,16 @@ export function Sidebar({
   navigate,
   openChat,
   newFolder,
+  renameFolder,
+  deleteFolder,
   importFile,
   openSettings,
   ai,
   icon,
 }) {
   const t = useT();
+  // The folder whose menu is open, and where: under its ⋯ button, or where it was right-clicked.
+  const [menu, setMenu] = useState(null);
   const item = (key, label, Icon, onClick = () => navigate(key)) => (
     <button
       className={view === key && (key !== 'home' || !chatOpen) ? 'active' : ''}
@@ -109,17 +115,47 @@ export function Sidebar({
           <span>{t('My notes')}</span>
         </button>
         {folders.map((f) => (
-          <button
+          <div
             key={f.id}
-            className={'folder-item' + (view === `folder:${f.id}` ? ' active' : '')}
-            onClick={() => navigate(`folder:${f.id}`)}
-            title={f.name}
+            className={'folder-row' + (menu?.folder.id === f.id ? ' menu-open' : '')}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu({ folder: f, x: e.clientX, y: e.clientY });
+            }}
           >
-            <Folder size={15} />
-            <span className="folder-name">{f.name}</span>
-          </button>
+            <button
+              className={'folder-item' + (view === `folder:${f.id}` ? ' active' : '')}
+              onClick={() => navigate(`folder:${f.id}`)}
+              title={f.name}
+            >
+              <Folder size={15} />
+              <span className="folder-name">{f.name}</span>
+            </button>
+            <IconButton
+              label={t('More actions for {name}', { name: f.name })}
+              className="small folder-more"
+              aria-haspopup="menu"
+              aria-expanded={menu?.folder.id === f.id}
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                setMenu(
+                  menu?.folder.id === f.id ? null : { folder: f, x: r.left, y: r.bottom + 4 },
+                );
+              }}
+            >
+              <MoreHorizontal size={14} />
+            </IconButton>
+          </div>
         ))}
       </nav>
+      {menu && (
+        <FolderMenu
+          {...menu}
+          onClose={() => setMenu(null)}
+          onRename={() => renameFolder(menu.folder)}
+          onDelete={() => deleteFolder(menu.folder)}
+        />
+      )}
       <div className="sidebar-bottom">
         <div className="sidebar-tools">
           <IconButton label={t('Import transcript or backup')} onClick={importFile}>
@@ -146,5 +182,61 @@ export function Sidebar({
         </div>
       </div>
     </aside>
+  );
+}
+
+// Rename and delete for one folder. Fixed to the window so the scrolling folder list cannot clip
+// it; Escape, a click elsewhere or a choice closes it.
+function FolderMenu({ folder, x, y, onClose, onRename, onDelete }) {
+  const t = useT();
+  const root = useRef();
+  const opener = useRef(document.activeElement);
+  useEffect(() => {
+    const items = () => [...root.current.querySelectorAll('[role="menuitem"]')];
+    items()[0]?.focus();
+    const outside = (e) => {
+      if (!root.current?.contains(e.target) && !e.target.closest?.('.folder-more')) onClose();
+    };
+    const key = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+        opener.current?.focus?.();
+      }
+      if (['ArrowDown', 'ArrowUp'].includes(e.key)) {
+        e.preventDefault();
+        const list = items();
+        const at = list.indexOf(document.activeElement);
+        list[(at + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length]?.focus();
+      }
+    };
+    document.addEventListener('mousedown', outside);
+    document.addEventListener('keydown', key, true);
+    return () => {
+      document.removeEventListener('mousedown', outside);
+      document.removeEventListener('keydown', key, true);
+    };
+  }, [folder.id]);
+  const choose = (action) => {
+    onClose();
+    action();
+  };
+  return (
+    <div
+      ref={root}
+      className="folder-menu"
+      role="menu"
+      aria-label={folder.name}
+      style={{ left: Math.max(8, x), top: Math.min(y, window.innerHeight - 96) }}
+    >
+      <button role="menuitem" onClick={() => choose(onRename)}>
+        <Pencil size={14} />
+        {t('Rename…')}
+      </button>
+      <button role="menuitem" className="danger" onClick={() => choose(onDelete)}>
+        <Trash2 size={14} />
+        {t('Delete folder')}
+      </button>
+    </div>
   );
 }

@@ -3,12 +3,24 @@
 export default {
   'Cannot trim an unsupported recording track.': '无法裁剪不支持的录音格式。',
   'Audio is recording while transcription prepares.': '音频正在录制，转录正在准备中。',
+  'Delete folder': '删除文件夹',
+  'Deleted “{name}”.': '已删除“{name}”。',
+  'Deleted “{name}”. Its {n} note is in My notes.':
+    '已删除“{name}”，其中 {n} 条笔记已移回“我的笔记”。',
+  'Deleted “{name}”. Its {n} notes are in My notes.':
+    '已删除“{name}”，其中 {n} 条笔记已移回“我的笔记”。',
+  'Folder already exists.': '文件夹已存在。',
+  'Invalid folder.': '文件夹无效。',
+  'More actions for {name}': '“{name}”的更多操作',
   'Notebook and folder chats, and existing backups, may still contain quoted content.':
     '笔记本和文件夹聊天，以及现有备份，仍可能保留引用的内容。',
 
   'Recording ended before audio capture was ready.': '音频采集就绪前，录音已结束。',
   'Native helper was restarted after a transcription timeout.': '转录超时，音频辅助进程已重启。',
   'Calendar helper restarted.': '日历辅助进程已重启。',
+  Rename: '重命名',
+  'Rename folder': '重命名文件夹',
+  'Rename…': '重命名…',
   'The meeting window could not open.': '无法打开会议窗口。',
   'Audio capture did not start. Join the call when ready.':
     '音频采集未启动。准备好后请手动加入通话。',

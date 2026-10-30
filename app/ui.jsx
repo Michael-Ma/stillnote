@@ -629,6 +629,34 @@ function App() {
       }
     });
   }
+  // A deleted folder's notes go back to My notes; Undo brings the folder and those notes back.
+  async function deleteFolder(folder) {
+    await guard(async () => {
+      await flushAll();
+      const snapshot = await call('delete-folder', folder.id);
+      if (view === `folder:${folder.id}`) setView('all');
+      await load();
+      setNotice({
+        text: snapshot.meetingIds.length
+          ? t.count(
+              snapshot.meetingIds.length,
+              'Deleted “{name}”. Its {n} note is in My notes.',
+              'Deleted “{name}”. Its {n} notes are in My notes.',
+              { name: folder.name },
+            )
+          : t('Deleted “{name}”.', { name: folder.name }),
+        action: {
+          label: t('Undo'),
+          run: () =>
+            guard(async () => {
+              await flushAll();
+              await call('restore-folder', snapshot);
+              await load();
+            }),
+        },
+      });
+    });
+  }
   async function importFile() {
     await guard(async () => {
       await flushAll();
@@ -931,6 +959,8 @@ function App() {
             })
           }
           newFolder={() => setModal({ kind: 'folder', name: '' })}
+          renameFolder={(f) => setModal({ kind: 'folder', id: f.id, name: f.name })}
+          deleteFolder={deleteFolder}
           importFile={importFile}
           openSettings={settings}
           ai={ai}
@@ -1333,7 +1363,7 @@ function App() {
                 {
                   {
                     settings: t('Settings'),
-                    folder: t('New folder'),
+                    folder: modal?.id ? t('Rename folder') : t('New folder'),
                     transcript: t('Add a transcript'),
                     segment: t('Edit transcript'),
                     history: t('Previous summaries'),
@@ -1383,8 +1413,13 @@ function App() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   guard(async () => {
-                    const f = await call('folder', modal.name);
-                    setData((d) => ({ ...d, folders: [...d.folders, f] }));
+                    if (modal.id) {
+                      await call('rename-folder', modal.id, modal.name);
+                      await load();
+                    } else {
+                      const f = await call('folder', modal.name);
+                      setData((d) => ({ ...d, folders: [...d.folders, f] }));
+                    }
                     setModal(null);
                   });
                 }}
@@ -1402,7 +1437,7 @@ function App() {
                 </label>
                 <div className="modal-footer">
                   <button className="primary" type="submit">
-                    {t('Create folder')}
+                    {modal.id ? t('Rename') : t('Create folder')}
                   </button>
                 </div>
               </form>

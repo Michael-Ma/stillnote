@@ -34,6 +34,60 @@ test('notes, folders, multilingual transcripts, search and trash persist across 
   s.update(m.id, { deletedAt: null });
   assert.equal(s.search('onboarding').length, 1);
 });
+test('a deleted folder keeps its notes in My notes, and Undo puts back the ones still there', (t) => {
+  const { s } = fixture(t),
+    f = s.addFolder('Customers'),
+    other = s.addFolder('Hiring');
+  const kept = s.create({ title: 'Acme renewal', notes: 'Renewal in March' }),
+    trashed = s.create({ title: 'Old call' }),
+    moved = s.create({ title: 'Moved after delete' }),
+    elsewhere = s.create({ title: 'Interview' });
+  for (const m of [kept, trashed, moved]) s.update(m.id, { folderId: f.id });
+  s.update(trashed.id, { deletedAt: true });
+  s.update(elsewhere.id, { folderId: other.id });
+  const before = s.get(kept.id);
+
+  const snapshot = s.deleteFolder(f.id);
+  assert.deepEqual(snapshot.folder, f);
+  assert.deepEqual(snapshot.meetingIds.sort(), [kept.id, trashed.id, moved.id].sort());
+  assert.deepEqual(
+    s.folders().map((x) => x.name),
+    ['Hiring'],
+  );
+  for (const m of [kept, trashed, moved]) assert.equal(s.get(m.id).folderId, null);
+  assert.equal(s.get(elsewhere.id).folderId, other.id);
+  assert.equal(s.get(kept.id).notes, before.notes, 'notes themselves are untouched');
+  assert.equal(s.get(kept.id).updatedAt, before.updatedAt);
+  assert.ok(s.get(trashed.id).deletedAt, 'still in Trash');
+  assert.equal(s.search('Renewal')[0].id, kept.id);
+  assert.throws(() => s.update(kept.id, { folderId: f.id }), /Folder not found/);
+  assert.throws(() => s.deleteFolder(f.id), /Folder not found/);
+
+  // Moved somewhere else before Undo: Undo leaves it there.
+  s.update(moved.id, { folderId: other.id });
+  const restored = s.restoreFolder(snapshot);
+  assert.deepEqual(restored.meetingIds.sort(), [kept.id, trashed.id].sort());
+  assert.deepEqual(
+    s.folders().map((x) => x.name),
+    ['Customers', 'Hiring'],
+  );
+  assert.equal(s.get(kept.id).folderId, f.id);
+  assert.equal(s.get(trashed.id).folderId, f.id);
+  assert.equal(s.get(moved.id).folderId, other.id);
+  assert.throws(() => s.restoreFolder(snapshot), /already exists/);
+  assert.throws(() => s.restoreFolder({ folder: { id: 'x', name: ' ' }, meetingIds: [] }));
+  assert.throws(() => s.restoreFolder({ folder: f }), /Invalid folder/);
+});
+test('a folder can be renamed, but not to nothing', (t) => {
+  const { s } = fixture(t),
+    f = s.addFolder('Reserch');
+  assert.deepEqual(s.renameFolder(f.id, '  Research  '), { id: f.id, name: 'Research' });
+  assert.equal(s.folders()[0].name, 'Research');
+  assert.throws(() => s.renameFolder(f.id, '   '), /Name your folder/);
+  assert.throws(() => s.renameFolder(f.id, 'x'.repeat(101)));
+  assert.throws(() => s.renameFolder('missing', 'Name'), /Folder not found/);
+  assert.equal(s.folders()[0].name, 'Research');
+});
 test('summary revisions and transcript corrections preserve source notes', (t) => {
   const { s } = fixture(t);
   const m = s.create({ notes: 'Original rough notes' });

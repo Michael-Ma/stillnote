@@ -383,6 +383,61 @@ kbd {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.folder-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.sidebar nav .folder-item {
+  flex: 1;
+  min-width: 0;
+  padding-right: 32px;
+}
+.sidebar nav .folder-more {
+  position: absolute;
+  right: 4px;
+  height: 24px;
+  padding: 0;
+  opacity: 0;
+}
+.folder-row:hover .folder-more,
+.folder-row:focus-within .folder-more,
+.folder-row.menu-open .folder-more {
+  opacity: 1;
+}
+.folder-menu {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  gap: 2px;
+  min-width: 176px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+.folder-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: var(--radius);
+  color: var(--ink-2);
+  font-size: var(--text-md);
+  text-align: left;
+}
+.folder-menu button svg {
+  color: var(--muted);
+}
+.folder-menu button:hover,
+.folder-menu button:focus-visible {
+  background: var(--hover);
+}
+.folder-menu button.danger,
+.folder-menu button.danger svg {
+  color: var(--danger);
+}
 .sidebar-bottom {
   margin-top: auto;
   padding-top: 10px;

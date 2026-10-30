@@ -512,6 +512,60 @@ export class Store {
     this.db.prepare('INSERT INTO folders VALUES(?,?)').run(f.id, f.name);
     return f;
   }
+  renameFolder(id, name) {
+    const f = { id: text(id, 100), name: text(name, 100).trim() };
+    if (!f.name) throw new Error('Name your folder.');
+    if (!this.db.prepare('UPDATE folders SET name=? WHERE id=?').run(f.name, f.id).changes)
+      throw new Error('Folder not found.');
+    return f;
+  }
+  // Deleting a folder never deletes its notes: they go back to My notes, and notes in Trash
+  // lose the folder too. Returns what restoreFolder needs to undo it.
+  deleteFolder(id) {
+    const found = this.folders().find((f) => f.id === id);
+    if (!found) throw new Error('Folder not found.');
+    const folder = { id: found.id, name: found.name };
+    return this.moveFolderNotes(folder, id, null, () =>
+      this.db.prepare('DELETE FROM folders WHERE id=?').run(id),
+    );
+  }
+  // Undo of deleteFolder: the folder comes back with those of its notes still in My notes.
+  restoreFolder(snapshot) {
+    const folder = {
+      id: text(snapshot?.folder?.id, 100),
+      name: text(snapshot?.folder?.name, 100).trim(),
+    };
+    if (!folder.name || !Array.isArray(snapshot.meetingIds)) throw new Error('Invalid folder.');
+    if (this.folders().some((f) => f.id === folder.id)) throw new Error('Folder already exists.');
+    const ids = new Set(snapshot.meetingIds.map((id) => text(id, 100)));
+    return this.moveFolderNotes(
+      folder,
+      null,
+      folder.id,
+      () => this.db.prepare('INSERT INTO folders VALUES(?,?)').run(folder.id, folder.name),
+      (id) => ids.has(id),
+    );
+  }
+  // Moves notes from folder `from` to `to` (null is My notes) beside `change`, in one transaction.
+  // A folder is not searchable text, so the search index stays as it is.
+  moveFolderNotes(folder, from, to, change, include = () => true) {
+    const rows = this.db
+      .prepare('SELECT id, data FROM meetings')
+      .all()
+      .map((r) => ({ id: r.id, m: JSON.parse(r.data) }))
+      .filter(({ id, m }) => (m.folderId ?? null) === from && include(id));
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const save = this.db.prepare('UPDATE meetings SET data=? WHERE id=?');
+      for (const { id, m } of rows) save.run(JSON.stringify({ ...m, folderId: to }), id);
+      change();
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+    return { folder, meetingIds: rows.map(({ id }) => id) };
+  }
   settings() {
     return {
       inputDevice: null,
