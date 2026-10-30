@@ -12,3 +12,4 @@ package-lock.json
 tests/fixtures/language-replay.json
 # Files in other tools' export formats, kept exactly as those tools write them
 tests/fixtures/import
+tests/fixtures/calendar

@@ -260,6 +260,24 @@ export async function notebook(h) {
   await page.getByRole('status').filter({ hasText: 'Imported 1 note.' }).waitFor();
   const fromNotion = (await h.state()).meetings.find((m) => m.title === 'E2E Notion weekly sync');
   assert.equal(fromNotion.notes, 'Decisions from Notion');
+
+  // A calendar link: meetings on Home without the Mac's Calendar app.
+  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'Use a link', exact: true }).click();
+  await page.getByRole('heading', { name: 'Add a calendar link', exact: true }).waitFor();
+  await page
+    .getByLabel('Calendar link', { exact: true })
+    .fill('https://calendar.google.com/calendar/ical/e2e/private-e2e/basic.ics');
+  await h.screenshot('calendar-link');
+  await page.getByRole('button', { name: 'Add calendar', exact: true }).click();
+  await page
+    .getByRole('list', { name: 'Added calendars', exact: true })
+    .getByText('calendar.google.com', { exact: true })
+    .waitFor();
+  assert.ok(!JSON.stringify(await h.state()).includes('private-e2e'));
+  await page.keyboard.press('Escape');
+  await page.getByText('E2E linked standup', { exact: true }).first().waitFor();
+  await h.screenshot('calendar-link-home');
   await page.getByRole('button', { name: 'Home', exact: true }).click();
   await h.open(title);
   await h.desktop.evaluate(({ BrowserWindow }) =>

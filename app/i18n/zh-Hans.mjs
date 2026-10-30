@@ -1,9 +1,16 @@
 // 简体中文. Keys are the English strings used in the code; see app/i18n/index.mjs.
 // Missing entries fall back to English; tests/i18n.test.mjs lists any that are missing.
 export default {
+  'A calendar link has stopped working.': '有一个日历链接已失效。',
   'A notebook backup (.json) from Settings → Notebook. Notes already here are kept.':
     '在“设置 → 笔记本”中生成的备份（.json）。已有的笔记会保留。',
+  'Add a calendar link': '添加日历链接',
+  'Add a link': '添加链接',
+  'Add calendar': '添加日历',
+  'Added calendars': '已添加的日历',
   'All import options': '所有导入方式',
+  'Calendar link': '日历链接',
+  'Calendar links': '日历链接',
   'Cannot trim an unsupported recording track.': '无法裁剪不支持的录音格式。',
   'Audio is recording while transcription prepares.': '音频正在录制，转录正在准备中。',
   'Captions from Zoom, Teams or Google Meet (.vtt), subtitles (.srt), and text exports from Otter or Fireflies (.txt), split by speaker and time.':
@@ -12,6 +19,8 @@ export default {
   'Choose at most 2,000 files at a time.': '一次最多选择 2,000 个文件。',
   'Choose files or a folder…': '选择文件或文件夹…',
   'Choose what to import.': '请选择要导入的内容。',
+  'Connect the calendars on your Mac, or add a calendar link.':
+    '连接 Mac 上的日历，或者添加日历链接。',
   'Connect {app}': '连接 {app}',
   'Could not import {files}': '无法导入：{files}',
   'Delete folder': '删除文件夹',
@@ -25,6 +34,7 @@ export default {
   'File exceeds the 2,000,000-character import limit.': '文件超过 2,000,000 字符的导入上限。',
   'Finish signing in in your browser…': '请在浏览器中完成登录…',
   'Folder already exists.': '文件夹已存在。',
+  'Found a {host} calendar link on your clipboard.': '在剪贴板里发现了来自 {host} 的日历链接。',
   'From {app}': '从 {app} 导入',
   Import: '导入',
   'Import notes or transcripts': '导入笔记或转写',
@@ -34,6 +44,10 @@ export default {
   'Imported {n} note.': '已导入 {n} 条笔记。',
   'Imported {n} notes.': '已导入 {n} 条笔记。',
   'Importing {done} of {total}…': '正在导入第 {done} 条，共 {total} 条…',
+  'In Calendar on iCloud.com, make the calendar public and copy its link.':
+    '在 iCloud.com 的日历里，把日历设为公开，然后复制链接。',
+  'In Settings, choose your calendar on the left, open Integrate calendar, and copy “Secret address in iCal format”.':
+    '在设置里，从左侧选择你的日历，打开“集成日历”，复制“iCal 格式的私密地址”。',
   'Invalid folder.': '文件夹无效。',
   'Invalid sign-in response.': '登录响应无效。',
   'Items in {app}': '{app} 中的内容',
@@ -59,9 +73,14 @@ export default {
     'Granola 免费版只开放最近 30 天的笔记，不含转写。',
   'Or straight from another app': '或者直接从其他应用导入',
   'Pages, including Notion AI meeting notes.': '页面，包括 Notion AI 会议记录。',
+  'Paste the full calendar link.': '请粘贴完整的日历链接。',
+  'Read Google, Outlook or iCloud calendars without the Mac’s Calendar app.':
+    '不通过 Mac 的日历应用，直接读取 Google、Outlook 或 iCloud 日历。',
   'Recording ended before audio capture was ready.': '音频采集就绪前，录音已结束。',
   'Native helper was restarted after a transcription timeout.': '转录超时，音频辅助进程已重启。',
   'Calendar helper restarted.': '日历辅助进程已重启。',
+  'Remove a calendar link first.': '请先移除一个日历链接。',
+  'Remove {host}': '移除 {host}',
   Rename: '重命名',
   'Rename folder': '重命名文件夹',
   'Rename…': '重命名…',
@@ -74,6 +93,8 @@ export default {
   'Stillnote could not read the search results from Notion.':
     'Stillnote 无法读取 Notion 返回的搜索结果。',
   'Stillnote does not use this tool.': 'Stillnote 不使用这个工具。',
+  'Stillnote reads your meetings straight from this link, without the Mac’s Calendar app. It works like a password to your calendar, so it stays encrypted on this Mac and out of backups.':
+    'Stillnote 会直接从这个链接读取会议，不需要 Mac 的日历应用。这个链接相当于日历的密码，所以只加密保存在这台 Mac 上，也不会进入备份。',
   'Stillnote signs in to {app} in your browser and only reads: it never changes anything in {app}. The connection stays on this Mac, and you can disconnect at any time.':
     'Stillnote 会在浏览器中登录 {app}，并且只读取内容，不会改动 {app} 里的任何东西。连接信息只保存在这台 Mac 上，随时可以断开。',
   'The file is empty.': '文件是空的。',
@@ -104,10 +125,19 @@ export default {
   'This app’s sign-in does not accept new apps.': '这个应用的登录不接受新的客户端。',
   'This app’s sign-in does not support secure browser sign-in.':
     '这个应用的登录不支持安全的浏览器登录。',
+  'This calendar is already added.': '这个日历已经添加过了。',
+  'This calendar is too large.': '这个日历太大了。',
+  'This link did not return a calendar.': '这个链接返回的不是日历。',
+  'Under Shared calendars, publish your calendar with all details, then copy the ICS link.':
+    '在“共享日历”里发布日历并选择显示全部详细信息，然后复制 ICS 链接。',
   'Unexpected sign-in configuration.': '登录配置异常。',
   'Unknown app.': '未知的应用。',
+  'Unknown calendar action.': '未知的日历操作。',
+  'Unknown calendar.': '未知的日历。',
   'Unknown import action.': '未知的导入操作。',
   'Unsupported file type.': '不支持的文件类型。',
+  'Use a link': '使用链接',
+  'Use it': '使用',
   'When a meeting seems over': '会议好像结束时',
   'The call app stops using the microphone, the calendar meeting has ended, or no one has spoken for a long time. Long silence at the end of a recording is removed.':
     '会议 App 不再使用麦克风、日历上的会议已结束，或长时间没有人说话。录音结尾的长静音会被去掉。',
@@ -223,7 +253,6 @@ export default {
   'Connect an AI to chat': '连接 AI 以开始对话',
   'Connect an AI to continue': '连接 AI 以继续',
   'Connect an AI to enhance notes': '连接 AI 以增强笔记',
-  'Connect the calendars on your Mac to see what’s next.': '连接 Mac 上的日历，查看接下来的安排。',
   'Connect your calendar on Home to get a reminder before each meeting.':
     '在首页连接日历，每次会议前都会收到提醒。',
   'Connect your ChatGPT account in Settings.': '请在设置中连接你的 ChatGPT 账户。',
@@ -459,6 +488,10 @@ export default {
   'You can choose several files or a folder. Importing the same file again adds nothing.':
     '可以一次选择多个文件或一个文件夹。同一个文件再次导入不会重复添加。',
   '{app} shared no transcript for {n} of them.': '其中 {n} 条，{app} 没有提供转写。',
+  '{n} calendar read directly, without the Mac’s Calendar app.':
+    '直接读取 {n} 个日历，不经过 Mac 的日历应用。',
+  '{n} calendars read directly, without the Mac’s Calendar app.':
+    '直接读取 {n} 个日历，不经过 Mac 的日历应用。',
   '{n} was already here.': '{n} 条之前已导入。',
   '{n} were already here.': '{n} 条之前已导入。',
   '{size} of saved audio moves to the macOS Trash.': '{size} 录音会移到 macOS 的废纸篓。',

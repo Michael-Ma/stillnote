@@ -85,6 +85,7 @@ export function SettingsDialog({
   onBackup,
   onReveal,
   onTemplate,
+  onCalendarLinks,
   onUsage,
 }) {
   const t = useT();
@@ -331,7 +332,7 @@ export function SettingsDialog({
               <div>
                 <label htmlFor="meetingReminders">{t('Meeting reminders')}</label>
                 <small>
-                  {data.settings.calendarConnected
+                  {data.settings.calendarConnected || data.calendarFeeds.length > 0
                     ? t('Notify me a minute before calendar meetings while Stillnote is open.')
                     : t('Connect your calendar on Home to get a reminder before each meeting.')}
                 </small>
@@ -341,6 +342,27 @@ export function SettingsDialog({
                 checked={data.settings.meetingReminders ?? true}
                 onChange={(v) => guard(() => setting('meetingReminders', v))}
               />
+            </div>
+            <div className="setting-row">
+              <div>
+                <label>{t('Calendar links')}</label>
+                <small>
+                  {data.calendarFeeds.some((feed) => feed.problem)
+                    ? t('A calendar link has stopped working.')
+                    : data.calendarFeeds.length
+                      ? t.count(
+                          data.calendarFeeds.length,
+                          '{n} calendar read directly, without the Mac’s Calendar app.',
+                          '{n} calendars read directly, without the Mac’s Calendar app.',
+                        )
+                      : t(
+                          'Read Google, Outlook or iCloud calendars without the Mac’s Calendar app.',
+                        )}
+                </small>
+              </div>
+              <button className="secondary" onClick={onCalendarLinks}>
+                {data.calendarFeeds.length ? t('Manage') : t('Add a link')}
+              </button>
             </div>
             <div className="setting-row">
               <div>

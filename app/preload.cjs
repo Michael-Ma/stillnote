@@ -21,6 +21,7 @@ const channels = [
   'deletion-size',
   'delete-forever',
   'calendar',
+  'calendar-feeds',
   'start-call',
   'join-call',
   'audio-devices',

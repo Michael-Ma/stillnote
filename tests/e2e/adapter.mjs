@@ -130,6 +130,15 @@ export function createTestAdapter({ dataDir }) {
     detection: { settle: 300, gap: 1500 },
     // Meeting-end detection keeps its real thresholds unless a scenario shortens them.
     ...(scenario.meetingEnd ? { meetingEnd: scenario.meetingEnd } : {}),
+    // A calendar link's answer, from the scenario instead of the network.
+    ...(scenario.calendarFeed
+      ? {
+          fetchCalendar: async (url) => {
+            log({ type: 'calendar-link', host: new URL(url).host });
+            return new Response(scenario.calendarFeed);
+          },
+        }
+      : {}),
     // Granola and Notion for import: connected on request, answering each tool from the scenario.
     ...(scenario.sources
       ? {

@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   ipcMain,
   safeStorage,
   shell,
@@ -41,6 +42,7 @@ import {
 } from './store.mjs';
 import { ChatGPT } from './auth.mjs';
 import { collectImportFiles, noteExtensions, parseNoteFile } from './import-formats.mjs';
+import { CalendarFeeds, mergeCalendars, recognizeFeed } from './calendar-feed.mjs';
 import { McpConnections } from './mcp-auth.mjs';
 import { sourceImport } from './source-import.mjs';
 import {
@@ -150,7 +152,11 @@ if (!app.requestSingleInstanceLock()) {
     recording = null,
     starting = false,
     stopping = false,
+    // What Home and reminders use: the Mac's calendars and any calendar links, merged.
     calendarEvents = [],
+    macEvents = [],
+    feedEvents = [],
+    calendarFeeds,
     powerId,
     closing = false,
     rendererGone = false,
@@ -236,6 +242,7 @@ if (!app.requestSingleInstanceLock()) {
     recording,
     starting,
     calendar: calendarEvents,
+    calendarFeeds: calendarFeeds?.list() ?? [],
     dataDir: app.getPath('userData'),
     systemLanguages: systemLanguages(),
   });
@@ -756,15 +763,19 @@ if (!app.requestSingleInstanceLock()) {
         if (e.type === 'stopped')
           completed = finishCapture(e.status === 'failed' ? 'failed' : 'completed', e);
         if (e.type === 'calendar') {
-          calendarEvents = e.events;
+          macEvents = e.events;
+          calendarEvents = mergeCalendars(macEvents, feedEvents);
           meetingEnd?.calendar(recordingEventEnd());
           if (!store.settings().calendarConnected) store.setting('calendarConnected', true);
-          calendarWait?.resolve(e.events);
+          calendarWait?.resolve(calendarEvents);
           calendarWait = undefined;
         }
         if (e.type === 'error') {
           // Without calendar access, week-old events must not keep sending reminders.
-          if (e.op === 'calendar') calendarEvents = [];
+          if (e.op === 'calendar') {
+            macEvents = [];
+            calendarEvents = mergeCalendars(macEvents, feedEvents);
+          }
           if (!e.op || e.op === 'calendar') {
             calendarWait?.reject(new Error(e.message));
             calendarWait = undefined;
@@ -782,7 +793,8 @@ if (!app.requestSingleInstanceLock()) {
           )
             finishCapture('startfailed', e);
         }
-        if (!muted) emit({ ...e, recording });
+        if (!muted)
+          emit({ ...e, ...(e.type === 'calendar' ? { events: calendarEvents } : {}), recording });
         if (
           completed &&
           e.status !== 'failed' &&
@@ -876,6 +888,14 @@ if (!app.requestSingleInstanceLock()) {
       };
       send({ op: 'calendar' });
     });
+  }
+  // The calendar links' meetings beside the Mac's; a link that fails keeps its last meetings.
+  async function refreshFeeds() {
+    feedEvents = await calendarFeeds.events();
+    calendarEvents = mergeCalendars(macEvents, feedEvents);
+    meetingEnd?.calendar(recordingEventEnd());
+    emit({ type: 'calendar-feeds', events: calendarEvents, feeds: calendarFeeds.list() });
+    return calendarEvents;
   }
   function register(name, fn) {
     ipcMain.handle('stillnote:' + name, async (event, ...args) => {
@@ -1108,6 +1128,16 @@ if (!app.requestSingleInstanceLock()) {
         });
       try {
         connections.load();
+      } catch (e) {
+        startupError ??= e.message;
+      }
+      calendarFeeds = new CalendarFeeds({
+        path: join(app.getPath('userData'), 'calendar-feeds.enc'),
+        encryption: safeStorage,
+        fetch: testAdapter?.fetchCalendar ?? globalThis.fetch,
+      });
+      try {
+        calendarFeeds.load();
       } catch (e) {
         startupError ??= e.message;
       }
@@ -1587,7 +1617,36 @@ if (!app.requestSingleInstanceLock()) {
         emit({ type: 'meeting', meeting: m });
         return m;
       });
-      register('calendar', () => loadCalendar());
+      // Someone using only calendar links is never asked for access to the Mac's calendars.
+      register('calendar', async ({ mac = false } = {}) => {
+        const useMac = mac || store.settings().calendarConnected || !calendarFeeds.list().length;
+        await Promise.all([useMac ? loadCalendar() : null, refreshFeeds()]);
+        return calendarEvents;
+      });
+      // Calendar links: main alone holds them. The renderer sees hosts, and clipboard text only
+      // ever comes back as "there is a calendar link from this host".
+      const calendarPages = {
+        google: 'https://calendar.google.com/calendar/r/settings',
+        outlook: 'https://outlook.office.com/calendar/options/calendar/SharedCalendars',
+      };
+      register('calendar-feeds', async (action, input) => {
+        if (action === 'clipboard') {
+          const found = recognizeFeed(clipboard.readText());
+          return found && { kind: found.kind, host: found.host };
+        }
+        if (action === 'open') {
+          if (!Object.hasOwn(calendarPages, input)) throw new Error('Unknown calendar.');
+          await openExternal(calendarPages[input]);
+          return null;
+        }
+        if (action === 'add') {
+          const url = input?.clipboard ? recognizeFeed(clipboard.readText())?.url : input?.url;
+          if (!url) throw new Error('Paste the full calendar link.');
+          await calendarFeeds.add(url);
+        } else if (action === 'remove') calendarFeeds.remove(input);
+        else throw new Error('Unknown calendar action.');
+        return { feeds: calendarFeeds.list(), events: await refreshFeeds() };
+      });
       // Start a meeting: a new Google Meet or Zoom call opens in the browser or meeting app, and
       // the renderer records it in a new note. Only these fixed addresses can be opened.
       register('start-call', async (service) => {
@@ -2011,6 +2070,7 @@ if (!app.requestSingleInstanceLock()) {
         const wanted = settings.meetingReminders !== false || settings.meetingDetection !== false;
         if (settings.calendarConnected && wanted && !calendarWait)
           loadCalendar({ quiet: true }).catch(() => {});
+        if (wanted && calendarFeeds.list().length) refreshFeeds().catch(() => {});
       };
       refreshCalendar();
       watchMicrophone();

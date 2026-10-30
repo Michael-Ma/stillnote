@@ -14,7 +14,7 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, protocol } from './fixtures/electron.mjs';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol } from './fixtures/electron.mjs';
 
 const hook = registerHooks({
   resolve(specifier, context, next) {
@@ -893,6 +893,56 @@ test('importing from Granola through main: connect, list, import, and nothing tw
   assert.ok(events().some((e) => e.type === 'source-tool' && e.name === 'get_meeting_transcript'));
   await assert.rejects(call('import-source', 'explode', 'granola'), /Unknown import action/);
   await assert.rejects(call('import-source', 'list', 'evernote', {}), /Unknown app/);
+});
+test('calendar links stay in main: added, merged into the calendar, never asking for the Mac’s', async (t) => {
+  const stamp = (d) => d.toISOString().replace(/[-:]|\.\d{3}/g, '');
+  const soon = new Date(Date.now() + 3_600_000);
+  const later = new Date(soon.getTime() + 1_800_000);
+  const { call, events } = await setup(t, 'calendar-links', undefined, {
+    calendarFeed: [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'BEGIN:VEVENT',
+      'UID:linked',
+      'SUMMARY:Linked standup',
+      `DTSTART:${stamp(soon)}`,
+      `DTEND:${stamp(later)}`,
+      'DESCRIPTION:Join: https://meet.google.com/abc-defg-hij',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n'),
+  });
+  const link = 'https://calendar.google.com/calendar/ical/x/private-secret/basic.ics';
+  assert.deepEqual((await call('state')).calendarFeeds, []);
+  clipboard.text = `here it is ${link}`;
+  t.after(() => (clipboard.text = ''));
+  assert.deepEqual(await call('calendar-feeds', 'clipboard'), {
+    kind: 'google',
+    host: 'calendar.google.com',
+  });
+  const added = await call('calendar-feeds', 'add', { clipboard: true });
+  assert.equal(added.feeds[0].host, 'calendar.google.com');
+  assert.deepEqual(
+    added.events.map((e) => e.title),
+    ['Linked standup'],
+  );
+  const state = await call('state');
+  assert.ok(!JSON.stringify(state).includes('private-secret'));
+  assert.equal(state.calendar[0].id, `ics:${added.feeds[0].id}:linked`);
+  // Refreshing with only a link never asks for the Mac's calendars; asking for them does.
+  const asked = () => events().filter((e) => e.type === 'native-command' && e.op === 'calendar');
+  assert.equal((await call('calendar')).length, 1);
+  assert.equal(asked().length, 0);
+  assert.equal((await call('calendar', { mac: true })).length, 1);
+  assert.equal(asked().length, 1);
+  assert.deepEqual((await call('calendar-feeds', 'remove', added.feeds[0].id)).events, []);
+  await assert.rejects(call('calendar-feeds', 'add', {}), /full calendar link/);
+  await assert.rejects(
+    call('calendar-feeds', 'add', { url: 'http://a.example/x.ics' }),
+    /full calendar link/,
+  );
+  await assert.rejects(call('calendar-feeds', 'open', 'https://evil.example'), /Unknown calendar/);
+  await assert.rejects(call('calendar-feeds', 'explode'), /Unknown calendar action/);
 });
 test('the renderer can call exactly the operations main registers', () => {
   const read = (file) => readFileSync(new URL(`../app/${file}`, import.meta.url), 'utf8');

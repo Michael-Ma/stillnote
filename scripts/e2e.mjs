@@ -30,6 +30,21 @@ if (args.includes('--help')) {
 const runId = new Date().toISOString().replace(/[:.]/g, '-');
 const output = resolve(option('--output') ?? join(root, 'output/e2e', runId));
 mkdirSync(output, { recursive: true });
+// A calendar link's answer: one meeting that starts in an hour.
+function calendarFeed(title) {
+  const stamp = (at) => new Date(at).toISOString().replace(/[-:]|\.\d{3}/g, '');
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'BEGIN:VEVENT',
+    'UID:e2e-linked',
+    `SUMMARY:${title}`,
+    `DTSTART:${stamp(Date.now() + 3_600_000)}`,
+    `DTEND:${stamp(Date.now() + 5_400_000)}`,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+}
 const suites = {
   language: {
     run: language,
@@ -110,6 +125,7 @@ const suites = {
     run: notebook,
     scenario: {
       connected: false,
+      calendarFeed: calendarFeed('E2E linked standup'),
       sources: {
         granola: {
           list_meetings: {
@@ -149,6 +165,7 @@ const suites = {
       'folder/star',
       'Markdown export',
       'import from Granola',
+      'calendar link without the Mac calendar',
       'backup',
       'idempotent restore',
       'invalid import atomicity',

@@ -48,6 +48,7 @@ export function HomeFeed({
   title,
   calendarBusy,
   calendar,
+  calendarLinks,
   newNote,
   startMeeting,
   joinMeeting,
@@ -71,20 +72,20 @@ export function HomeFeed({
   }, {});
   const todayKey = new Date().toDateString();
   // Granola always anchors the card on today, even when nothing else is left.
-  const days = data.calendar.length
-    ? Object.entries({ [todayKey]: byDay[todayKey] ?? [], ...byDay })
-    : [];
+  // A calendar link with no meetings this week is still connected, so today's card shows.
+  const connected = data.calendar.length > 0 || data.calendarFeeds.length > 0;
+  const days = connected ? Object.entries({ [todayKey]: byDay[todayKey] ?? [], ...byDay }) : [];
   return (
     <div className="home-feed">
       {view === 'home' && !query && (
         <section className="upcoming">
           <div className="section-heading">
             <h1>{t('Coming up')}</h1>
-            {data.calendar.length > 0 && (
+            {connected && (
               <IconButton
                 label={t('Refresh calendar')}
                 className="small"
-                onClick={calendar}
+                onClick={() => calendar()}
                 disabled={calendarBusy}
               >
                 <RefreshCw size={14} className={calendarBusy ? 'spin' : ''} />
@@ -155,9 +156,16 @@ export function HomeFeed({
                 <CalendarDays size={20} />
                 <div>
                   <strong>{t('Your meetings, all in one place')}</strong>
-                  <p>{t('Connect the calendars on your Mac to see what’s next.')}</p>
+                  <p>{t('Connect the calendars on your Mac, or add a calendar link.')}</p>
                 </div>
-                <button onClick={calendar} disabled={calendarBusy} className="calendar-connect">
+                <button className="text-button" onClick={calendarLinks}>
+                  {t('Use a link')}
+                </button>
+                <button
+                  onClick={() => calendar({ mac: true })}
+                  disabled={calendarBusy}
+                  className="calendar-connect"
+                >
                   {calendarBusy && <LoaderCircle size={13} className="spin" />}
                   {calendarBusy ? t('Connecting…') : t('Connect')}
                 </button>

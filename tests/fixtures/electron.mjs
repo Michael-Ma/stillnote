@@ -87,7 +87,18 @@ export const ipcMain = {
     this.handlers.set(name, fn);
   },
 };
-export const safeStorage = {};
+// Test-only reversible stand-in for the macOS-backed safeStorage.
+export const safeStorage = {
+  isEncryptionAvailable: () => true,
+  encryptString: (text) => Buffer.from(text),
+  decryptString: (bytes) => bytes.toString(),
+};
+export const clipboard = {
+  text: '',
+  readText() {
+    return this.text;
+  },
+};
 export const shell = { openExternal: async () => {}, openPath: async () => '' };
 export const dialog = {
   showOpenDialog: async () => ({ canceled: true }),

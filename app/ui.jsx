@@ -5,6 +5,7 @@ import { IconButton, Rich } from './components/Content.jsx';
 import { HomeFeed } from './components/HomeFeed.jsx';
 import { StartMeeting } from './components/StartMeeting.jsx';
 import { ImportDialog } from './components/ImportDialog.jsx';
+import { CalendarLinks } from './components/CalendarLinks.jsx';
 import { Sidebar } from './components/Sidebar.jsx';
 import { NoteToolbar, NoteView } from './components/NoteView.jsx';
 import { EnhancePill, RecordPill } from './components/Dock.jsx';
@@ -185,6 +186,9 @@ function App() {
             ? { ...d, calendar: e.events, settings: { ...d.settings, calendarConnected: true } }
             : d,
         );
+      // Calendar links refreshed: their meetings, and any link that has stopped working.
+      if (e.type === 'calendar-feeds')
+        setData((d) => (d ? { ...d, calendar: e.events, calendarFeeds: e.feeds } : d));
       if (e.type === 'meeting-detected') setDetected({ event: e.event, at: Date.now() });
       if (e.type === 'meeting-end') setEndPrompt(e);
       if (['meeting-end-cleared', 'stopped'].includes(e.type)) setEndPrompt(null);
@@ -829,14 +833,15 @@ function App() {
       });
     });
   }
-  async function calendar() {
+  // `mac`: the person asked for the Mac's calendars; otherwise whatever is connected refreshes.
+  async function calendar({ mac = false } = {}) {
     setCalendarBusy(true);
     await guard(async () => {
-      const events = await call('calendar');
+      const events = await call('calendar', { mac });
       setData((d) => ({
         ...d,
         calendar: events,
-        settings: { ...d.settings, calendarConnected: true },
+        settings: { ...d.settings, calendarConnected: mac || d.settings.calendarConnected },
       }));
     });
     setCalendarBusy(false);
@@ -1208,6 +1213,7 @@ function App() {
                   title={title}
                   calendarBusy={calendarBusy}
                   calendar={calendar}
+                  calendarLinks={() => setModal({ kind: 'calendar-links' })}
                   newNote={newNote}
                   startMeeting={(input) => oneCall(() => startMeeting(input))}
                   joinMeeting={joinMeeting}
@@ -1415,6 +1421,7 @@ function App() {
                     settings: t('Settings'),
                     folder: modal?.id ? t('Rename folder') : t('New folder'),
                     import: t('Import'),
+                    'calendar-links': t('Add a calendar link'),
                     transcript: t('Add a transcript'),
                     segment: t('Edit transcript'),
                     history: t('Previous summaries'),
@@ -1458,6 +1465,15 @@ function App() {
                 }
                 onReveal={() => guard(() => call('reveal'))}
                 onTemplate={() => setModal({ kind: 'template', name: '', prompt: '' })}
+                onCalendarLinks={() => setModal({ kind: 'calendar-links' })}
+              />
+            ) : modal?.kind === 'calendar-links' ? (
+              <CalendarLinks
+                call={call}
+                feeds={data.calendarFeeds}
+                onChange={({ feeds, events }) =>
+                  setData((d) => ({ ...d, calendar: events, calendarFeeds: feeds }))
+                }
               />
             ) : modal?.kind === 'import' ? (
               <ImportDialog

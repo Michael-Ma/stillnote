@@ -2537,6 +2537,55 @@ dialog::backdrop {
   font-size: var(--text-sm);
   font-style: normal;
 }
+.calendar-links .import-kinds li > span {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  line-height: 1.4;
+}
+.calendar-links .text-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+.clipboard-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  font-size: var(--text-sm);
+}
+.clipboard-link span {
+  flex: 1;
+}
+.calendar-feeds {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.calendar-feeds li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.calendar-feeds span {
+  display: grid;
+  min-width: 0;
+}
+.calendar-feeds strong {
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+.calendar-feeds small {
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
 .import-dialog .primary {
   display: inline-flex;
   align-items: center;
