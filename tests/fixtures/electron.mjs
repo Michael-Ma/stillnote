@@ -14,6 +14,7 @@ Object.assign(app, {
   },
   commandLine: { appendSwitch() {} },
   getPreferredSystemLanguages: () => ['en-US'],
+  getVersion: () => '0.0.0-test',
   requestSingleInstanceLock: () => true,
   focus() {},
   whenReady: async () => {},

@@ -130,6 +130,47 @@ export function createTestAdapter({ dataDir }) {
     detection: { settle: 300, gap: 1500 },
     // Meeting-end detection keeps its real thresholds unless a scenario shortens them.
     ...(scenario.meetingEnd ? { meetingEnd: scenario.meetingEnd } : {}),
+    // Granola and Notion for import: connected on request, answering each tool from the scenario.
+    ...(scenario.sources
+      ? {
+          createConnections() {
+            const names = { granola: 'Granola', notion: 'Notion' };
+            const connected = new Set();
+            const status = () =>
+              Object.fromEntries(
+                Object.entries(names).map(([id, name]) => [
+                  id,
+                  { name, connected: connected.has(id), connecting: false },
+                ]),
+              );
+            return {
+              load() {},
+              status,
+              async connect(id) {
+                log({ type: 'source-connect', id });
+                connected.add(id);
+                return status();
+              },
+              cancel() {},
+              async disconnect(id) {
+                connected.delete(id);
+                return status();
+              },
+              async tools() {
+                return [];
+              },
+              async tool(id, name, args) {
+                log({ type: 'source-tool', id, name, args });
+                if (!connected.has(id)) throw new Error(`Connect ${names[id]} first.`);
+                const answer = scenario.sources[id]?.[name];
+                if (answer === undefined) throw new Error(`${name} failed.`);
+                const text = typeof answer === 'string' ? answer : JSON.stringify(answer);
+                return { content: [{ type: 'text', text }] };
+              },
+            };
+          },
+        }
+      : {}),
     createAuth() {
       writeFileSync(join(dataDir, 'adapter-auth-ready.json'), JSON.stringify({ synthetic: true }));
       let connected = scenario.connected !== false;

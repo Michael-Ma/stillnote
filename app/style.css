@@ -2381,6 +2381,162 @@ dialog::backdrop {
 .import-hint {
   margin: 0;
 }
+.import-section {
+  margin: 6px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.import-apps {
+  display: grid;
+  gap: 6px;
+}
+.import-app {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  text-align: left;
+}
+.import-app:hover,
+.import-app:focus-visible {
+  background: var(--hover);
+}
+.import-app > span:nth-child(2) {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  line-height: 1.35;
+}
+.import-app strong {
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+.import-app small {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.import-app > svg {
+  color: var(--muted);
+}
+.import-app-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  background: var(--ink);
+  color: var(--surface);
+  font: 500 15px/1 var(--font-serif);
+}
+.import-app-mark.granola {
+  background: #3f6f45;
+  color: #fff;
+}
+.source-import p {
+  margin: 0;
+  line-height: 1.5;
+}
+.import-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+}
+.import-hint svg {
+  vertical-align: -2px;
+}
+.source-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.modal-inner form.source-search {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+.source-search button {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+.source-search button:not(:disabled):hover {
+  background: var(--hover);
+}
+.source-search input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  outline: none;
+}
+.source-items {
+  display: grid;
+  gap: 2px;
+  max-height: 320px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.source-items label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.source-items label:hover {
+  background: var(--hover);
+}
+.source-items label.imported {
+  cursor: default;
+  opacity: 0.6;
+}
+.source-items input {
+  margin-top: 3px;
+}
+.source-items label > span {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+}
+.source-items strong {
+  overflow: hidden;
+  font-size: var(--text-md);
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.source-items small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.source-items em {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-style: normal;
+}
 .import-dialog .primary {
   display: inline-flex;
   align-items: center;

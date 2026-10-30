@@ -35,6 +35,7 @@ const channels = [
   'export',
   'backup',
   'import',
+  'import-source',
   'reveal',
   'open-privacy',
   'finish-close',

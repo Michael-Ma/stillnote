@@ -223,6 +223,43 @@ export async function notebook(h) {
   await folderButton.waitFor();
   state = await h.state();
   assert.equal(state.meetings.find((m) => m.id === meeting.id).folderId, state.folders[0].id);
+
+  // Straight from Granola: connect, choose, import; the same meeting is not copied twice.
+  await page.getByRole('button', { name: 'Import notes or transcripts', exact: true }).click();
+  await page.getByRole('button', { name: /^From Granola/ }).click();
+  await page.getByRole('button', { name: 'Connect Granola', exact: true }).click();
+  const granola = page.getByRole('list', { name: 'Items in Granola', exact: true });
+  await granola.getByRole('checkbox', { name: /E2E Granola pricing review/ }).waitFor();
+  assert.equal(await granola.getByRole('checkbox').isChecked(), true);
+  const importButton = page.getByRole('button', { name: 'Import 1 item', exact: true });
+  assert.equal(await importButton.isEnabled(), true);
+  await h.screenshot('import-granola');
+  await importButton.click();
+  await page.getByRole('status').filter({ hasText: 'Imported 1 note.' }).waitFor();
+  const fromGranola = (await h.state()).meetings.find((m) => m.sourceKey === 'granola:g1');
+  assert.equal(fromGranola.summary, 'Ship the team plan');
+  assert.equal(fromGranola.transcript.length, 2);
+  await page.getByRole('button', { name: 'Import notes or transcripts', exact: true }).click();
+  await page.getByRole('button', { name: /^From Granola/ }).click();
+  await granola.getByText('Imported', { exact: true }).waitFor();
+  assert.equal(
+    await page.getByRole('button', { name: 'Import 0 items', exact: true }).isDisabled(),
+    true,
+  );
+  await page.getByRole('button', { name: 'All import options', exact: true }).click();
+
+  // From Notion: search, then import the page found.
+  await page.getByRole('button', { name: /^From Notion/ }).click();
+  await page.getByRole('button', { name: 'Connect Notion', exact: true }).click();
+  await page.getByLabel('Search Notion', { exact: true }).fill('weekly');
+  await page.locator('.source-search').getByRole('button', { name: 'Search' }).click();
+  const notion = page.getByRole('list', { name: 'Items in Notion', exact: true });
+  await notion.getByRole('checkbox', { name: /E2E Notion weekly sync/ }).waitFor();
+  await h.screenshot('import-notion');
+  await page.getByRole('button', { name: 'Import 1 item', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Imported 1 note.' }).waitFor();
+  const fromNotion = (await h.state()).meetings.find((m) => m.title === 'E2E Notion weekly sync');
+  assert.equal(fromNotion.notes, 'Decisions from Notion');
   await page.getByRole('button', { name: 'Home', exact: true }).click();
   await h.open(title);
   await h.desktop.evaluate(({ BrowserWindow }) =>

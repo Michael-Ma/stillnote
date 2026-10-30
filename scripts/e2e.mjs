@@ -108,13 +108,47 @@ const suites = {
   },
   notebook: {
     run: notebook,
-    scenario: { connected: false },
+    scenario: {
+      connected: false,
+      sources: {
+        granola: {
+          list_meetings: {
+            meetings: [
+              { id: 'g1', title: 'E2E Granola pricing review', date: '2026-10-21T10:00:00Z' },
+            ],
+          },
+          get_meetings: {
+            meetings: [
+              { id: 'g1', private_notes: 'Seats question', summary: 'Ship the team plan' },
+            ],
+          },
+          get_meeting_transcript: { transcript: '[0:05] Me: Shall we ship?\n[0:09] Them: Yes.' },
+        },
+        notion: {
+          'notion-search': {
+            results: [
+              {
+                id: '01234567-89ab-cdef-0123-456789abcdef',
+                title: 'E2E Notion weekly sync',
+                type: 'page',
+                timestamp: '2026-10-22T10:00:00Z',
+              },
+            ],
+          },
+          'notion-fetch': {
+            title: 'E2E Notion weekly sync',
+            text: '<page><content>Decisions from Notion</content></page>',
+          },
+        },
+      },
+    },
     checks: [
       'create/edit/save',
       'transcript entry',
       'dock Transcript button and ⌘⇧T open the sheet',
       'folder/star',
       'Markdown export',
+      'import from Granola',
       'backup',
       'idempotent restore',
       'invalid import atomicity',

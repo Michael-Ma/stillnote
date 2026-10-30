@@ -41,6 +41,8 @@ import {
 } from './store.mjs';
 import { ChatGPT } from './auth.mjs';
 import { collectImportFiles, noteExtensions, parseNoteFile } from './import-formats.mjs';
+import { McpConnections } from './mcp-auth.mjs';
+import { sourceImport } from './source-import.mjs';
 import {
   dueReminders,
   eventKey,
@@ -136,6 +138,9 @@ if (!app.requestSingleInstanceLock()) {
   let win,
     store,
     auth,
+    // Granola and Notion, connected for importing (app/mcp-auth.mjs, app/source-import.mjs).
+    connections,
+    importer,
     claude,
     native,
     activeAI,
@@ -1093,6 +1098,24 @@ if (!app.requestSingleInstanceLock()) {
       } catch (e) {
         startupError = e.message;
       }
+      connections =
+        testAdapter?.createConnections?.() ??
+        new McpConnections({
+          path: join(app.getPath('userData'), 'connections.enc'),
+          encryption: safeStorage,
+          openBrowser: openExternal,
+          version: app.getVersion(),
+        });
+      try {
+        connections.load();
+      } catch (e) {
+        startupError ??= e.message;
+      }
+      importer = sourceImport({
+        connections,
+        store,
+        progress: (p) => emit({ type: 'import-progress', ...p }),
+      });
       const onClaudeChange = () => emit({ type: 'ai', ai: aiNow() });
       // STILLNOTE_DISABLE_CLAUDE keeps scripted UI runs from detecting the developer's own CLI.
       claude =
@@ -1702,6 +1725,19 @@ if (!app.requestSingleInstanceLock()) {
           JSON.stringify({ ...backup, images: [...images.values()] }),
           ['json'],
         );
+      });
+      // Importing from Granola or Notion: connect in the browser, list, then import chosen items.
+      register('import-source', async (action, source, input) => {
+        if (action === 'status') return connections.status();
+        if (action === 'connect') return connections.connect(source);
+        if (action === 'cancel') {
+          connections.cancel(source);
+          return connections.status();
+        }
+        if (action === 'disconnect') return connections.disconnect(source);
+        if (action === 'list') return importer.list(source, input);
+        if (action === 'import') return importer.run(source, input);
+        throw new Error('Unknown import action.');
       });
       register('import', async () => {
         const r = await dialog.showOpenDialog(win, {

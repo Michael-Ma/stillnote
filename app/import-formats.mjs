@@ -134,9 +134,17 @@ const HEADERS = [
 // A time, a speaker and the words on one line.
 const INLINE = [
   // "[00:01:02] Michael: …", "00:01:02 - Michael: …"
-  new RegExp(String.raw`^[(\[]?(${STAMP})[)\]]?\s*[-–]?\s*([^:：\n]{1,60}?)\s*[:：]\s+(.+)$`),
+  [
+    new RegExp(String.raw`^[(\[]?(${STAMP})[)\]]?\s*[-–]?\s*([^:：\n]{1,60}?)\s*[:：]\s+(.+)$`),
+    (m) => [m[1], m[2], m[3]],
+  ],
   // "Michael (00:01): …"
-  new RegExp(String.raw`^([^:：\n(\[]{1,60}?)\s*[(\[](${STAMP})[)\]]\s*[:：]\s+(.+)$`),
+  [
+    new RegExp(String.raw`^([^:：\n(\[]{1,60}?)\s*[(\[](${STAMP})[)\]]\s*[:：]\s+(.+)$`),
+    (m) => [m[2], m[1], m[3]],
+  ],
+  // "[0:05] …" with nobody named
+  [new RegExp(String.raw`^[(\[](${STAMP})[)\]]\s+(.+)$`), (m) => [m[1], '', m[2]]],
 ];
 
 // Transcript-shaped text as rows, or null when it reads like notes.
@@ -178,12 +186,12 @@ export function parseTextTranscript(raw) {
     let hits = 0;
     for (const line of lines) {
       let row = null;
-      for (const [i, re] of INLINE.entries()) {
+      for (const [re, parts] of INLINE) {
         const m = re.exec(line);
         if (!m) continue;
-        const [stamp, speaker] = i === 0 ? [m[1], m[2]] : [m[2], m[1]];
+        const [stamp, speaker, words] = parts(m);
         if (seconds(stamp) === null) continue;
-        row = { start: seconds(stamp), speaker: speaker.trim(), text: m[3].trim() };
+        row = { start: seconds(stamp), speaker: speaker.trim() || null, text: words.trim() };
         break;
       }
       if (row) {
@@ -258,7 +266,8 @@ export const fileTitle = (name) =>
     .replace(/\s+[0-9a-f]{32}$/i, '')
     .trim();
 
-export function parseMarkdown(raw, title = '') {
+// `headingTitle: false` keeps a leading # heading in the notes (Notion pages carry their title apart).
+export function parseMarkdown(raw, title = '', { headingTitle = true } = {}) {
   let text = normalize(raw);
   const facts = { title, createdAt: null, participants: '' };
   const property = (key, value) => {
@@ -278,7 +287,7 @@ export function parseMarkdown(raw, title = '') {
     text = text.slice(front[0].length);
   }
   const heading = /^\s*#\s+(.+?)\s*#*\s*(?:\n|$)/.exec(text);
-  if (heading && (!front || facts.title === title || facts.title === heading[1])) {
+  if (headingTitle && heading && (!front || facts.title === title || facts.title === heading[1])) {
     facts.title = heading[1];
     text = text.slice(heading[0].length);
   }

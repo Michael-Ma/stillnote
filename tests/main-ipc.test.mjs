@@ -850,6 +850,50 @@ test('import takes several files or a folder, lists unreadable files, and adds n
   dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
   assert.equal(await call('import'), null);
 });
+test('importing from Granola through main: connect, list, import, and nothing twice', async (t) => {
+  const { call, events } = await setup(t, 'import-source', undefined, {
+    sources: {
+      granola: {
+        list_meetings: {
+          meetings: [{ id: 'g1', title: 'Pricing review', date: '2026-10-21T10:00:00Z' }],
+        },
+        get_meetings: { meetings: [{ id: 'g1', private_notes: 'Seats', summary: 'Ship it' }] },
+        get_meeting_transcript: { transcript: '[0:05] Me: Hello\n[0:09] Them: Hi there' },
+      },
+    },
+  });
+  assert.deepEqual((await call('import-source', 'status')).granola, {
+    name: 'Granola',
+    connected: false,
+    connecting: false,
+  });
+  await assert.rejects(call('import-source', 'list', 'granola', {}), /Connect Granola first/);
+  assert.equal((await call('import-source', 'connect', 'granola')).granola.connected, true);
+  const items = await call('import-source', 'list', 'granola', { range: 'last_30_days' });
+  assert.deepEqual(
+    items.map((item) => [item.id, item.title, item.imported]),
+    [['g1', 'Pricing review', false]],
+  );
+  const result = await call('import-source', 'import', 'granola', ['g1']);
+  assert.equal(result.meetings.length, 1);
+  assert.equal(result.withoutTranscript, 0);
+  const note = (await call('state')).meetings.find((m) => m.sourceKey === 'granola:g1');
+  assert.equal(note.title, 'Pricing review');
+  assert.equal(note.notes, 'Seats');
+  assert.equal(note.summary, 'Ship it');
+  assert.deepEqual(
+    note.transcript.map((s) => [s.speaker, s.timestamp]),
+    [
+      ['Me', 5],
+      ['Them', 9],
+    ],
+  );
+  assert.equal((await call('import-source', 'list', 'granola', {}))[0].imported, true);
+  assert.equal((await call('import-source', 'import', 'granola', ['g1'])).duplicates, 1);
+  assert.ok(events().some((e) => e.type === 'source-tool' && e.name === 'get_meeting_transcript'));
+  await assert.rejects(call('import-source', 'explode', 'granola'), /Unknown import action/);
+  await assert.rejects(call('import-source', 'list', 'evernote', {}), /Unknown app/);
+});
 test('the renderer can call exactly the operations main registers', () => {
   const read = (file) => readFileSync(new URL(`../app/${file}`, import.meta.url), 'utf8');
   const registered = [...read('main.mjs').matchAll(/register\(\s*'([\w-]+)'/g)].map((m) => m[1]);

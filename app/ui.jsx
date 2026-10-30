@@ -44,6 +44,7 @@ function App() {
     [sheet, setSheet] = useState(null),
     [searchOpen, setSearchOpen] = useState(false),
     [errorState, setErrorState] = useState(null),
+    [importProgress, setImportProgress] = useState(null),
     [loading, setLoading] = useState(true),
     [silent, setSilent] = useState({}),
     [aiTarget, setAiTarget] = useState(null),
@@ -280,6 +281,7 @@ function App() {
           );
         else setError(message, e.permission);
       }
+      if (e.type === 'import-progress') setImportProgress(e);
       if (e.type === 'ai-delta') {
         pendingDelta.current += e.delta;
         deltaTimer.current ||= setTimeout(() => {
@@ -696,6 +698,35 @@ function App() {
           }),
         );
     });
+  }
+  // Items imported from Granola or Notion (app/source-import.mjs), told like a file import.
+  async function sourceImported(r, app) {
+    setModal(null);
+    setImportProgress(null);
+    await load();
+    setNotice(
+      [
+        r.meetings.length
+          ? t.count(r.meetings.length, 'Imported {n} note.', 'Imported {n} notes.')
+          : t('Nothing new to import.'),
+        r.duplicates && t.count(r.duplicates, '{n} was already here.', '{n} were already here.'),
+        r.withoutTranscript &&
+          t.count(
+            r.withoutTranscript,
+            '{app} shared no transcript for {n} of them.',
+            '{app} shared no transcript for {n} of them.',
+            { app },
+          ),
+      ]
+        .filter(Boolean)
+        .join(' '),
+    );
+    if (r.failed.length)
+      setError(
+        t('Could not import {files}', {
+          files: r.failed.map(({ title, reason }) => `${title} (${t(reason)})`).join('; '),
+        }),
+      );
   }
   async function record(meetingId = selected) {
     await guard(async () => {
@@ -1429,7 +1460,12 @@ function App() {
                 onTemplate={() => setModal({ kind: 'template', name: '', prompt: '' })}
               />
             ) : modal?.kind === 'import' ? (
-              <ImportDialog onChoose={importFiles} />
+              <ImportDialog
+                onChoose={importFiles}
+                call={call}
+                progress={importProgress}
+                onImported={sourceImported}
+              />
             ) : modal?.kind === 'folder' ? (
               <form
                 onSubmit={(e) => {
