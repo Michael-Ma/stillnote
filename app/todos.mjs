@@ -17,15 +17,15 @@ What you get:
 - <my_names>: what people call me. Each name is me. Speech recognition mishears names: a similar-sounding name can still be me when the context supports it. May be empty.
 - <my_notes>: what I typed during the meeting. Lines under a "Meeting context" line at the top were copied from the calendar invite: background, never a source of action items.
 - <enhanced_notes>: an AI write-up of the meeting. Use it to find items, but it can be wrong about who owns what; check against the transcript.
-- <transcript>: on-device speech recognition, one line per phrase with its time. "You" is my microphone: mostly me, but in an in-person meeting it also hears others in the room. "Meeting audio" is everyone else on the call, possibly several people. Any other label is a name I assigned. When my microphone picks up the speakers, the same sentence can appear under both labels; count it once, as theirs.
+- <transcript>: on-device speech recognition, one line per phrase with its time. "You" is my microphone: mostly me, but in an in-person meeting it also hears others in the room, and without headphones it re-records the call from my speakers. "Meeting audio" is everyone else on the call, possibly several people. Any other label is a name I assigned. A You line that repeats a Meeting audio line from the same moments, even garbled, is that echo: the sentence is theirs, not mine, so judge it by the Meeting audio line and never call an item unclear because of it. Whole meetings can be like this, so never take a You line as mine without checking for its twin. A You line that answers ("OK, I'll do that") is mine.
 - <meeting>: title, date, participants and length. The participants include me.
 
-An action item is a concrete thing that someone committed to do, was asked to do without refusing, or that the meeting agreed must happen afterwards. It is not an idea, an option under discussion, a question, a wish, or something already finished. One thing is one item, however often it comes up.
+An action item is a concrete thing that someone committed to do, was asked to do without refusing, or that the meeting agreed must happen afterwards. It is not an idea, an option under discussion, a question, something already finished, a wish or goal nobody took on ("should", "ideally", "it would be good to", "最好", "希望"), or a courtesy that depends on something that may never happen ("if you have questions, let me know", "if I think of anything I'll ask"). One thing is one item, however often it comes up.
 
 Decide "assignee":
 - "me": I committed to it ("I'll send it" under You), someone assigned it to me by one of my names, I accepted a request made to me, or my notes state it as mine. When the participants list exactly one other person, a "you" under Meeting audio is me.
 - "other": someone else committed to it ("I'll send it" under Meeting audio), or it was assigned to another person by name.
-- "unclear": "we", "someone", the team, no subject, or anything else you cannot pin on one side. Never guess: a wrong "me" or "other" costs more than "unclear".
+- "unclear": a real action item said of "we", "someone", the team, or nobody in particular, that you cannot pin on one side. Never guess: a wrong "me" or "other" costs more than "unclear". What is not an action item is left out, not marked unclear.
 
 For each item:
 - "task": the action, short and imperative. Add what the reader needs to understand it later, nothing more.
@@ -106,21 +106,38 @@ function findInSegments(segments, target) {
   return segments[starts.findLastIndex((start) => start <= found)];
 }
 
-// The phrase sharing most words with a quote the model tidied, or fixed a misheard word in.
-function closestSegment(segments, quote) {
-  const wanted = new Set(words(quote));
+// How much of these words a phrase has, and the phrase that has most of them, at least `least`.
+const wordsFound = (wanted, text) => {
+  const have = new Set(words(text));
+  return [...wanted].filter((w) => have.has(w)).length / wanted.size;
+};
+function closestSegment(segments, text, least) {
+  const wanted = new Set(words(text));
   if (wanted.size < 3) return null;
   let best = null,
-    bestShare = 0.75;
+    bestShare = least;
   for (const segment of segments) {
-    const have = new Set(words(segment.text));
-    const shared = [...wanted].filter((w) => have.has(w)).length;
-    if (shared / wanted.size > bestShare) {
+    const share = wordsFound(wanted, segment.text);
+    if (share > bestShare) {
       best = segment;
-      bestShare = shared / wanted.size;
+      bestShare = share;
     }
   }
   return best;
+}
+
+// Without headphones the microphone re-records the call, in 4 of 9 two-sided meetings for most of
+// what "You" says. Capture removes only near-verbatim repeats, because it must never delete the
+// user's speech; here a wrong match costs a mark at most, so a loose one will do. The other side's
+// line is the better record of what was said.
+const echoWindow = 15;
+const echoShare = 0.6;
+function echoOf(segment, transcript) {
+  if (segment.source !== 'microphone') return null;
+  const nearby = transcript.filter(
+    (s) => s.source === 'system' && Math.abs(s.timestamp - segment.timestamp) <= echoWindow,
+  );
+  return closestSegment(nearby, segment.text, echoShare);
 }
 
 // Where a quote really is. The two sides interleave by time, so a quote that spans phrases is also
@@ -129,7 +146,7 @@ export function locateEvidence(meeting, quote) {
   const target = bare(quote);
   if (target.length < 4) return null;
   const transcript = meeting.transcript ?? [];
-  const segment =
+  const found =
     findInSegments(transcript, target) ??
     findInSegments(
       transcript.filter((s) => s.source === 'microphone'),
@@ -139,7 +156,8 @@ export function locateEvidence(meeting, quote) {
       transcript.filter((s) => s.source === 'system'),
       target,
     ) ??
-    closestSegment(transcript, quote);
+    closestSegment(transcript, quote, 0.75);
+  const segment = found && (echoOf(found, transcript) ?? found);
   if (segment)
     return {
       from: 'transcript',
@@ -169,13 +187,19 @@ const namesMe = (quote, names) => nameList(names).some((name) => bare(quote).inc
 const ownNotes = (meeting) =>
   meeting.notes.startsWith(contextHeader) ? '' : withoutImages(meeting.notes, '');
 
+// With one other person on the call, whoever is addressed is me.
+const justTwo = (meeting) => nameList(meeting.participants ?? '').length === 2;
+
 // "me" needs something to stand on. Without both audio sides "You" may be anyone in the room, and
-// an imported transcript has no sides at all, so the words themselves must name me.
+// an imported transcript has no sides at all, so the words themselves must name me. A line from
+// the other side is about me only if it names me, or nobody else could be meant.
 export function judgeAssignee(assignee, evidence, meeting, names = '') {
   if (assignee !== 'me') return assignee;
   if (!evidence) return 'unclear';
   if (evidence.from === 'notes') return ownNotes(meeting).trim() ? 'me' : 'unclear';
-  return twoSided(meeting) || namesMe(evidence.quote, names) ? 'me' : 'unclear';
+  if (namesMe(evidence.quote, names)) return 'me';
+  if (evidence.side === 'system') return justTwo(meeting) ? 'me' : 'unclear';
+  return twoSided(meeting) ? 'me' : 'unclear';
 }
 
 // A parsed answer as the todos it proposes for this meeting.

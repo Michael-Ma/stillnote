@@ -196,6 +196,48 @@ test('"me" stands on both audio sides, my own notes, or my name', () => {
   );
 });
 
+test("a line my microphone only echoed counts as the other side's", () => {
+  const echoing = meeting({
+    transcript: [
+      segment('The database should be ready and I will build the pipeline', 'system', 40),
+      segment('The data bass should be ready and I will build pipeline', 'microphone', 42),
+      segment('Sounds good, I will review the launch checklist tonight', 'microphone', 50),
+    ],
+  });
+  const heard = locateEvidence(echoing, 'The data bass should be ready and I will build pipeline');
+  assert.equal(heard.side, 'system');
+  assert.equal(heard.speaker, 'Meeting audio');
+  assert.equal(heard.quote, 'The database should be ready and I will build the pipeline');
+  const mine = locateEvidence(echoing, 'I will review the launch checklist tonight');
+  assert.equal(mine.side, 'microphone', 'what I said myself stays mine');
+  // A line from long ago is not an echo, whatever it says.
+  const repeated = meeting({
+    transcript: [
+      segment('We will ship the onboarding page next week', 'system', 40),
+      segment('We will ship the onboarding page next week', 'microphone', 400),
+    ],
+  });
+  assert.equal(locateEvidence(repeated, 'ship the onboarding page').side, 'system');
+  assert.equal(
+    locateEvidence(
+      meeting({ transcript: repeated.transcript.slice(1).concat(repeated.transcript[0]) }),
+      'We will ship the onboarding page next week',
+    ).timestamp,
+    400,
+  );
+});
+
+test('a line from the other side is mine only if it names me or nobody else could be meant', () => {
+  const said = { from: 'transcript', quote: 'Can you check the numbers', side: 'system' };
+  const pair = { ...twoSides, participants: 'Sam Reed, Priya Nair' };
+  assert.equal(judgeAssignee('me', said, pair, 'Sam'), 'me', 'only one other person');
+  const crowd = { ...twoSides, participants: 'Sam Reed, Priya Nair, Lee Wu' };
+  assert.equal(judgeAssignee('me', said, crowd, 'Sam'), 'unclear');
+  const named = { ...said, quote: 'Sam, can you check the numbers' };
+  assert.equal(judgeAssignee('me', named, crowd, 'Sam'), 'me');
+  assert.equal(judgeAssignee('me', said, { ...twoSides, participants: '' }, ''), 'unclear');
+});
+
 test('names are split however they were typed', () => {
   assert.deepEqual(nameList(' Sam,  Sam Reed，小山、山哥\n'), ['Sam', 'Sam Reed', '小山', '山哥']);
   assert.deepEqual(nameList(''), []);

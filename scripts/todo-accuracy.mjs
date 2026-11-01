@@ -267,10 +267,13 @@ const commands = {
             participants: m.participants,
             transcript: m.transcript.map((s) => [s.timestamp, s.speaker, s.text]),
             audit: split.audit.includes(id),
-            tasks: shuffled(
-              candidates.filter((c) => c.meetingId === id),
-              split.seed,
-            ).map(({ id, text, evidence }) => ({ id, text, evidence })),
+            // In order of when they were said, so two wordings of one thing sit together.
+            tasks: candidates
+              .filter((c) => c.meetingId === id)
+              .sort(
+                (a, b) => (a.evidence?.timestamp ?? Infinity) - (b.evidence?.timestamp ?? Infinity),
+              )
+              .map(({ id, text, evidence }) => ({ id, text, evidence })),
           };
         })
         .filter((group) => group.tasks.length || group.audit);
@@ -457,7 +460,7 @@ button{font:inherit;border:1px solid var(--line);background:transparent;color:va
 button.on{background:var(--on);border-color:var(--on);color:var(--on-ink)}select{font:inherit;max-width:100%;margin-top:8px}
 details{margin:6px 0}summary{cursor:pointer;color:var(--muted);font-size:12.5px}pre{white-space:pre-wrap;font:12.5px/1.5 inherit;max-height:320px;overflow:auto}
 textarea{width:100%;min-height:90px;font:inherit;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px}
-</style></head><body><header><h1>待办标注 <span id="count"></span></h1><p class="meta">判断每条事项到底是谁的。页面不显示模型的判断。点完自动保存，随时可以关掉再来。</p></header><main id="root"></main>
+</style></head><body><header><h1>待办标注 <span id="count"></span></h1><p class="meta">判断每条事项到底是谁的。页面不显示模型的判断。点完自动保存，随时可以关掉再来。同一件事换了说法也算重复：选「和另一条重复」，只留一条打标签。</p></header><main id="root"></main>
 <script>
 const token=new URLSearchParams(location.search).get('token');
 const choices=[['mine','我的'],['other','别人的'],['not_task','不是待办'],['unsure','说不准']];
@@ -466,9 +469,10 @@ const el=(tag,props={},...kids)=>{const n=Object.assign(document.createElement(t
 const clock=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
 const save=b=>fetch('/save?token='+token,{method:'POST',body:JSON.stringify(b)});
 function count(){const all=state.groups.flatMap(g=>g.tasks);const done=all.filter(t=>state.labels[t.id]?.label||state.labels[t.id]?.dupOf).length;document.getElementById('count').textContent=done+' / '+all.length}
+function mineSoFar(group){const mine=group.tasks.filter(t=>state.labels[t.id]?.label==='mine').map(t=>t.text);group.box.textContent=mine.length?'本场标为「我的」：'+mine.join('；'):''}
 function task(group,t){
   const box=el('div',{className:'task'});
-  const paint=()=>{const l=state.labels[t.id]??{};box.classList.toggle('done',!!(l.label||l.dupOf));
+  const paint=()=>{const l=state.labels[t.id]??{};box.classList.toggle('done',!!(l.label||l.dupOf));mineSoFar(group);
     box.querySelectorAll('[data-v]').forEach(b=>b.classList.toggle('on',l.label===b.dataset.v));
     const dup=box.querySelector('select');dup.value=l.dupOf??''};
   box.append(el('p',{className:'text',textContent:t.text}));
@@ -486,6 +490,7 @@ function task(group,t){
 fetch('/data?token='+token).then(r=>r.json()).then(s=>{state=s;const root=document.getElementById('root');
   for(const g of s.groups){root.append(el('h2',{textContent:g.title}),el('p',{className:'meta',textContent:g.date+(g.participants?' · '+g.participants:'')}));
     const full=el('details',{},el('summary',{textContent:'完整转录'}),el('pre',{textContent:g.transcript.map(x=>clock(x[0])+' '+x[1]+'：'+x[2]).join('\\n')}));root.append(full);
+    g.box=el('p',{className:'meta'});root.append(g.box);
     for(const t of g.tasks)root.append(task(g,t));
     if(g.audit){const a=el('textarea',{value:(s.missing[g.id]??[]).join('\\n'),placeholder:'这场还有哪些分配给你的事没列出来？一行一条，没有就留空。'});a.onchange=()=>{const lines=a.value.split('\\n').map(x=>x.trim()).filter(Boolean);save({missing:{[g.id]:lines}})};root.append(el('h2',{textContent:'回看：这场有没有漏掉的？'}),a)}}
   count()});
