@@ -33,6 +33,7 @@ const channels = [
   'usage',
   'ai',
   'cancel-ai',
+  'todos',
   'save-image',
   'export',
   'backup',

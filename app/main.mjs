@@ -76,6 +76,8 @@ import {
 } from './calls.mjs';
 import { ClaudeCode } from './providers/claude-code.mjs';
 import { enhanceInstructions, enhanceRequest } from './enhance.mjs';
+import { todoScanner } from './todo-scanner.mjs';
+import { backfillIds } from './todos.mjs';
 import { arbitrateOffline, createLiveArbiter, recognitionPlan } from './language-arbiter.mjs';
 import { createEchoFilter, suppressEcho } from './echo.mjs';
 import { meetingEndDetector, sustainedSound, trailingCut } from './meeting-end.mjs';
@@ -146,6 +148,7 @@ if (!app.requestSingleInstanceLock()) {
     claude,
     native,
     activeAI,
+    todoScans,
     testAdapter,
     transcriptionWait,
     captureReady,
@@ -232,8 +235,14 @@ if (!app.requestSingleInstanceLock()) {
   const tr = () =>
     translator(resolveLanguage(store ? store.settings().uiLanguage : 'system', systemLanguages()));
   const t = (key, vars) => tr()(key, vars);
+  const todoState = () => ({
+    todos: store.todos(),
+    todoScans: store.todoScans(),
+    todoProgress: todoScans.state(),
+  });
   const snapshot = () => ({
     meetings: store.all(true),
+    ...todoState(),
     folders: store.folders(),
     settings: store.settings(),
     templates: [...templates, ...(store.settings().templates ?? [])],
@@ -961,6 +970,30 @@ if (!app.requestSingleInstanceLock()) {
     }
     return result.filePath;
   }
+  async function chosenModel(providerId) {
+    const available = await listModels(providerId);
+    const model =
+      available.find((m) => m.id === store.settings()[modelSetting[providerId]])?.id ??
+      available[0]?.id;
+    if (!model)
+      throw new Error(
+        `No ${providerId === 'claude' ? 'Claude' : 'ChatGPT'} models are available for this account.`,
+      );
+    return model;
+  }
+  // The AI, for work nobody is watching: nothing streams to the window.
+  async function respondQuietly({ instructions, input, signal }) {
+    const providerId = activeId();
+    const model = await chosenModel(providerId);
+    signal.throwIfAborted();
+    return providerFor(providerId).respond({
+      model,
+      input,
+      instructions,
+      signal,
+      onDelta: () => {},
+    });
+  }
   async function ai({ kind, id, ids, question, scope }) {
     if (activeAI) throw new Error('Wait for the current response, or stop it first.');
     const controller = new AbortController();
@@ -979,13 +1012,7 @@ if (!app.requestSingleInstanceLock()) {
         store.setting('provider', 'claude');
         emit({ type: 'ai', ai: aiNow() });
       }
-      const available = await listModels(providerId);
-      const model =
-        available.find((m) => m.id === settings[modelSetting[providerId]])?.id ?? available[0]?.id;
-      if (!model)
-        throw new Error(
-          `No ${providerId === 'claude' ? 'Claude' : 'ChatGPT'} models are available for this account.`,
-        );
+      const model = await chosenModel(providerId);
       controller.signal.throwIfAborted();
       if (
         kind !== 'enhance' &&
@@ -1049,6 +1076,7 @@ if (!app.requestSingleInstanceLock()) {
       if (kind === 'enhance') {
         const m = store.update(id, { summary: result }, { summarySource: 'ai' });
         emit({ type: 'meeting', meeting: m });
+        if (store.settings().autoTodos !== false && backgroundAllowed()) todoScans.add([id]);
         return { text: result, meeting: m };
       }
       const cited = new Set([...result.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1])));
@@ -1193,6 +1221,13 @@ if (!app.requestSingleInstanceLock()) {
         });
       if (store.settings().claudePath) claude.setPath(store.settings().claudePath);
       else claude.load();
+      todoScans = todoScanner({
+        store,
+        respond: respondQuietly,
+        recordingMeeting: () => recording?.id,
+        onChange: () => emit({ type: 'todos', ...todoState() }),
+        onError: (message) => emit({ type: 'error', message }),
+      });
       win = new BrowserWindow({
         width: 1440,
         height: 940,
@@ -1646,6 +1681,7 @@ if (!app.requestSingleInstanceLock()) {
           if (deleted.length) {
             store.deleteForever(deleted);
             emit({ type: 'meetings-deleted', ids: deleted });
+            emit({ type: 'todos', ...todoState() });
           }
         }
         return deleted;
@@ -1737,8 +1773,25 @@ if (!app.requestSingleInstanceLock()) {
         await openCall(link.url);
         return link.service;
       });
+      register('todos', (action, ...args) => {
+        if (action === 'update') {
+          const [id, patch] = args;
+          const todo = store.updateTodo(id, patch);
+          emit({ type: 'todos', ...todoState() });
+          return todo;
+        }
+        if (action === 'scan') {
+          const [days] = args;
+          if (days !== null && !(Number.isFinite(days) && days > 0))
+            throw new Error('Invalid range.');
+          return todoScans.add(backfillIds(store.all(), store.todoScans(), days));
+        }
+        if (action === 'cancel') return void todoScans.cancel();
+        throw new Error('Unknown todo action.');
+      });
       register('account', async (action, id) => {
         if (activeAI) throw new Error('Stop the current AI response before changing accounts.');
+        if (['connect', 'add', 'select', 'disconnect'].includes(action)) todoScans.cancel();
         if (action !== 'models') models.clear();
         if (action === 'connect') return auth.signIn(false);
         if (action === 'add') return auth.signIn(true);
@@ -1764,6 +1817,8 @@ if (!app.requestSingleInstanceLock()) {
           ['use', 'claude-sign-in', 'claude-path', 'claude-terminal'].includes(action)
         )
           throw new Error('Stop the current AI response before changing AI settings.');
+        if (['use', 'claude-sign-in', 'claude-path', 'claude-terminal'].includes(action))
+          todoScans.cancel();
         if (['claude-sign-in', 'claude-path', 'claude-terminal'].includes(action)) models.clear();
         if (action === 'use') {
           if (!providerIds.includes(value)) throw new Error('Unknown AI provider.');
@@ -2011,6 +2066,7 @@ if (!app.requestSingleInstanceLock()) {
           ),
         );
         activeAI?.abort();
+        todoScans?.cancel();
         auth.cancel();
         claude.cancel();
         native?.stdin.end();
