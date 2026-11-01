@@ -2,6 +2,8 @@
 
 A local macOS meeting notebook inspired by Granola, powered by your ChatGPT or Claude subscription instead of an API key.
 
+**License:** [Stillnote Personal and Internal Use License 1.0](LICENSE) (source-available). Free for personal use and internal use by businesses, including work meetings. Resale or rebranded sales, paid SaaS/hosting, and integration into commercial products offered to third parties require separate written permission. See the [English / 中文 usage guide](docs/LICENSING.md).
+
 Stillnote keeps the core loop small: **open a note → capture a conversation → jot down what matters → enhance the notes → ask follow-up questions**. Its home feed, focused document view, and bottom recording/chat dock follow Granola's interaction patterns. It is an independent project, not an official Granola client.
 
 [![Stillnote demo: floating reminder, live notes, meeting-end prompt, saved audio, enhanced notes and cited chat](docs/images/demo-preview.gif)](docs/images/demo.mp4)
@@ -200,6 +202,7 @@ See [validation results and remaining checks](docs/VALIDATION.md) for the eviden
 
 ## Documentation
 
+- [License and permitted uses / 使用许可](docs/LICENSING.md)
 - [How it was built, architecture, and core components](docs/ARCHITECTURE.md)
 - [UI/UX decisions and reference mapping](docs/DESIGN.md)
 - [Icon design, source assets, and generation prompt](docs/ICON.md)

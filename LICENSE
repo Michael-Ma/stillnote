@@ -1,0 +1,130 @@
+Stillnote Personal and Internal Use License
+Version 1.0
+
+Copyright (c) 2026 Michael Ma. All rights reserved except as expressly granted below.
+
+1. Scope and definitions
+
+"Software" means the Stillnote source code, executable software, documentation,
+and assets made available under this license, including copies, modifications,
+and works derived from them. Separately licensed third-party material is excluded
+and remains subject to its own license.
+
+"Licensor" means each copyright holder offering their material under this
+license. Each Licensor grants rights only to material they have authority to
+license. "You" means the individual or legal entity exercising these rights.
+
+"Internal Use" means use for your own personal activities or your organization's
+internal operations, including commercial operations. Employees and contractors
+may use the Software on your behalf solely for those operations. Recording,
+transcribing, summarizing, and discussing meetings with customers, clients, or
+other external participants is Internal Use, provided you do not offer access to
+the Software or its functionality as an external product or service.
+
+"Commercial Offering" means a product or service offered to third parties for
+payment or other commercial consideration, including a subscription, paid tier,
+paid bundle, or a feature used to sell or support another paid product or service.
+This includes indirect payment through another product, service, or contract.
+Merely using the Software as an internal productivity tool in a paid business,
+or sharing the resulting meeting records, is not a Commercial Offering of the
+Software.
+
+2. Free permitted uses
+
+Subject to this license, each Licensor grants you a worldwide, non-exclusive,
+royalty-free copyright license to access, run, copy, study, and modify the
+Software for personal use and Internal Use. There are no organization-size,
+revenue, or seat limits, and no license fee is required for those uses.
+
+You may integrate the Software into your own internal systems and automate your
+internal workflows, provided those systems do not offer the Software or its
+functionality to third parties as a Commercial Offering.
+
+You may engage and pay contractors to install, configure, modify, or maintain
+copies solely for your permitted personal or Internal Use. Those contractors
+receive no right to resell, sublicense for a fee, or provide an external hosted
+service using the Software. Paying for general-purpose infrastructure on which
+you operate your own internal copy is permitted.
+
+3. Free redistribution
+
+You may share the Software, including modified versions, without charging for
+access, copies, licenses, or features, provided the distribution is not part of a
+Commercial Offering. You must include this complete license, retain applicable
+copyright and attribution notices, clearly identify your modifications, and
+provide the Software and your modifications to it under these same terms.
+Recipients receive their rights to the original material directly from its
+Licensors. This section does not require you to publish private modifications
+or to disclose source code merely because you use or share a copy.
+
+Free forks and internal branding changes are permitted under these conditions.
+Renaming, rebranding, translating, or modifying the Software does not remove
+any restriction in this license.
+
+4. Uses requiring separate written permission
+
+Without separate written permission from the applicable copyright holders, you
+may not, directly or through another party:
+
+(a) Sell, rent, lease, or license the Software for payment, including selling a
+    renamed, rebranded, or modified version or charging for access or features.
+
+(b) Offer the Software or its functionality as a paid hosted, managed, SaaS,
+    API, white-label, or similar service to third parties. This includes an
+    otherwise free feature or tier of a Commercial Offering.
+
+(c) Embed, bundle, incorporate, or integrate the Software or any part of it into
+    a Commercial Offering, including a paid application, plugin, SDK, appliance,
+    or service. Calling a separately running copy of the Software does not avoid
+    this restriction when it supplies functionality of that Commercial Offering.
+
+(d) Use a free distribution or intermediary to carry out any of (a) through (c).
+
+Ordinary interoperability with third-party tools for your own personal or
+Internal Use, such as calendar connections, AI providers, exports, and internal
+MCP clients, remains permitted. This license does not restrict independently
+developed software merely because it interoperates with the Software.
+
+To request permission for a restricted use, contact Michael Ma through
+https://github.com/Michael-Ma/stillnote/issues or the contact methods published at
+https://github.com/Michael-Ma. A request or lack of response is not permission.
+Permission must cover the rights of any other applicable copyright holders.
+
+5. Your data, third-party rights, and names
+
+This license governs the Software, not your recordings, notes, transcripts,
+summaries, exports, or other data and output. It imposes no restriction on your
+commercial use or sharing of that data and output and claims no ownership of
+them. Other parties' rights, privacy requirements, and provider terms still apply.
+
+Third-party components remain governed by their own licenses; this license does
+not replace or restrict rights granted independently under those licenses.
+No trademark rights or endorsement rights are granted, except that you may
+identify the origin of the Software accurately and retain required notices.
+All rights not expressly granted are reserved. Nothing here limits rights that
+applicable law gives you independently of this license.
+
+6. Termination
+
+Your rights under this license terminate automatically if you violate its terms.
+For your first violation, they are reinstated if you fully correct the violation
+within 30 days after receiving written notice from a Licensor. Otherwise,
+reinstatement requires written permission from the applicable Licensor.
+Termination does not terminate the rights of recipients who remain compliant.
+
+7. No warranty or liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED
+"AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NONINFRINGEMENT.
+NO LICENSOR OR CONTRIBUTOR IS LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+WHETHER IN CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+WITH THE SOFTWARE OR ITS USE, INCLUDING LOST DATA, PROFITS, OR BUSINESS.
+
+8. License text and other agreements
+
+This is a custom source-available license, not an OSI-approved open-source license.
+The English text in this file is authoritative. Summaries and translations are
+for convenience and do not amend it. A separate written agreement may grant you
+additional rights; absent such an agreement, these terms apply. A later license
+version does not automatically replace the terms of a copy you already received.

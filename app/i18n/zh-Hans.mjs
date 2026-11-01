@@ -170,6 +170,8 @@ export default {
   'A meeting is already recording.': '已有会议正在录音。',
   'A place for every conversation': '每次谈话都有个去处',
   'About Stillnote': '关于 Stillnote',
+  'Free personal and internal business use.\nResale, paid hosting, and external commercial integration require separate written permission.\nStillnote Personal and Internal Use License 1.0. See LICENSE for full terms.':
+    '个人及企业内部使用免费。\n销售、收费托管及集成到对外商业产品需要单独书面授权。\n适用 Stillnote Personal and Internal Use License 1.0，完整条款见 LICENSE。',
   Account: '账户',
   'Account not found.': '找不到该账户。',
   'Actual Size': '实际大小',

@@ -6,6 +6,9 @@ Object.assign(app, {
   isPackaged: false,
   paths: {},
   setName() {},
+  setAboutPanelOptions(options) {
+    this.aboutPanelOptions = options;
+  },
   setPath(key, value) {
     this.paths[key] = value;
   },

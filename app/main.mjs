@@ -1264,7 +1264,14 @@ if (!app.requestSingleInstanceLock()) {
         callback(false),
       );
       // Role items get explicit labels so the menu follows the interface language.
-      const buildMenu = () =>
+      const buildMenu = () => {
+        app.setAboutPanelOptions({
+          applicationName: 'Stillnote',
+          copyright: 'Copyright © 2026 Michael Ma',
+          credits: t(
+            'Free personal and internal business use.\nResale, paid hosting, and external commercial integration require separate written permission.\nStillnote Personal and Internal Use License 1.0. See LICENSE for full terms.',
+          ),
+        });
         Menu.setApplicationMenu(
           Menu.buildFromTemplate([
             {
@@ -1300,6 +1307,7 @@ if (!app.requestSingleInstanceLock()) {
             },
           ]),
         );
+      };
       buildMenu();
       register('state', () => ({ ...snapshot(), startupError }));
       // One note per calendar occurrence, even when Join or Start is clicked twice quickly.

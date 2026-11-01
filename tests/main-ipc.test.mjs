@@ -93,6 +93,15 @@ async function setup(t, name, sessions, extra = {}) {
 }
 test('main IPC consumes the native contract, bounds chat, and closes after 5 seconds', async (t) => {
   const { call, win, events } = await setup(t, 'ipc');
+  await t.test('the About license summary follows the interface language', async () => {
+    await call('setting', 'uiLanguage', 'en');
+    assert.match(app.aboutPanelOptions.credits, /Free personal and internal business use/);
+    assert.match(app.aboutPanelOptions.credits, /require separate written permission/);
+    await call('setting', 'uiLanguage', 'zh-Hans');
+    assert.match(app.aboutPanelOptions.credits, /个人及企业内部使用免费/);
+    assert.match(app.aboutPanelOptions.credits, /单独书面授权/);
+    await call('setting', 'uiLanguage', 'en');
+  });
   await t.test('native discovery and installation return exact IPC shapes', async () => {
     assert.deepEqual(await call('audio-devices'), {
       inputs: [

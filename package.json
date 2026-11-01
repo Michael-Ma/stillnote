@@ -2,6 +2,7 @@
   "name": "stillnote",
   "version": "0.2.1",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "description": "A local macOS meeting notebook powered by your ChatGPT plan",
   "author": "Michael Ma",
   "type": "module",
@@ -32,6 +33,7 @@
     "test:install": "node scripts/install-smoke.mjs"
   },
   "build": {
+    "copyright": "Copyright © 2026 Michael Ma",
     "appId": "local.stillnote.app",
     "productName": "Stillnote",
     "directories": {
@@ -43,6 +45,14 @@
       "package.json"
     ],
     "extraResources": [
+      {
+        "from": "LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "docs/LICENSING.md",
+        "to": "docs/LICENSING.md"
+      },
       {
         "from": "native/bin/StillnoteCapture",
         "to": "StillnoteCapture"
