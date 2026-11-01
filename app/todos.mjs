@@ -192,7 +192,7 @@ export const proposedTodos = (meeting, items, names = '') =>
   });
 
 // Word pairs shared, over all word pairs: same quote or mostly the same words is the same task.
-function likeness(a, b) {
+export function likeness(a, b) {
   const quoteA = bare(a.evidence?.quote),
     quoteB = bare(b.evidence?.quote);
   if (quoteA && quoteA === quoteB) return 1;
@@ -202,7 +202,7 @@ function likeness(a, b) {
   const shared = [...x].filter((w) => y.has(w)).length;
   return shared / (x.size + y.size - shared);
 }
-const sameTask = 0.5;
+export const sameTask = 0.5;
 
 // The meeting's todos after a new scan. What the user did to a todo always survives: one they
 // touched keeps its text and owner, one they dismissed stays dismissed, and one the new scan no
