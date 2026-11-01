@@ -218,6 +218,41 @@ test('a restore keeps line language, source and calendar link, and repairs odd b
   assert.equal(message.injected, undefined);
   assert.ok(Number.isFinite(Date.parse(message.createdAt)));
 });
+test('a live row that held an echo keeps only its parts, unless it is already gone', (t) => {
+  const { store } = fixture(t);
+  const { id } = store.create({ title: 'Speakers' });
+  const row = (segmentId, text, timestamp, source = 'microphone') => ({
+    recordingId: 'r1',
+    segmentId,
+    source,
+    speaker: source === 'microphone' ? 'You' : 'Meeting audio',
+    text,
+    timestamp,
+  });
+  store.append(id, row('a', 'Mine, then theirs, then mine again.', 1));
+  store.append(id, row('b', 'Theirs.', 3, 'system'));
+  store.append(id, { ...row('a', 'Another recording, the same id.', 9), recordingId: 'r2' });
+  const trimmed = store.trimSegment(id, 'r1', 'a', [
+    row('a:0', 'Mine,', 1),
+    row('a:1', 'mine again.', 5),
+  ]);
+  assert.deepEqual(
+    trimmed.transcript.map((s) => [s.segmentId, s.text, s.timestamp]),
+    [
+      ['a:0', 'Mine,', 1],
+      ['b', 'Theirs.', 3],
+      ['a:1', 'mine again.', 5],
+      ['a', 'Another recording, the same id.', 9],
+    ],
+  );
+  // Deleted by hand meanwhile: nothing comes back.
+  assert.equal(
+    store.trimSegment(id, 'r1', 'gone', [row('gone:0', 'Back?', 2)]).transcript.length,
+    4,
+  );
+  assert.equal(store.get(id).transcript.length, 4);
+});
+
 test('settings validate device, echo cancellation, and widened BCP-47 locales', (t) => {
   const { store } = fixture(t);
   assert.equal(store.settings().echoCancellation, 'auto');

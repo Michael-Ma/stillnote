@@ -171,9 +171,10 @@ if (!app.requestSingleInstanceLock()) {
     languageArbiter,
     languageTick,
     // Speaker echo: keeps the microphone's echoes of meeting audio out of the transcript, and
-    // counts them.
+    // counts them: rows left out, and rows that lost part of themselves.
     echoFilter,
     echoes = 0,
+    echoesTrimmed = 0,
     // Set once Stillnote is quitting, so nothing starts the helper again.
     quitting = false,
     // Meeting detection: the helper process told to watch the microphone (and when), and the
@@ -305,10 +306,10 @@ if (!app.requestSingleInstanceLock()) {
     }
   }
   // A final row joins the transcript unless it is the microphone's echo of meeting audio, and a
-  // meeting audio row can show microphone rows already saved to have been echoes. The filter reads
-  // the helper's own times (`event`); the saved row also counts earlier recordings' audio. Its
-  // provisional text still goes when the final event reaches the renderer. A filter that fails
-  // keeps the row.
+  // meeting audio row can show microphone rows already saved to have been echoes, or to hold one.
+  // The filter reads the helper's own times (`event`); the saved row also counts earlier
+  // recordings' audio. Its provisional text still goes when the final event reaches the renderer.
+  // A filter that fails keeps the row.
   function appendSegment(segment, event) {
     let verdict;
     try {
@@ -316,12 +317,24 @@ if (!app.requestSingleInstanceLock()) {
     } catch (error) {
       console.error('Could not check the row for speaker echo:', error.message);
     }
-    const { keep, remove } = verdict ?? { keep: true, remove: [] };
+    const { keep, remove, trim } = verdict ?? { keep: true, remove: [], trim: [] };
     if (keep) store.append(recording.id, segment);
     const gone = keep ? remove : [...remove, event];
     echoes += gone.length;
     const ids = gone.map((row) => row.segmentId).filter(Boolean);
     if (ids.length) store.removeSegments(recording.id, recording.recordingId, ids);
+    echoesTrimmed += trim.length;
+    for (const { row, pieces } of trim)
+      store.trimSegment(
+        recording.id,
+        recording.recordingId,
+        row.segmentId,
+        pieces.map((part) => ({
+          ...part,
+          recordingId: recording.recordingId,
+          timestamp: Math.max(0, Number(part.timestamp) || 0) + recording.baseDuration,
+        })),
+      );
   }
   function finishCapture(status, event = {}) {
     if (!recording) return null;
@@ -361,6 +374,7 @@ if (!app.requestSingleInstanceLock()) {
         ...nativeDiagnostics,
         ...(removed ? { trailingSilenceRemoved: removed } : {}),
         ...(echoes ? { echoesRemoved: echoes } : {}),
+        ...(echoesTrimmed ? { echoesTrimmed } : {}),
         ...assessCoverage(
           segments,
           Math.max(seconds, trackDuration),
@@ -1446,6 +1460,7 @@ if (!app.requestSingleInstanceLock()) {
         pendingPartials.clear();
         echoFilter = createEchoFilter();
         echoes = 0;
+        echoesTrimmed = 0;
         meetingEnd = meetingEndDetector(testAdapter?.meetingEnd);
         endSounds = {};
         speechEnd = 0;
@@ -1638,12 +1653,14 @@ if (!app.requestSingleInstanceLock()) {
         // Auto: every track came back once per language; keep the better one per sentence.
         const decided =
           plan.locales.length > 1 ? arbitrateOffline(candidates, plan.locales) : candidates;
-        // Without headphones the microphone also heard meeting audio: those rows are left out.
-        const { segments, removed } = suppressEcho(decided);
+        // Without headphones the microphone also heard meeting audio: those rows are left out, and
+        // long rows that hold some of it lose that part.
+        const { segments, removed, trimmed } = suppressEcho(decided);
         const diagnostics = {
           ...assessCoverage(segments, session.duration, session.diagnostics?.sourceStats),
           languageFallbacks: result.fallbacks,
           ...(removed.length ? { echoesRemoved: removed.length } : {}),
+          ...(trimmed.length ? { echoesTrimmed: trimmed.length } : {}),
         };
         const updated = store.replaceRecordingTranscript(
           meetingId,

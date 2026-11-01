@@ -3,7 +3,11 @@
 // ("Meeting audio"), a moment apart and nearly word for word. A microphone row is that echo when
 // meeting audio said the same words at the same moments; it is left out. Your own speech must
 // never go, so the match is strict: near-verbatim, word by word in time, with nothing of its own
-// left over. Pure; shared by live capture and Retry.
+// left over. The recognizer also joins the echo and your own words into one long row when nobody
+// pauses: such a row loses only the stretches held to that same standard, and keeps the rest.
+// Pure; shared by live capture and Retry.
+
+import { piece } from './language-arbiter.mjs';
 
 export const defaultEcho = {
   tolerance: 1.5, // seconds between a word and its echo
@@ -15,6 +19,7 @@ export const defaultEcho = {
   // sentence someone repeats comes after. Half the matched stretch for long rows, at most
   // `tolerance`. Measured echoes with word timing are within 0.25 s.
   shift: 0.6,
+  stretch: 6, // words; the least that can go from inside a row, which needs word timing
   horizon: 120, // seconds of rows a live filter remembers
 };
 
@@ -34,9 +39,24 @@ const numbers = new Map(
 // character pairs (single characters such as 我, 们 and 的 are in almost every sentence), each
 // weighing two thirds of a word.
 const pairWeight = 2 / 3;
+// Words a stretch never takes with it when meeting audio did not say them: if the row has one,
+// the user may have been speaking there.
+const firstPerson = new Set(
+  "i i'm i'd i'll i've me my mine we we're we'd we'll we've us our 我 咱 俺".split(' '),
+);
 
 const start = (row) => Math.max(0, Number(row.timestamp) || 0);
 const timed = (row) => Array.isArray(row.runs) && row.runs.length > 0;
+const wordRuns = (row) =>
+  timed(row)
+    ? row.runs.filter(
+        (run) =>
+          Array.isArray(run) &&
+          Number.isFinite(Number(run[0])) &&
+          Number.isFinite(Number(run[1])) &&
+          typeof run[3] === 'string',
+      )
+    : [];
 // Without the recognizer's end, about three words or four and a half CJK characters a second.
 const estimates = new WeakMap();
 function end(row) {
@@ -51,18 +71,11 @@ function end(row) {
   return from + estimates.get(row);
 }
 
-// The row's words and when each was said: from word timing where the recognizer gave it,
-// otherwise spread evenly over the row.
+// The row's words, when each was said, and where in the row's text (`at`, one place for a word and
+// two for a pair of characters): from word timing where the recognizer gave it, otherwise spread
+// evenly over the row.
 export function timedWords(row) {
-  const runs = timed(row)
-    ? row.runs.filter(
-        (run) =>
-          Array.isArray(run) &&
-          Number.isFinite(Number(run[0])) &&
-          Number.isFinite(Number(run[1])) &&
-          typeof run[3] === 'string',
-      )
-    : [];
+  const runs = wordRuns(row);
   const pieces = runs.length
     ? runs.map((run) => [run[3], Number(run[0]), Math.max(Number(run[0]), Number(run[1]))])
     : [[String(row.text ?? ''), start(row), end(row)]];
@@ -80,21 +93,32 @@ export function timedWords(row) {
     const word = match[0];
     if (isAsian.test(word)) {
       const chars = [...word]
-        .map((char, i) => ({ char, time: times[match.index + i] }))
+        .map((char, i) => ({ char, at: match.index + i, time: times[match.index + i] }))
         .filter(({ char }) => !asianFillers.has(char));
       if (chars.length === 1)
-        words.push({ word: chars[0].char, time: chars[0].time, weight: pairWeight });
+        words.push({
+          word: chars[0].char,
+          time: chars[0].time,
+          weight: pairWeight,
+          at: [chars[0].at],
+        });
       for (let i = 1; i < chars.length; i++)
         words.push({
           word: chars[i - 1].char + chars[i].char,
           time: chars[i - 1].time,
           weight: pairWeight,
+          at: [chars[i - 1].at, chars[i].at],
         });
       continue;
     }
     const plain = word.normalize('NFKC').toLowerCase().replace(/’/g, "'");
     if (fillers.has(plain)) continue;
-    words.push({ word: numbers.get(plain) ?? plain, time: times[match.index], weight: 1 });
+    words.push({
+      word: numbers.get(plain) ?? plain,
+      time: times[match.index],
+      weight: 1,
+      at: [match.index],
+    });
   }
   return words;
 }
@@ -151,13 +175,80 @@ const median = (values) => {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 };
 
-// Whether a microphone row is the speakers' echo of meeting audio (`system` rows, any order), and
-// how closely it matched.
+// What a row says, by place in its text: a word, or a CJK character. A character heard wrong costs
+// the two pairs around it but only itself here, so a word heard wrong weighs about the same in
+// Chinese as in English.
+function spoken(own) {
+  const units = new Map();
+  for (const word of own)
+    word.at.forEach((at, i) =>
+      units.set(at, {
+        text: word.at.length > 1 ? [...word.word][i] : word.word,
+        weight: word.weight,
+      }),
+    );
+  return units;
+}
+
+// How closely `units` of the row follow meeting audio, with `pairs` the words of theirs it matched.
+function closeness(units, own, heard, pairs) {
+  const said = new Set(pairs.flatMap(([i]) => own[i].at));
+  let total = 0,
+    covered = 0,
+    gap = 0, // words of its own: the longest stretch that meeting audio did not say
+    run = 0;
+  for (const [at, { weight }] of units) {
+    total += weight;
+    if (said.has(at)) covered += weight;
+    run = said.has(at) ? 0 : run + weight;
+    gap = Math.max(gap, run);
+  }
+  return {
+    matched: pairs.reduce((sum, [i]) => sum + own[i].weight, 0),
+    coverage: covered / total,
+    gap,
+    density: pairs.length / (pairs.at(-1)[1] - pairs[0][1] + 1),
+    shift: median(pairs.map(([i, j]) => own[i].time - heard[j].time)),
+  };
+}
+
+// The parts of a row that meeting audio said, each from its first matched word to its last, held
+// to what a whole row is held to. Word timing is what lets them be cut, so a stretch has no
+// allowance for estimated times. A word of the first person ends a stretch.
+function echoStretches(units, own, heard, pairs, options) {
+  const said = new Set(pairs.flatMap(([i]) => own[i].at));
+  const unsaid = [...units].filter(([at]) => !said.has(at));
+  const groups = [];
+  pairs.forEach((pair, k) => {
+    const between = k
+      ? unsaid.filter(([at]) => at > own[pairs[k - 1][0]].at[0] && at < own[pair[0]].at.at(-1))
+      : [];
+    const weight = between.reduce((sum, [, unit]) => sum + unit.weight, 0);
+    if (!k || weight > options.gap || between.some(([, unit]) => firstPerson.has(unit.text)))
+      groups.push([]);
+    groups.at(-1).push(pair);
+  });
+  return groups.flatMap((group) => {
+    const from = own[group[0][0]].at[0],
+      to = own[group.at(-1)[0]].at.at(-1);
+    const inside = new Map([...units].filter(([at]) => at >= from && at <= to));
+    const stretch = closeness(inside, own, heard, group);
+    return stretch.matched >= options.stretch &&
+      stretch.coverage >= options.coverage &&
+      stretch.density >= options.density &&
+      Math.abs(stretch.shift) <= options.shift
+      ? [[from, to]]
+      : [];
+  });
+}
+
+// Whether a microphone row is the speakers' echo of meeting audio (`system` rows, any order), how
+// closely it matched, and which stretches of it are the echo when the whole of it is not.
 export function echoMatch(row, systemRows, settings = defaultEcho, words = timedWords) {
   const options = { ...defaultEcho, ...settings };
   const own = words(row);
   const total = own.reduce((sum, w) => sum + w.weight, 0);
-  const result = { echo: false, coverage: 0 };
+  const result = { echo: false, coverage: 0, stretches: [] };
   if (total < options.minimum) return result;
   const from = start(row) - options.tolerance,
     to = end(row) + options.tolerance;
@@ -174,31 +265,50 @@ export function echoMatch(row, systemRows, settings = defaultEcho, words = timed
   });
   const pairs = align(own, heard, options.tolerance);
   if (!pairs.length) return result;
-  const matched = new Set(pairs.map(([i]) => i));
-  const said = pairs.reduce((sum, [i]) => sum + own[i].weight, 0);
-  // Words of its own: the longest stretch of the row that meeting audio did not say.
-  let gap = 0,
-    run = 0;
-  own.forEach((w, i) => {
-    run = matched.has(i) ? 0 : run + w.weight;
-    gap = Math.max(gap, run);
-  });
+  const units = spoken(own);
+  const { matched, ...close } = closeness(units, own, heard, pairs);
   const first = pairs[0],
     last = pairs.at(-1);
-  const density = pairs.length / (last[1] - first[1] + 1);
-  const shift = median(pairs.map(([i, j]) => own[i].time - heard[j].time));
   const allowed = Math.min(
     options.tolerance,
     Math.max(options.shift, (own[last[0]].time - own[first[0]].time) / 2),
   );
-  Object.assign(result, { coverage: said / total, gap, density, shift });
+  Object.assign(result, close, {
+    stretches: echoStretches(units, own, heard, pairs, options),
+  });
   result.echo =
-    said >= options.minimum &&
+    matched >= options.minimum &&
     result.coverage >= options.coverage &&
-    gap <= options.gap &&
-    density >= options.density &&
-    Math.abs(shift) <= allowed;
+    result.gap <= options.gap &&
+    result.density >= options.density &&
+    Math.abs(result.shift) <= allowed;
   return result;
+}
+
+// What stays of a microphone row: `null` when all of it does, nothing when it is the echo, and
+// otherwise the parts around its echoed stretches, in the row's place. A cut falls between the
+// recognizer's runs, and a run with a word outside the stretch stays whole.
+function remainder(row, systemRows, options, words) {
+  const match = echoMatch(row, systemRows, options, words);
+  if (match.echo) return [];
+  if (!match.stretches.length || !timed(row) || !row.segmentId) return null;
+  const inside = (at) => match.stretches.some(([from, to]) => at >= from && at <= to);
+  const places = words(row).flatMap((word) => word.at);
+  const parts = [[]];
+  let offset = 0,
+    cut = false;
+  for (const run of wordRuns(row)) {
+    const from = offset;
+    offset += run[3].length;
+    const own = places.filter((at) => at >= from && at < offset);
+    if (own.length ? own.every(inside) : inside(from)) {
+      cut = true;
+      parts.push([]);
+    } else parts.at(-1).push(run);
+  }
+  if (!cut) return null;
+  const kept = parts.filter((runs) => runs.some((run) => /[\p{L}\p{N}]/u.test(run[3])));
+  return kept.map((runs, i) => piece(row, runs, i, kept.length));
 }
 
 const remembered = () => {
@@ -210,21 +320,28 @@ const remembered = () => {
 };
 
 // Retry: every row is known up front. The rows without the microphone's echoes, in their order,
-// and the echoes left out.
+// the echoes left out, and the rows that lost part of themselves with what is left of each.
 export function suppressEcho(segments, settings = defaultEcho) {
+  const options = { ...defaultEcho, ...settings };
   const words = remembered();
   const system = segments.filter((s) => s.source === 'system');
-  const removed = segments.filter(
-    (s) => s.source === 'microphone' && echoMatch(s, system, settings, words).echo,
-  );
-  const gone = new Set(removed);
-  return { segments: segments.filter((s) => !gone.has(s)), removed };
+  const removed = [],
+    trimmed = [];
+  const kept = segments.flatMap((row) => {
+    const pieces = row.source === 'microphone' ? remainder(row, system, options, words) : null;
+    if (!pieces) return [row];
+    if (pieces.length) trimmed.push({ row, pieces });
+    else removed.push(row);
+    return pieces;
+  });
+  return { segments: kept, removed, trimmed };
 }
 
 // Live capture: final rows arrive as each source finalizes them, in either order. `add` takes one
 // and says whether it goes into the transcript (not a microphone echo of what meeting audio
-// already said), and which microphone rows already in it a new meeting audio row shows to be
-// echoes. A row with the `segmentId` of an earlier one replaces it.
+// already said), which microphone rows already in it a new meeting audio row shows to be echoes,
+// and which rows, this one included, keep only `pieces` of themselves. A row with the `segmentId`
+// of an earlier one replaces it, and the parts of it.
 export function createEchoFilter(settings = defaultEcho) {
   const options = { ...defaultEcho, ...settings };
   const words = remembered();
@@ -232,27 +349,39 @@ export function createEchoFilter(settings = defaultEcho) {
     system = [],
     latest = 0;
   const others = (rows, row) => rows.filter((r) => !row.segmentId || r.segmentId !== row.segmentId);
+  const partsOf = (row) =>
+    row.segmentId ? microphone.filter((r) => r.parent?.id === row.segmentId) : [];
   return {
     add(row) {
       if (!['microphone', 'system'].includes(row.source) || !String(row.text ?? '').trim())
-        return { keep: true, remove: [] };
+        return { keep: true, remove: [], trim: [] };
       latest = Math.max(latest, end(row));
       const recent = (r) => end(r) >= latest - options.horizon;
-      microphone = others(microphone, row).filter(recent);
+      const parts = partsOf(row);
+      microphone = others(microphone, row)
+        .filter((r) => !parts.includes(r))
+        .filter(recent);
       system = others(system, row).filter(recent);
       if (row.source === 'microphone') {
-        if (echoMatch(row, system, options, words).echo) return { keep: false, remove: [] };
-        microphone.push(row);
-        return { keep: true, remove: [] };
+        const pieces = remainder(row, system, options, words);
+        if (pieces?.length === 0) return { keep: false, remove: parts, trim: [] };
+        microphone.push(...(pieces ?? [row]));
+        return { keep: true, remove: parts, trim: pieces ? [{ row, pieces }] : [] };
       }
       system.push(row);
       const from = start(row) - options.tolerance,
         to = end(row) + options.tolerance;
-      const remove = microphone.filter(
-        (r) => start(r) <= to && end(r) >= from && echoMatch(r, system, options, words).echo,
-      );
-      microphone = microphone.filter((r) => !remove.includes(r));
-      return { keep: true, remove };
+      const remove = [],
+        trim = [];
+      microphone = microphone.flatMap((r) => {
+        if (start(r) > to || end(r) < from) return [r];
+        const pieces = remainder(r, system, options, words);
+        if (!pieces) return [r];
+        if (pieces.length) trim.push({ row: r, pieces });
+        else remove.push(r);
+        return pieces;
+      });
+      return { keep: true, remove, trim };
     },
   };
 }

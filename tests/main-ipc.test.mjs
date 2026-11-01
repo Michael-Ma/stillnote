@@ -631,6 +631,79 @@ test('the microphone’s echo of meeting audio stays out of the transcript, live
   assert.equal(retried.recordings[0].diagnostics.echoesRemoved, 2);
 });
 
+test('a long microphone row keeps only its own words, live and on Retry', async (t) => {
+  const row = (source, segmentId, text, timestamp) => {
+    const words = text.split(' ');
+    return {
+      source,
+      segmentId,
+      speaker: source === 'microphone' ? 'You' : 'Meeting audio',
+      text,
+      timestamp,
+      end: +(timestamp + words.length * 0.3).toFixed(3),
+      runs: words.map((word, i) => [
+        +(timestamp + i * 0.3).toFixed(3),
+        +(timestamp + (i + 1) * 0.3).toFixed(3),
+        0.9,
+        (i ? ' ' : '') + word,
+      ]),
+    };
+  };
+  const opening = 'Right, let me tell you what I think about that.';
+  const played = 'We looked at the numbers for the new release and they seem fine.';
+  const closing = 'So honestly I would rather wait until next week.';
+  const rows = [
+    // The microphone finalizes first: saved whole, then cut once meeting audio says its part.
+    row('microphone', 'mic-1', `${opening} ${played} ${closing}`, 1),
+    row('system', 'sys-1', played, 4.05),
+  ];
+  const events = rows.map((r) => ({ type: 'segment', ...r }));
+  const { call } = await setup(
+    t,
+    'echo-trim',
+    [
+      { mode: 'empty', events },
+      { mode: 'empty', events },
+    ],
+    { transcribeSegments: rows },
+  );
+  await call('setting', 'autoEnhance', false);
+  const note = await call('create', { title: 'One long row' });
+  await call('record', note.id);
+  await waitFor(async () => !(await call('state')).starting);
+  await call('stop');
+  await waitFor(async () => !(await call('state')).recording);
+  const lines = (m) => m.transcript.map((s) => [s.source, s.text]);
+  const expected = [
+    ['microphone', opening],
+    ['system', played],
+    ['microphone', closing],
+  ];
+  const saved = (await call('state')).meetings.find((m) => m.id === note.id);
+  assert.deepEqual(lines(saved), expected);
+  assert.deepEqual(
+    saved.transcript.map((s) => s.timestamp),
+    [1, 4.05, 7.9],
+  );
+  assert.equal(saved.recordings[0].diagnostics.echoesTrimmed, 1);
+  assert.equal(saved.recordings[0].diagnostics.echoesRemoved, undefined);
+  assert.notEqual(saved.recordings[0].edited, true, 'cutting an echo is not a hand correction');
+  const retried = await call('transcribe-recording', note.id, saved.recordings[0].id);
+  assert.deepEqual(lines(retried), expected);
+  assert.equal(retried.recordings[0].diagnostics.echoesTrimmed, 1);
+  // A second recording's rows also count the audio before it.
+  await call('record', note.id);
+  await waitFor(async () => !(await call('state')).starting);
+  await call('stop');
+  await waitFor(async () => !(await call('state')).recording);
+  const again = (await call('state')).meetings.find((m) => m.id === note.id);
+  const { id, baseDuration } = again.recordings[1];
+  assert.deepEqual(
+    again.transcript.filter((s) => s.recordingId === id).map((s) => s.timestamp - baseDuration),
+    [1, 4.05, 7.9],
+  );
+});
+
 test('quitting while A saves cancels the pending B handoff', async (t) => {
   const { call, events } = await setup(t, 'quit-handoff', undefined, {
     stopDelay: 50,

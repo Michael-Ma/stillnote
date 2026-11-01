@@ -2,6 +2,27 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+const ownOpening = 'Right, let me tell you what I think about that.';
+const playedOver = 'We looked at the numbers for the new release and they seem fine.';
+const ownClosing = 'So honestly I would rather wait until next week.';
+// A final phrase with the word timing the recognizer gives it.
+const spoken = (text, at, rate = 0.3) => {
+  const words = text.split(' ');
+  return {
+    text,
+    end: +(at + words.length * rate).toFixed(3),
+    runs: words.map((word, i) => [
+      +(at + i * rate).toFixed(3),
+      +(at + (i + 1) * rate).toFixed(3),
+      0.95,
+      (i ? ' ' : '') + word,
+    ]),
+  };
+};
+
+const longRow = spoken(`${ownOpening} ${playedOver} ${ownClosing}`, 8);
+const playedRow = spoken(playedOver, 11.05);
+
 export const captureScenario = {
   sessions: [
     { mode: 'normal' },
@@ -70,6 +91,25 @@ export const captureScenario = {
           candidates: {
             'zh-CN': { text: 'Six week sound right.', confidence: 0.3 },
             'en-US': { text: 'Six weeks sounds right to me, honestly.', confidence: 0.95 },
+          },
+        },
+        // One long row: nobody paused, so the recognizer joined your words and what it heard.
+        {
+          source: 'microphone',
+          at: 8,
+          afterMs: 1500,
+          candidates: {
+            'zh-CN': { text: 'Right, I think that.', end: longRow.end, confidence: 0.3 },
+            'en-US': { ...longRow, confidence: 0.95 },
+          },
+        },
+        {
+          source: 'system',
+          at: 11.05,
+          afterMs: 1900,
+          candidates: {
+            'zh-CN': { text: 'We looked at numbers.', end: playedRow.end, confidence: 0.3 },
+            'en-US': { ...playedRow, confidence: 0.96 },
           },
         },
       ],
@@ -425,14 +465,15 @@ export async function capture(h) {
     'Retry in the same Auto languages needs no language note',
   );
   // On speakers the microphone's copy of meeting audio's sentence is saved first, then removed
-  // once meeting audio's arrives; your own reply stays.
+  // once meeting audio's arrives; your own reply stays, and so do your words in a long row that
+  // also holds what the speakers played.
   const echo = await h.create('E2E speaker echo');
   await start(h);
   await h.waitForState(
     (s, id) =>
       s.meetings
         .find((m) => m.id === id)
-        .transcript.some((segment) => segment.text.startsWith('Six weeks sounds')),
+        .transcript.some((segment) => segment.text.startsWith('So honestly')),
     echo.id,
   );
   const echoSaved = await stop(h, echo.id, 1);
@@ -441,9 +482,19 @@ export async function capture(h) {
     [
       ['system', 'We give them a 6 week head start on the new release.'],
       ['microphone', 'Six weeks sounds right to me, honestly.'],
+      ['microphone', ownOpening],
+      ['system', playedOver],
+      ['microphone', ownClosing],
     ],
   );
   assert.equal(echoSaved.recordings[0].diagnostics.echoesRemoved, 1);
+  assert.equal(echoSaved.recordings[0].diagnostics.echoesTrimmed, 1);
+  await h.page
+    .locator('.dock')
+    .getByRole('button', { name: /^Transcript/ })
+    .click();
+  await h.page.getByText(ownClosing, { exact: true }).waitFor();
+  assert.equal(await h.page.getByText(`${ownOpening} We looked`).count(), 0);
   await h.call('setting', 'locale', 'en-US');
   h.assertNoRendererErrors();
 }

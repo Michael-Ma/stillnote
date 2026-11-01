@@ -408,7 +408,9 @@ export function createTestAdapter({ dataDir }) {
                 source: line.source ?? 'microphone',
                 speaker: line.speaker ?? 'You',
                 timestamp: at,
-                ...(locale ? { locale, end: at + 2, confidence: version.confidence } : {}),
+                ...(locale
+                  ? { locale, end: version.end ?? at + 2, confidence: version.confidence }
+                  : {}),
               };
               const words = version.text.split(' ');
               const half = words.slice(0, Math.ceil(words.length / 2)).join(' ');
@@ -419,14 +421,19 @@ export function createTestAdapter({ dataDir }) {
                   Math.max(0, line.afterMs - 700),
                 ),
                 setTimeout(() => {
-                  emit({ type: 'segment', ...event, text: version.text });
+                  emit({
+                    type: 'segment',
+                    ...event,
+                    text: version.text,
+                    ...(version.runs ? { runs: version.runs } : {}),
+                  });
                   if (locale)
                     emit({
                       type: 'recognition-progress',
                       recordingId,
                       source: event.source,
                       locale,
-                      through: at + 2,
+                      through: version.end ?? at + 2,
                     });
                 }, finalAt),
               );

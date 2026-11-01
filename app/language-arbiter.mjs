@@ -35,7 +35,7 @@ export const defaultWeights = {
 };
 
 // Builds one piece of a phrase from some of its timed runs ([start, end, confidence or -1, text]).
-function piece(segment, runs, index, count) {
+export function piece(segment, runs, index, count) {
   const known = runs.filter((run) => run[2] >= 0);
   const weight = known.reduce((sum, run) => sum + Math.max(1, run[3].length), 0);
   return {

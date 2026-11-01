@@ -378,17 +378,7 @@ export class Store {
       );
       if (existing >= 0) m.transcript.splice(existing, 1);
     }
-    const s = {
-      id: randomUUID(),
-      text: text(segment.text),
-      speaker: text(segment.speaker ?? 'Speaker', 100),
-      timestamp: Number(segment.timestamp) || 0,
-      ...(segment.recordingId ? { recordingId: text(segment.recordingId, 100) } : {}),
-      ...(segment.segmentId ? { segmentId: text(segment.segmentId, 200) } : {}),
-      ...(['microphone', 'system'].includes(segment.source) ? { source: segment.source } : {}),
-      ...segmentLocale(segment),
-    };
-    m.transcript.push(s);
+    m.transcript.push(savedSegment(segment));
     m.transcript.sort((a, b) => a.timestamp - b.timestamp);
     m.updatedAt = new Date().toISOString();
     return this.write(m);
@@ -403,6 +393,19 @@ export class Store {
     );
     if (kept.length === m.transcript.length) return m;
     m.transcript = kept;
+    m.updatedAt = new Date().toISOString();
+    return this.write(m);
+  }
+  // A live row that also held the microphone's echo: only `parts` of it stay. Not a correction by
+  // hand either.
+  trimSegment(id, recordingId, segmentId, parts) {
+    const m = this.get(id);
+    const at = m.transcript.findIndex(
+      (s) => s.recordingId === recordingId && s.segmentId === segmentId,
+    );
+    if (at < 0) return m;
+    m.transcript.splice(at, 1, ...parts.map(savedSegment));
+    m.transcript.sort((a, b) => a.timestamp - b.timestamp);
     m.updatedAt = new Date().toISOString();
     return this.write(m);
   }
@@ -951,6 +954,16 @@ export function checkImportSize(path, size) {
 }
 // Segments remember which language produced them (Auto picks one per sentence).
 const segmentLocale = (segment) => (isLocale(segment.locale) ? { locale: segment.locale } : {});
+const savedSegment = (segment) => ({
+  id: randomUUID(),
+  text: text(segment.text),
+  speaker: text(segment.speaker ?? 'Speaker', 100),
+  timestamp: Number(segment.timestamp) || 0,
+  ...(segment.recordingId ? { recordingId: text(segment.recordingId, 100) } : {}),
+  ...(segment.segmentId ? { segmentId: text(segment.segmentId, 200) } : {}),
+  ...(['microphone', 'system'].includes(segment.source) ? { source: segment.source } : {}),
+  ...segmentLocale(segment),
+});
 export function validateSetting(key, value) {
   if (['model', 'claudeModel'].includes(key)) text(value, 300);
   else if (key === 'locale') {
