@@ -294,6 +294,35 @@ export function SettingsDialog({
                 onChange={(v) => guard(() => setting('autoEnhance', v))}
               />
             </div>
+            <div className="setting-row">
+              <div>
+                <label htmlFor="autoTodos">{t('Find my todos after enhancing')}</label>
+                <small>{t('Uses one more request from your AI plan for each meeting.')}</small>
+              </div>
+              <Toggle
+                id="autoTodos"
+                checked={data.settings.autoTodos ?? true}
+                onChange={(v) => guard(() => setting('autoTodos', v))}
+              />
+            </div>
+            <div className="setting-row">
+              <div>
+                <label htmlFor="myNames">{t('Your names in meetings')}</label>
+                <small>
+                  {t('Add every name you go by, separated by commas, to spot todos meant for you.')}
+                </small>
+              </div>
+              <input
+                id="myNames"
+                defaultValue={data.settings.myNames ?? ''}
+                maxLength={300}
+                onBlur={(e) => {
+                  const names = e.target.value.trim();
+                  if (names !== (data.settings.myNames ?? ''))
+                    guard(() => setting('myNames', names));
+                }}
+              />
+            </div>
           </section>
         )}
         {section === 'capture' && (

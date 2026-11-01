@@ -1,6 +1,16 @@
 import React, { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, AudioLines, Check, Home, Leaf, Plus, Square, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  AudioLines,
+  Check,
+  Home,
+  Leaf,
+  ListChecks,
+  Plus,
+  Square,
+  X,
+} from 'lucide-react';
 import { IconButton, Rich } from './components/Content.jsx';
 import { HomeFeed } from './components/HomeFeed.jsx';
 import { StartMeeting } from './components/StartMeeting.jsx';
@@ -12,8 +22,10 @@ import { MeetingEndPrompt } from './components/MeetingEndPrompt.jsx';
 import { TranscriptSheet } from './components/TranscriptSheet.jsx';
 import { isCapturing, playableTracks } from './components/RecordingAudio.jsx';
 import { ChatPanel } from './components/ChatPanel.jsx';
+import { TodoList } from './components/TodoList.jsx';
 import { SettingsDialog } from './components/SettingsDialog.jsx';
 import { aiView, claudeModels, modelKey } from './ai-view.mjs';
+import { openTodoCount } from './todos.mjs';
 import { eventKey, eventNote, meetingForEvent } from './reminders.mjs';
 import { callTitle } from './calls.mjs';
 import {
@@ -69,6 +81,7 @@ function App() {
     [retryingRecording, setRetryingRecording] = useState(null),
     [saving, setSaving] = useState(false),
     [drafts, setDrafts] = useState({}),
+    [transcriptFocus, setTranscriptFocus] = useState(null),
     // "Meeting detected": the in-app twin of the notification, until acted on or dismissed.
     [detected, setDetected] = useState(null),
     // "The meeting seems to be over" for the recording in progress: { reason, deadline, … }.
@@ -173,6 +186,10 @@ function App() {
         resetStream();
       }
       if (e.type === 'ai') setData((d) => (d ? { ...d, ai: e.ai } : d));
+      if (e.type === 'todos') {
+        const { todos, todoScans, todoProgress } = e;
+        setData((d) => (d ? { ...d, todos, todoScans, todoProgress } : d));
+      }
       if (e.type === 'meeting') updateMeeting(e.meeting);
       if (e.type === 'meetings-deleted')
         setData((d) =>
@@ -521,13 +538,30 @@ function App() {
       if (id) await record(id);
     });
   }
-  async function openNote(m, panel = null) {
+  async function openNote(m, panel = null, focus = null) {
     await guard(async () => {
       await flushAll();
       setSelected(m.id);
       setTab(m.summary ? 'summary' : 'notes');
       setSheet(panel);
+      setTranscriptFocus(focus);
       setEditingSummary(false);
+    });
+  }
+  // A todo's source: the transcript at that line, or the note when it came from the notes.
+  async function openTodoSource(todo) {
+    const m = data.meetings.find((x) => x.id === todo.meetingId);
+    if (!m) return;
+    if (todo.evidence?.from === 'transcript')
+      await openNote(m, 'transcript', { timestamp: todo.evidence.timestamp });
+    else await openNote(m);
+  }
+  const changeTodo = (id, patch) => guard(() => call('todos', 'update', id, patch));
+  async function dismissTodo(todo) {
+    await changeTodo(todo.id, { dismissed: true });
+    setNotice({
+      text: t('Todo removed.'),
+      action: { label: t('Undo'), run: () => changeTodo(todo.id, { dismissed: false }) },
     });
   }
   async function navigate(v) {
@@ -904,9 +938,11 @@ function App() {
           ? t('My notes')
           : view === 'starred'
             ? t('Starred')
-            : view === 'trash'
-              ? t('Trash')
-              : (data?.folders.find((f) => f.id === view.slice(7))?.name ?? t('Notes'));
+            : view === 'todos'
+              ? t('Todos')
+              : view === 'trash'
+                ? t('Trash')
+                : (data?.folders.find((f) => f.id === view.slice(7))?.name ?? t('Notes'));
   if (!data)
     return (
       <I18nProvider t={t}>
@@ -1034,6 +1070,7 @@ function App() {
           importFile={() => setModal({ kind: 'import' })}
           openSettings={settings}
           ai={ai}
+          todoCount={openTodoCount(data.todos, data.meetings)}
           icon={stillnoteIcon}
         />
         <main className="workspace">
@@ -1043,11 +1080,11 @@ function App() {
                 <>
                   <button
                     className="home-back"
-                    onClick={() => navigate('home')}
-                    aria-label={t('Back to Home')}
+                    onClick={() => navigate(view === 'todos' ? 'todos' : 'home')}
+                    aria-label={view === 'todos' ? t('Back to Todos') : t('Back to Home')}
                   >
                     <ArrowLeft size={14} />
-                    <Home size={14} />
+                    {view === 'todos' ? <ListChecks size={14} /> : <Home size={14} />}
                   </button>
                   <span className="save-state" aria-live="polite">
                     {saving ? (
@@ -1219,6 +1256,19 @@ function App() {
                   ai={ai}
                   aiActions={aiActions}
                 />
+              ) : view === 'todos' ? (
+                <TodoList
+                  data={data}
+                  ai={ai}
+                  aiActions={aiActions}
+                  onOpen={openNote}
+                  onEvidence={openTodoSource}
+                  onChange={changeTodo}
+                  onDismiss={dismissTodo}
+                  onScan={(days) => guard(() => call('todos', 'scan', days))}
+                  onCancelScan={() => guard(() => call('todos', 'cancel'))}
+                  onSaveNames={(names) => setting('myNames', names)}
+                />
               ) : (
                 <HomeFeed
                   data={data}
@@ -1304,9 +1354,13 @@ function App() {
                   {meeting && sheet && (
                     <TranscriptSheet
                       meeting={meeting}
+                      focusAt={transcriptFocus}
                       tab={sheet}
                       setTab={setSheet}
-                      onClose={() => setSheet(null)}
+                      onClose={() => {
+                        setSheet(null);
+                        setTranscriptFocus(null);
+                      }}
                       activeRecord={activeRecord}
                       partials={partials}
                       capture={{

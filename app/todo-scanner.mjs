@@ -89,7 +89,7 @@ export function todoScanner({
       if (!fresh.length) return state();
       queue.push(...fresh);
       progress.total += fresh.length;
-      running ??= drain();
+      running ??= Promise.resolve().then(drain);
       return state();
     },
     // Scans already saved stay saved; the rest can be started again later.

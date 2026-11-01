@@ -14,6 +14,7 @@ import {
 import { basename, join } from 'node:path';
 import { consumeResponse } from '../../app/stream.mjs';
 import { claudeModels } from '../../app/providers/claude-code.mjs';
+import { todoInstructions } from '../../app/todos.mjs';
 
 // A tone; with `silentAfter`, digital silence from that second on (a meeting that ended).
 export function wav(seconds = 2, frequency = 440, silentAfter = Infinity) {
@@ -81,7 +82,7 @@ export function createTestAdapter({ dataDir }) {
   const counterPath = join(dataDir, 'fixture-counters.json');
   const counters = existsSync(counterPath)
     ? JSON.parse(readFileSync(counterPath, 'utf8'))
-    : { session: 0, response: 0 };
+    : { session: 0, response: 0, todos: 0 };
   const next = (kind) => {
     const value = counters[kind]++;
     writeFileSync(counterPath, JSON.stringify(counters));
@@ -221,9 +222,14 @@ export function createTestAdapter({ dataDir }) {
     },
     createNative,
   };
-  async function respondFixture({ input, onDelta, signal }) {
-    const item = scenario.responses?.[next('response')] ?? { mode: 'success' };
-    log({ type: 'ai-request', mode: item.mode, input });
+  async function respondFixture({ input, instructions, onDelta, signal }) {
+    // Finding todos follows every Enhance on its own, so it has its own script of answers: it must
+    // not use up the next answer a scenario meant for Enhance or Chat.
+    const todos = instructions === todoInstructions;
+    const item = todos
+      ? (scenario.todoResponses?.[next('todos')] ?? { mode: 'success', text: '{"items":[]}' })
+      : (scenario.responses?.[next('response')] ?? { mode: 'success' });
+    log({ type: todos ? 'todo-request' : 'ai-request', mode: item.mode, input });
     if (item.mode === 'wait-for-cancel') {
       onDelta('Unfinished fixture response');
       await new Promise((_, reject) => {

@@ -7,6 +7,7 @@ import { notebook } from '../tests/e2e/notebook.mjs';
 import { images } from '../tests/e2e/images.mjs';
 import { capture, captureScenario } from '../tests/e2e/capture.mjs';
 import { ai, aiScenario } from '../tests/e2e/ai.mjs';
+import { todos, todosScenario } from '../tests/e2e/todos.mjs';
 import { recovery } from '../tests/e2e/recovery.mjs';
 import { language, languageScenario } from '../tests/e2e/language.mjs';
 import { reminders, remindersScenario } from '../tests/e2e/reminders.mjs';
@@ -23,7 +24,7 @@ const option = (name) => {
 };
 if (args.includes('--help')) {
   console.log(
-    'Usage: node scripts/e2e.mjs [--suite notebook|images|capture|ai|recovery|reminders|calls|language|meeting-end|all] [--no-build] [--output path]\nRuns deterministic Electron E2E tests with synthetic audio and AI. No real account or device is used.',
+    'Usage: node scripts/e2e.mjs [--suite notebook|images|capture|ai|todos|recovery|reminders|calls|language|meeting-end|all] [--no-build] [--output path]\nRuns deterministic Electron E2E tests with synthetic audio and AI. No real account or device is used.',
   );
   process.exit(0);
 }
@@ -220,6 +221,19 @@ const suites = {
       'rough notes preserved',
       'cited chat',
       'summary/chat restart persistence',
+    ],
+  },
+  todos: {
+    run: todos,
+    scenario: todosScenario,
+    checks: [
+      'enhancing finds todos without being asked',
+      'mine and unclear listed, unclear marked, others kept apart',
+      'a source opens the transcript at its line; Back returns to Todos',
+      'tick, change of owner, dismiss and Undo',
+      'enhancing again changes none of that',
+      'past meetings wait for the button; Stop saves nothing',
+      'restart persistence; deleting forever removes todos',
     ],
   },
 };

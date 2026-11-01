@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Folder,
   Home,
+  ListChecks,
   Lock,
   MessageCircle,
   MoreHorizontal,
@@ -36,12 +37,13 @@ export function Sidebar({
   importFile,
   openSettings,
   ai,
+  todoCount,
   icon,
 }) {
   const t = useT();
   // The folder whose menu is open, and where: under its ⋯ button, or where it was right-clicked.
   const [menu, setMenu] = useState(null);
-  const item = (key, label, Icon, onClick = () => navigate(key)) => (
+  const item = (key, label, Icon, onClick = () => navigate(key), count = 0) => (
     <button
       className={view === key && (key !== 'home' || !chatOpen) ? 'active' : ''}
       onClick={onClick}
@@ -49,6 +51,7 @@ export function Sidebar({
     >
       <Icon size={16} />
       <span>{label}</span>
+      {count > 0 && <small className="nav-count">{count}</small>}
     </button>
   );
   const plan = ai.provider === 'claude' ? plans[ai.claude.subscriptionType] : null;
@@ -97,6 +100,7 @@ export function Sidebar({
         {item('home', t('Home'), Home)}
         {item('chat', t('Chat'), MessageCircle, openChat)}
         {item('starred', t('Starred'), Star)}
+        {item('todos', t('Todos'), ListChecks, undefined, todoCount)}
       </nav>
       <div className="nav-label">
         <span>{t('Spaces')}</span>

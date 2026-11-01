@@ -9,10 +9,14 @@ const isMe = (speaker = '') => /^(me|you|microphone|mic)$/i.test(speaker.trim())
 
 // A saved line. Rows draw again only when their own segment changes, not on every live update of
 // a long meeting.
-const Segment = React.memo(function Segment({ segment: s, mixed, onEdit }) {
+const Segment = React.memo(function Segment({ segment: s, mixed, onEdit, focused }) {
   const t = useT();
   return (
-    <div className={'transcript-segment' + (isMe(s.speaker) ? ' me' : '')}>
+    <div
+      className={
+        'transcript-segment' + (isMe(s.speaker) ? ' me' : '') + (focused ? ' focused' : '')
+      }
+    >
       <div className="segment-head">
         <strong>{speakerLabel(s.speaker, t)}</strong>
         <time>{duration(s.timestamp)}</time>
@@ -40,6 +44,7 @@ export function TranscriptSheet({
   recordings,
   onAddTranscript,
   onEditSegment,
+  focusAt,
 }) {
   const t = useT();
   const partial = useSyncExternalStore(partials.subscribe, partials.get);
@@ -55,6 +60,21 @@ export function TranscriptSheet({
     if (activeRecord && tab === 'transcript' && following.current)
       bottomRef.current?.scrollIntoView({ block: 'nearest' });
   }, [meeting.transcript.length, partial, activeRecord, tab]);
+  // Opened from a todo: the line it rests on, or the nearest one if the transcript has changed.
+  const focusId = focusAt
+    ? (
+        meeting.transcript.find((s) => s.timestamp >= focusAt.timestamp) ??
+        meeting.transcript.at(-1)
+      )?.id
+    : null;
+  const focusRef = useRef();
+  useEffect(() => {
+    if (tab !== 'transcript' || !focusId) return;
+    following.current = false;
+    focusRef.current?.querySelector('.transcript-segment.focused')?.scrollIntoView({
+      block: 'center',
+    });
+  }, [focusAt, focusId, tab]);
   return (
     <section className="transcript-sheet" aria-label={t('Transcript and recordings')}>
       <header>
@@ -121,9 +141,15 @@ export function TranscriptSheet({
                 )}
               </p>
             )}
-            <div className="transcript-list">
+            <div className="transcript-list" ref={focusRef}>
               {meeting.transcript.map((s) => (
-                <Segment key={s.id} segment={s} mixed={mixed} onEdit={onEdit} />
+                <Segment
+                  key={s.id}
+                  segment={s}
+                  mixed={mixed}
+                  onEdit={onEdit}
+                  focused={s.id === focusId}
+                />
               ))}
               {activeRecord &&
                 Object.values(partial).map((s) => (
