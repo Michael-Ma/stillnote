@@ -539,6 +539,20 @@ test('a malformed todo stops a restore before anything changes', (t) => {
   assert.equal(other.all(true).length, 0);
 });
 
+test('a line with no speaker name still makes a todo a backup can restore', (t) => {
+  const { s } = store(t);
+  const m = s.create({ title: 'Planning' });
+  s.append(m.id, { text: 'I will send the pricing draft', speaker: '', timestamp: 4 });
+  const [todo] = proposedTodos(s.get(m.id), [
+    { task: 'Send draft', assignee: 'unclear', quote: 'I will send the pricing draft' },
+  ]);
+  assert.equal(todo.evidence.speaker, null);
+  s.saveTodoScan(m.id, [todo]);
+  const { s: other } = store(t);
+  assert.equal(other.restore(JSON.parse(JSON.stringify(s.backup()))), 1);
+  assert.equal(other.todos().length, 1);
+});
+
 test('a restored todo keeps only the fields Stillnote knows', () => {
   const clean = cleanTodo({
     id: 'a',

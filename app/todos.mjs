@@ -144,7 +144,7 @@ export function locateEvidence(meeting, quote) {
     return {
       from: 'transcript',
       quote: segment.text.slice(0, maxTask),
-      speaker: segment.speaker,
+      speaker: segment.speaker || null,
       side: segment.source ?? null,
       timestamp: segment.timestamp,
     };
