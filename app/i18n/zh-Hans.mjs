@@ -810,8 +810,6 @@ export default {
   'Meetings to read': '要查找的会议',
   'All meetings': '全部会议',
   'Find todos': '查找待办',
-  'What do people call you in meetings?': '大家开会时怎么称呼你？',
-  Save: '保存',
   'Mark “{task}” as not done': '把“{task}”标为未完成',
   'Mark “{task}” as done': '把“{task}”标为已完成',
   'Might not be yours': '不确定是不是你的',

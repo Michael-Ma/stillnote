@@ -69,18 +69,7 @@ export async function todos(h) {
     .getByText('Might not be yours')
     .waitFor({ state: 'hidden' });
   assert.equal(await row(page, 'Update the onboarding page').isVisible(), false);
-  await page.getByRole('textbox', { name: 'What do people call you in meetings?' }).waitFor();
   await h.screenshot('todos');
-
-  // Names are saved once and the prompt goes away.
-  await page
-    .getByRole('textbox', { name: 'What do people call you in meetings?' })
-    .fill('Sam, 小山');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await h.waitForState((s) => s.settings.myNames === 'Sam, 小山');
-  await page
-    .getByRole('textbox', { name: 'What do people call you in meetings?' })
-    .waitFor({ state: 'hidden' });
 
   // The source opens the transcript at that line, and Back returns here.
   await row(page, 'Send the pricing draft').locator('.todo-source').click();

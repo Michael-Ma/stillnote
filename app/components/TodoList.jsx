@@ -61,36 +61,6 @@ function ScanBanner({ meetings, scans, progress, onScan, onCancel }) {
   );
 }
 
-function NamesPrompt({ onSave }) {
-  const t = useT();
-  const [names, setNames] = useState('');
-  return (
-    <form
-      className="todo-names"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (names.trim()) onSave(names.trim());
-      }}
-    >
-      <div>
-        <label htmlFor="todo-names">{t('What do people call you in meetings?')}</label>
-        <small>
-          {t('Add every name you go by, separated by commas, to spot todos meant for you.')}
-        </small>
-      </div>
-      <input
-        id="todo-names"
-        value={names}
-        maxLength={300}
-        onChange={(e) => setNames(e.target.value)}
-      />
-      <button className="secondary small" type="submit" disabled={!names.trim()}>
-        {t('Save')}
-      </button>
-    </form>
-  );
-}
-
 function TodoRow({ todo, onChange, onDismiss, onEvidence }) {
   const t = useT();
   const done = !!todo.doneAt,
@@ -203,7 +173,6 @@ export function TodoList({
   onDismiss,
   onScan,
   onCancelScan,
-  onSaveNames,
 }) {
   const t = useT();
   const { open, done, others } = todoLists(data.todos, data.meetings);
@@ -214,7 +183,6 @@ export function TodoList({
       <div className="section-heading">
         <h1>{t('Todos')}</h1>
       </div>
-      {!data.settings.myNames?.trim() && <NamesPrompt onSave={onSaveNames} />}
       {ai.ready ? (
         <ScanBanner
           meetings={data.meetings}

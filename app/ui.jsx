@@ -1267,7 +1267,6 @@ function App() {
                   onDismiss={dismissTodo}
                   onScan={(days) => guard(() => call('todos', 'scan', days))}
                   onCancelScan={() => guard(() => call('todos', 'cancel'))}
-                  onSaveNames={(names) => setting('myNames', names)}
                 />
               ) : (
                 <HomeFeed

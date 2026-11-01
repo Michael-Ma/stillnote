@@ -3054,8 +3054,7 @@ dialog.settings-dialog {
   font-size: var(--text-sm);
   font-weight: 400;
 }
-.todo-scan,
-.todo-names {
+.todo-scan {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -3066,28 +3065,19 @@ dialog.settings-dialog {
   border-radius: var(--radius-lg);
   background: var(--surface);
 }
-.todo-scan > div,
-.todo-names > div {
+.todo-scan > div {
   display: grid;
   flex: 1 1 240px;
   gap: 2px;
   min-width: 0;
 }
-.todo-names label {
-  font-weight: 500;
-}
-.todo-scan small,
-.todo-names small {
+.todo-scan small {
   color: var(--muted);
   font-size: var(--text-sm);
 }
 .todo-scan select {
   padding: 5px 8px;
   font-size: var(--text-base);
-}
-.todo-names input {
-  flex: 1 1 200px;
-  min-width: 0;
 }
 .todo-group {
   margin-bottom: 20px;
