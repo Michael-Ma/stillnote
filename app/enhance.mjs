@@ -29,7 +29,7 @@ Language: write everything in the language of my notes, or, when they are empty,
 
 const limit = 350000;
 
-const clock = (seconds) => {
+export const clock = (seconds) => {
   const s = Math.max(0, Math.round(Number(seconds) || 0));
   const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0'),
     ss = String(s % 60).padStart(2, '0');
@@ -37,10 +37,14 @@ const clock = (seconds) => {
 };
 
 // Meeting text cannot close or open the blocks it sits in.
-const fence = (text) =>
-  String(text ?? '').replace(/<(\/?)(meeting|my_notes|transcript)>/gi, '‹$1$2›');
+export const fence = (text) =>
+  String(text ?? '').replace(
+    /<(\/?)(meeting|my_names|my_notes|enhanced_notes|transcript)>/gi,
+    '‹$1$2›',
+  );
 
-export function enhanceRequest(meeting, template) {
+// The blocks every request about one meeting shares.
+export function meetingBlocks(meeting) {
   const date = new Date(meeting.createdAt);
   const facts = [
     `Title: ${meeting.title.trim() || 'Untitled'}`,
@@ -52,16 +56,31 @@ export function enhanceRequest(meeting, template) {
   const transcript = meeting.transcript
     .map((s) => `[${clock(s.timestamp)}] ${s.speaker || 'Unknown'}: ${s.text}`)
     .join('\n');
-  const text = [
-    `Template: ${template.name}\n${template.prompt}`,
-    `<meeting>\n${fence(facts.join('\n'))}\n</meeting>`,
-    `<my_notes>\n${fence(withoutImages(meeting.notes).trim()) || '(empty)'}\n</my_notes>`,
-    `<transcript>\n${fence(transcript) || '(empty)'}\n</transcript>`,
-    'Write the enhanced notes.',
-  ].join('\n\n');
+  return {
+    meeting: `<meeting>\n${fence(facts.join('\n'))}\n</meeting>`,
+    notes: `<my_notes>\n${fence(withoutImages(meeting.notes).trim()) || '(empty)'}\n</my_notes>`,
+    transcript: `<transcript>\n${fence(transcript) || '(empty)'}\n</transcript>`,
+  };
+}
+
+export function checkedLength(text, meeting) {
   if (text.length > limit)
     throw new Error(
       `Meeting “${meeting.title}” is too large for AI context (350,000 characters). Shorten its notes or transcript before trying again.`,
     );
   return text;
+}
+
+export function enhanceRequest(meeting, template) {
+  const blocks = meetingBlocks(meeting);
+  return checkedLength(
+    [
+      `Template: ${template.name}\n${template.prompt}`,
+      blocks.meeting,
+      blocks.notes,
+      blocks.transcript,
+      'Write the enhanced notes.',
+    ].join('\n\n'),
+    meeting,
+  );
 }

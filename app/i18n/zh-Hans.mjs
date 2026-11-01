@@ -790,4 +790,11 @@ export default {
   'Images must be 20 MB or smaller.': '图片不能超过 20 MB。',
   'Only PNG, JPEG, GIF or WebP images can be added.': '只能添加 PNG、JPEG、GIF 或 WebP 图片。',
   Image: '图片',
+  'The AI answered in a form Stillnote could not read.': 'AI 的回答格式无法读取。',
+  'Finding todos timed out after 5 minutes.': '查找待办超过 5 分钟，已超时。',
+  'Todo not found.': '找不到这条待办。',
+  'Invalid todo.': '待办内容无效。',
+  'Invalid todo in backup.': '备份中的待办无效。',
+  'Invalid range.': '范围无效。',
+  'Unknown todo action.': '未知的待办操作。',
 };

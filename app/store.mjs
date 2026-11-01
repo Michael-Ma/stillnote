@@ -7,6 +7,7 @@ import { startableServices } from './calls.mjs';
 import { withoutImages } from './note-images.mjs';
 import { defaultLocale } from './language-arbiter.mjs';
 import { parseNoteFile } from './import-formats.mjs';
+import { assignees, cleanTodo, cleanTodoScan, mergeTodos, todoScanVersion } from './todos.mjs';
 
 // Each template states the meeting's purpose, then its sections, as Granola's template guide
 // suggests; enhance.mjs supplies the shared writing rules.
@@ -86,6 +87,8 @@ const portableSettings = new Set([
   'openOnMeetingDetected',
   'meetingEnd',
   'callService',
+  'autoTodos',
+  'myNames',
   'templates',
   'recipes',
 ]);
@@ -101,6 +104,9 @@ export class Store {
       CREATE INDEX IF NOT EXISTS messages_scope ON messages(scope);
       CREATE TABLE IF NOT EXISTS transcript_versions(id INTEGER PRIMARY KEY, meeting_id TEXT NOT NULL, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS transcript_versions_meeting ON transcript_versions(meeting_id);
+      CREATE TABLE IF NOT EXISTS todos(id TEXT PRIMARY KEY, meeting_id TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS todos_meeting ON todos(meeting_id);
+      CREATE TABLE IF NOT EXISTS todo_scans(meeting_id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE VIRTUAL TABLE IF NOT EXISTS meeting_search USING fts5(id UNINDEXED, title, content, tokenize='unicode61');`);
     // Old indexes used unrelated FTS rowids. Rebuild once, atomically, from durable meetings.
     if (this.db.prepare('PRAGMA user_version').get().user_version < 1) {
@@ -513,6 +519,8 @@ export class Store {
         this.db.prepare('DELETE FROM meeting_search WHERE rowid=?').run(rowid);
         this.db.prepare('DELETE FROM transcript_versions WHERE meeting_id=?').run(id);
         this.db.prepare('DELETE FROM messages WHERE scope=?').run(`meeting:${id}`);
+        this.db.prepare('DELETE FROM todos WHERE meeting_id=?').run(id);
+        this.db.prepare('DELETE FROM todo_scans WHERE meeting_id=?').run(id);
         this.db.prepare('DELETE FROM meetings WHERE id=?').run(id);
       }
       this.db.exec('COMMIT');
@@ -569,6 +577,89 @@ export class Store {
       .prepare('SELECT id FROM meeting_search WHERE meeting_search MATCH ? ORDER BY rank LIMIT 500')
       .all(match)
       .map(({ id }) => ({ id }));
+  }
+  // Todos live beside their meeting, not in it: a meeting is rewritten on every transcript line,
+  // and a scan must never race that. Rows of notes in Trash stay, so restoring brings them back.
+  todos() {
+    return this.db
+      .prepare('SELECT data FROM todos')
+      .all()
+      .map((row) => JSON.parse(row.data))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+  todoScans() {
+    return Object.fromEntries(
+      this.db
+        .prepare('SELECT meeting_id, data FROM todo_scans')
+        .all()
+        .map((row) => [row.meeting_id, JSON.parse(row.data)]),
+    );
+  }
+  writeTodoScan(meetingId, scan) {
+    this.db
+      .prepare('INSERT OR REPLACE INTO todo_scans VALUES(?,?)')
+      .run(meetingId, JSON.stringify(scan));
+  }
+  // A finished scan. A meeting deleted forever while it ran stays deleted: returns false.
+  saveTodoScan(meetingId, proposed) {
+    const now = new Date().toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      if (!this.db.prepare('SELECT 1 FROM meetings WHERE id=?').get(meetingId)) {
+        this.db.exec('ROLLBACK');
+        return false;
+      }
+      const existing = this.db
+        .prepare('SELECT data FROM todos WHERE meeting_id=?')
+        .all(meetingId)
+        .map((row) => JSON.parse(row.data));
+      const rows = mergeTodos(existing, proposed, (item) => ({
+        ...item,
+        id: randomUUID(),
+        meetingId,
+        createdAt: now,
+        doneAt: null,
+        dismissedAt: null,
+        touched: false,
+      }));
+      this.db.prepare('DELETE FROM todos WHERE meeting_id=?').run(meetingId);
+      for (const row of rows)
+        this.db
+          .prepare('INSERT INTO todos VALUES(?,?,?)')
+          .run(row.id, meetingId, JSON.stringify(row));
+      this.writeTodoScan(meetingId, { at: now, status: 'done', version: todoScanVersion });
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  // A scan that could not finish. Todos from an earlier scan stay as they are.
+  failTodoScan(meetingId) {
+    if (!this.db.prepare('SELECT 1 FROM meetings WHERE id=?').get(meetingId)) return false;
+    this.writeTodoScan(meetingId, {
+      at: new Date().toISOString(),
+      status: 'failed',
+      version: todoScanVersion,
+    });
+    return true;
+  }
+  // What the user did to one todo: from here on, scans leave it alone.
+  updateTodo(id, patch) {
+    const found = this.db.prepare('SELECT data FROM todos WHERE id=?').get(id);
+    if (!found) throw new Error('Todo not found.');
+    const row = JSON.parse(found.data);
+    const now = new Date().toISOString();
+    if ('assignee' in patch) {
+      if (!assignees.includes(patch.assignee)) throw new Error('Invalid todo.');
+      row.assignee = patch.assignee;
+    }
+    if ('done' in patch) row.doneAt = patch.done ? now : null;
+    if ('dismissed' in patch) row.dismissedAt = patch.dismissed ? now : null;
+    row.touched = true;
+    this.db.prepare('UPDATE todos SET data=? WHERE id=?').run(JSON.stringify(row), id);
+    return row;
   }
   folders() {
     return this.db.prepare('SELECT * FROM folders ORDER BY name').all();
@@ -687,6 +778,11 @@ export class Store {
         .prepare('SELECT scope,data FROM messages')
         .all()
         .map((r) => ({ scope: r.scope, ...JSON.parse(r.data) })),
+      todos: this.todos(),
+      todoScans: Object.entries(this.todoScans()).map(([meetingId, scan]) => ({
+        meetingId,
+        ...scan,
+      })),
     };
   }
   restore(input) {
@@ -791,6 +887,9 @@ export class Store {
         validateSetting(key, value);
         return [key, value];
       });
+    // Backups from before todos have none: those meetings simply count as not scanned yet.
+    const todos = (input.todos ?? []).map(cleanTodo);
+    const todoScans = (input.todoScans ?? []).map(cleanTodoScan);
     // A meeting listed twice (a hand-edited or merged backup) is restored once.
     const seen = new Set();
     const unique = meetings.filter((m) => !seen.has(m.id) && seen.add(m.id));
@@ -815,6 +914,18 @@ export class Store {
         this.db
           .prepare('INSERT OR IGNORE INTO settings VALUES(?,?)')
           .run(key, JSON.stringify(value));
+      // Todos come back with notes that were not scanned here; a note already scanned on this Mac
+      // keeps what the user did to it here.
+      const scanned = this.todoScans();
+      const fits = (meetingId) =>
+        !scanned[meetingId] &&
+        !!this.db.prepare('SELECT 1 FROM meetings WHERE id=?').get(meetingId);
+      for (const row of todos.filter((row) => fits(row.meetingId)))
+        this.db
+          .prepare('INSERT OR IGNORE INTO todos VALUES(?,?,?)')
+          .run(row.id, row.meetingId, JSON.stringify(row));
+      for (const { meetingId, ...scan } of todoScans.filter((scan) => fits(scan.meetingId)))
+        this.writeTodoScan(meetingId, scan);
       this.db.exec('COMMIT');
       return additions.length;
     } catch (e) {
@@ -884,9 +995,13 @@ export function validateSetting(key, value) {
       'meetingDetection',
       'openOnMeetingDetected',
       'calendarConnected',
+      'autoTodos',
     ].includes(key)
   ) {
     if (typeof value !== 'boolean') throw new Error('Invalid preference.');
+  } else if (key === 'myNames') {
+    // What people call the user, comma-separated: how a todo is recognized as theirs.
+    text(value, 300);
   } else if (key === 'hiddenCalendars') {
     if (
       !Array.isArray(value) ||

@@ -3,7 +3,7 @@
 // CJK runs count by neighbouring character pairs: single characters such as 我, 们 and 的 are in
 // almost every sentence and would make unrelated lines look alike.
 const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
-const words = (text) =>
+export const words = (text) =>
   (
     text
       .toLowerCase()
