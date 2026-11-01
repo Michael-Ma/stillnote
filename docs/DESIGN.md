@@ -28,6 +28,7 @@ References were re-checked on October 20, 2026 against the current Granola macOS
 - **Home:** 232 px sidebar, a centered column up to 760 px, Coming up card, date-grouped rows, and a floating “Ask anything” dock.
 - **Note:** the sidebar is hidden. A back pill and save state sit on the left of the top bar, view switch and note actions on the right. The writing column is up to 720 px.
 - **Chat:** full width from the sidebar, or a 392 px side panel next to a note. Below 1100 px the side panel overlays the note instead of squeezing it.
+- **Todos:** the same centered column as Home, reached from the sidebar under Starred, with the number still open beside it.
 - **Settings:** a dialog with AI, Recording and Notebook sections. AI shows one card per provider, with its status, usage and a single next step.
 
 ## Visual system
@@ -51,6 +52,10 @@ All colors, type sizes and radii are CSS custom properties in `app/style.css`, w
 6. Enhanced note → own points in dark text, transcript additions lighter → transcript sheet from the dock → edit, regenerate, or restore an earlier version.
 7. Chat → explicit scope and model → streamed answer → persisted message with source chips.
 8. Quota, network failure or cancellation → visible recovery message. Notes and the previous summary stay intact.
+
+## Todos
+
+Everything assigned to you in any meeting, grouped by meeting, newest first. A todo Stillnote is unsure about stays in the list with a “Might not be yours” mark and one-click answers, because a hidden todo is worse than a marked one. Other people's todos are not in the list or its count, but stay folded below it, so a wrong call can be put right. Each todo shows the words it rests on, and clicking them opens the transcript at that line. Reading past meetings spends the user's plan, so it starts only from a button that says how many requests it will use; it can be stopped, and what is already read stays.
 
 ## Meeting reminders
 

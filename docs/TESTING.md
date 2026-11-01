@@ -17,6 +17,7 @@ node scripts/e2e.mjs
 node scripts/e2e.mjs --suite notebook --no-build
 node scripts/e2e.mjs --suite capture --no-build
 node scripts/e2e.mjs --suite ai --no-build
+node scripts/e2e.mjs --suite todos --no-build
 node scripts/e2e.mjs --suite recovery --no-build
 node scripts/e2e.mjs --suite calls --no-build
 node scripts/e2e.mjs --suite reminders --no-build
@@ -187,3 +188,7 @@ Panel overlays use timing collected during capture; the panels themselves are st
 The install test creates its own `stillnote-install-test-*` directory under the OS temporary directory. It invokes the production installer twice there, then launches only that temporary executable with an explicit disposable `STILLNOTE_DATA_DIR`, mock keychain, and Claude discovery disabled. It seeds notes, a folder, a summary, a transcript, preferences and two synthetic WAVs; creates another note through the actual packaged UI; replaces the bundle; and checks persistence plus audio byte equality and the local playback protocol. If an installed Stillnote exists, its bundle is read only to test upgrading from it; its notebook is never opened. The current installed app's archive checksum must remain unchanged.
 
 Test installations reject non-temporary roots and symlink escapes, never quit or reopen the production app, and remove only their own temporary files after success. Failures retain disposable evidence. The normal installer also restores the previous bundle if its final rename fails. These tests cover local installation and a seeded current-schema notebook, not every historical data migration, actual microphone capture, or real provider authentication.
+
+## Measuring todo accuracy
+
+`scripts/todo-accuracy.mjs` measures, on your own meetings, how well Stillnote tells your todos from other people's. It is opt-in, sends meetings to your Claude plan, and never runs in CI. The notebook is opened read-only and its contents are fingerprinted before and after. Meeting text and labels stay in `~/Library/Application Support/Stillnote-accuracy/`, outside the repo; the script prints counts only, and the arithmetic in `scripts/todo-score.mjs` is tested on invented data. Results and method: [docs/ai/todo-accuracy.md](ai/todo-accuracy.md).
