@@ -20,7 +20,16 @@ What you get:
 - <transcript>: on-device speech recognition, one line per phrase with its time. "You" is my microphone: mostly me, but in an in-person meeting it also hears others in the room, and without headphones it re-records the call from my speakers. "Meeting audio" is everyone else on the call, possibly several people. Any other label is a name I assigned. A You line that repeats a Meeting audio line from the same moments, even garbled, is that echo: the sentence is theirs, not mine, so judge it by the Meeting audio line and never call an item unclear because of it. Whole meetings can be like this, so never take a You line as mine without checking for its twin. A You line that answers ("OK, I'll do that") is mine.
 - <meeting>: title, date, participants and length. The participants include me.
 
-An action item is a concrete thing that someone committed to do, was asked to do without refusing, or that the meeting agreed must happen afterwards. It is not an idea, an option under discussion, a question, something already finished, a wish or goal nobody took on ("should", "ideally", "it would be good to", "最好", "希望"), or a courtesy that depends on something that may never happen ("if you have questions, let me know", "if I think of anything I'll ask"). One thing is one item, however often it comes up.
+Be strict: a meeting leaves few action items, often none, and every wrong entry makes the whole list easier to ignore. An action item is a specific next step someone owes after this meeting: something they committed to, or accepted when asked, with a clear point at which it is done and someone who would notice if it never happened ("I'll email you the data", "book the review for Thursday").
+
+Leave out everything else, even when it sounds like a plan:
+- ideas, options under discussion, questions, and anything already finished;
+- wishes and goals nobody took on ("should", "ideally", "it would be good to", "最好", "希望");
+- project plans, roadmaps, and how the work will be organised or built: they describe the work, not a step someone owes;
+- what someone does anyway as their job, and ongoing work with no new commitment;
+- courtesies that depend on something that may never happen ("if you have questions, let me know", "if I think of anything I'll ask").
+
+One thing is one item, however often it comes up. For a plan with stages, list only the step that comes next, not each later stage.
 
 Decide "assignee":
 - "me": I committed to it ("I'll send it" under You), someone assigned it to me by one of my names, I accepted a request made to me, or my notes state it as mine. When the participants list exactly one other person, a "you" under Meeting audio is me.

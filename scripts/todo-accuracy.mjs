@@ -7,6 +7,7 @@
 //   node scripts/todo-accuracy.mjs extract --run wide --set dev --wide    a deliberately greedy pass
 //   node scripts/todo-accuracy.mjs pool --runs baseline,v1,wide --set dev  tasks to label
 //   node scripts/todo-accuracy.mjs label --set dev                    label them on a local page
+//     --only v3,v4 shows just what those runs found and nobody has labelled yet
 //   node scripts/todo-accuracy.mjs score --run v1 --set dev --errors  numbers; errors only for dev
 //   node scripts/todo-accuracy.mjs chatgpt                            read what the app itself found
 import { createHash, randomBytes } from 'node:crypto';
@@ -255,8 +256,15 @@ const commands = {
     const { meetings } = readNotebook();
     const set = new Set(chosen(split));
     const token = randomBytes(24).toString('hex');
+    const only = option('--only')?.split(',');
     const page = () => {
       const candidates = read('candidates.json', []).filter((c) => set.has(c.meetingId));
+      const labels = read('labels.json', {});
+      const open = (c) =>
+        !only ||
+        (!labels[c.id]?.label &&
+          !labels[c.id]?.dupOf &&
+          c.members.some((key) => only.includes(key.split('/')[0])));
       const groups = shuffled([...set], split.seed)
         .map((id) => {
           const m = meetings.find((x) => x.id === id);
@@ -273,11 +281,14 @@ const commands = {
               .sort(
                 (a, b) => (a.evidence?.timestamp ?? Infinity) - (b.evidence?.timestamp ?? Infinity),
               )
+              .filter(open)
               .map(({ id, text, evidence }) => ({ id, text, evidence })),
+            // Everything in the meeting, labelled or not, so a repeat can name what it repeats.
+            all: candidates.filter((c) => c.meetingId === id).map(({ id, text }) => ({ id, text })),
           };
         })
         .filter((group) => group.tasks.length || group.audit);
-      return { groups, labels: read('labels.json', {}), missing: read('missing.json', {}) };
+      return { groups, labels, missing: read('missing.json', {}) };
     };
     const server = createServer((request, response) => {
       const url = new URL(request.url, 'http://127.0.0.1');
@@ -469,7 +480,7 @@ const el=(tag,props={},...kids)=>{const n=Object.assign(document.createElement(t
 const clock=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
 const save=b=>fetch('/save?token='+token,{method:'POST',body:JSON.stringify(b)});
 function count(){const all=state.groups.flatMap(g=>g.tasks);const done=all.filter(t=>state.labels[t.id]?.label||state.labels[t.id]?.dupOf).length;document.getElementById('count').textContent=done+' / '+all.length}
-function mineSoFar(group){const mine=group.tasks.filter(t=>state.labels[t.id]?.label==='mine').map(t=>t.text);group.box.textContent=mine.length?'本场标为「我的」：'+mine.join('；'):''}
+function mineSoFar(group){const mine=group.all.filter(t=>state.labels[t.id]?.label==='mine').map(t=>t.text);group.box.textContent=mine.length?'本场标为「我的」：'+mine.join('；'):''}
 function task(group,t){
   const box=el('div',{className:'task'});
   const paint=()=>{const l=state.labels[t.id]??{};box.classList.toggle('done',!!(l.label||l.dupOf));mineSoFar(group);
@@ -484,7 +495,7 @@ function task(group,t){
   for(const [v,name] of choices){const b=el('button',{textContent:name});b.dataset.v=v;b.onclick=()=>{state.labels[t.id]={label:v};paint();count();save({labels:{[t.id]:state.labels[t.id]}})};row.append(b)}
   box.append(row);
   const dup=el('select',{},el('option',{value:'',textContent:'和另一条重复？选择它'}));
-  for(const o of group.tasks)if(o.id!==t.id)dup.append(el('option',{value:o.id,textContent:o.text.slice(0,70)}));
+  for(const o of group.all)if(o.id!==t.id)dup.append(el('option',{value:o.id,textContent:o.text.slice(0,70)}));
   dup.onchange=()=>{state.labels[t.id]=dup.value?{dupOf:dup.value}:{};paint();count();save({labels:{[t.id]:state.labels[t.id]}})};
   box.append(dup);paint();return box}
 fetch('/data?token='+token).then(r=>r.json()).then(s=>{state=s;const root=document.getElementById('root');
