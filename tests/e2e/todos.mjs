@@ -126,7 +126,11 @@ export async function todos(h) {
   await openTodos(page);
   await page.getByText('2 meetings not read for todos', { exact: true }).waitFor();
   await page.getByText('Uses 2 requests from your AI plan.', { exact: true }).waitFor();
-  await page.getByRole('combobox', { name: 'Meetings to read' }).selectOption('all');
+  const range = page.getByRole('combobox', { name: 'Meetings to read' });
+  const scan = page.getByRole('button', { name: 'Find todos', exact: true });
+  assert.equal((await range.boundingBox()).height, (await scan.boundingBox()).height);
+  await h.screenshot('todos-scan');
+  await range.selectOption('all');
   const requests = () => h.state().then((s) => Object.keys(s.todoScans).length);
   assert.equal(await requests(), 1, 'nothing is read until asked');
   await page.getByRole('button', { name: 'Find todos', exact: true }).click();

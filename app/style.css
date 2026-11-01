@@ -3075,10 +3075,6 @@ dialog.settings-dialog {
   color: var(--muted);
   font-size: var(--text-sm);
 }
-.todo-scan select {
-  padding: 5px 8px;
-  font-size: var(--text-base);
-}
 .todo-group {
   margin-bottom: 20px;
 }

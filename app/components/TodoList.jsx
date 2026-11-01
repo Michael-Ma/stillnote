@@ -46,6 +46,7 @@ function ScanBanner({ meetings, scans, progress, onScan, onCancel }) {
         </small>
       </div>
       <select
+        className="chip-select"
         aria-label={t('Meetings to read')}
         value={days ?? 'all'}
         onChange={(e) => setDays(e.target.value === 'all' ? null : Number(e.target.value))}
