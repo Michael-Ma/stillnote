@@ -3,7 +3,7 @@
 <key>CFBundleName</key><string>Stillnote</string>
 <key>NSMicrophoneUsageDescription</key><string>Transcribe your voice during meetings on this Mac.</string>
 <key>NSSpeechRecognitionUsageDescription</key><string>Transcribe meetings using on-device speech recognition.</string>
-<key>NSCalendarsFullAccessUsageDescription</key><string>Read upcoming meetings from your Mac calendars.</string>
-<key>NSCalendarsUsageDescription</key><string>Read upcoming meetings from your Mac calendars.</string>
+<key>NSCalendarsFullAccessUsageDescription</key><string>Read upcoming meetings from your Mac calendars, and add the todos you choose.</string>
+<key>NSCalendarsUsageDescription</key><string>Read upcoming meetings from your Mac calendars, and add the todos you choose.</string>
 <key>NSAudioCaptureUsageDescription</key><string>Transcribe audio from your meeting apps.</string>
 </dict></plist>

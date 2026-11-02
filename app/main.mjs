@@ -932,6 +932,22 @@ if (!app.requestSingleInstanceLock()) {
       send({ op: 'calendar' });
     });
   }
+  // One at a time, since the helper's answers do not say which write they answer. The first may
+  // wait on the macOS permission prompt.
+  let calendarWrites = Promise.resolve();
+  function writeCalendar(op, fields) {
+    const result = calendarWrites.then(() => requests.request(op, fields, 60000));
+    calendarWrites = result.catch(() => {});
+    return result;
+  }
+  // The event follows its todo. One the user deleted in Calendar stays deleted, and a todo with no
+  // deadline left drops its link: only Undo ever removes an event.
+  async function followTodo({ id, text, dueDate, calendarEventId: eventId }) {
+    const kept =
+      dueDate &&
+      (await writeCalendar('save-event', { title: text, date: dueDate, eventId })).eventId;
+    if (!kept) store.updateTodo(id, { calendarEventId: null });
+  }
   // What Home, reminders and detection use: the Mac's calendars still turned on, and the links.
   function rebuildCalendar() {
     calendarEvents = mergeCalendars(
@@ -1798,15 +1814,35 @@ if (!app.requestSingleInstanceLock()) {
         await openCall(link.url);
         return link.service;
       });
-      register('todos', (action, ...args) => {
+      register('todos', async (action, ...args) => {
         const changed = (todo) => {
           emit({ type: 'todos', ...todoState() });
           return todo;
         };
         if (action === 'add') return changed(store.addTodo(args[0]));
-        if (action === 'update') return changed(store.updateTodo(...args));
+        if (action === 'update') {
+          const [id, patch] = args;
+          const todo = changed(store.updateTodo(id, patch));
+          if (!todo.calendarEventId || !('text' in patch || 'dueDate' in patch)) return todo;
+          // The todo has changed either way: a calendar that refuses must not undo that.
+          await followTodo(todo).catch((error) => emit({ type: 'error', message: error.message }));
+          return changed(store.todo(id));
+        }
         if (action === 'delete') return changed(store.deleteTodo(args[0]));
         if (action === 'restore') return changed(store.restoreTodo(args[0]));
+        if (action === 'calendar') {
+          const { id, text, dueDate } = store.todo(args[0]);
+          const { eventId, calendar } = await writeCalendar('save-event', {
+            title: text,
+            date: dueDate,
+          });
+          return { todo: changed(store.updateTodo(id, { calendarEventId: eventId })), calendar };
+        }
+        if (action === 'uncalendar') {
+          const { id, calendarEventId: eventId } = store.todo(args[0]);
+          await writeCalendar('remove-event', { eventId });
+          return changed(store.updateTodo(id, { calendarEventId: null }));
+        }
         if (action === 'scan') {
           const [days] = args;
           if (days !== null && !(Number.isFinite(days) && days > 0))

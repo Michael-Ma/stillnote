@@ -1,5 +1,13 @@
 import React, { useRef, useState } from 'react';
-import { Flag, LoaderCircle, Pencil, Plus, Trash2 } from 'lucide-react';
+import {
+  CalendarCheck,
+  CalendarPlus,
+  Flag,
+  LoaderCircle,
+  Pencil,
+  Plus,
+  Trash2,
+} from 'lucide-react';
 import { AiConnect } from './AiConnect.jsx';
 import { IconButton } from './Content.jsx';
 import { date, dateFormat, duration } from '../format.mjs';
@@ -150,9 +158,10 @@ function Deadline({ todo, today, done }) {
   );
 }
 
-function TodoRow({ todo, meeting, today, onOpen, onChange, onDelete, onEvidence }) {
+function TodoRow({ todo, meeting, today, onOpen, onChange, onDelete, onCalendar, onEvidence }) {
   const t = useT();
   const [editing, setEditing] = useState(false);
+  const [adding, setAdding] = useState(false);
   const done = !!todo.doneAt,
     unclear = todo.assignee === 'unclear',
     theirs = todo.assignee === 'other';
@@ -161,6 +170,12 @@ function TodoRow({ todo, meeting, today, onOpen, onChange, onDelete, onEvidence 
     const saved = same || (await onChange(todo.id, fields));
     if (saved) setEditing(false);
     return saved;
+  }
+  // The answer may wait on the macOS permission prompt, and a second click would add it twice.
+  async function addToCalendar() {
+    setAdding(true);
+    await onCalendar(todo);
+    setAdding(false);
   }
   if (editing)
     return (
@@ -191,6 +206,16 @@ function TodoRow({ todo, meeting, today, onOpen, onChange, onDelete, onEvidence 
             {unclear && <span className="todo-flag">{t('Might not be yours')}</span>}
             {theirs && todo.owner && <span>{todo.owner}</span>}
             <Deadline todo={todo} today={today} done={done} />
+            {todo.calendarEventId && (
+              <span
+                className="todo-calendar"
+                role="img"
+                aria-label={t('In your calendar')}
+                title={t('In your calendar')}
+              >
+                <CalendarCheck size={13} aria-hidden="true" />
+              </span>
+            )}
             {meeting && (
               <button className="todo-from" onClick={() => onOpen(meeting)}>
                 {meeting.title}
@@ -225,6 +250,17 @@ function TodoRow({ todo, meeting, today, onOpen, onChange, onDelete, onEvidence 
           >
             {t('Not mine')}
           </button>
+        )}
+        {todo.dueDate && !todo.calendarEventId && !done && !theirs && (
+          <IconButton
+            className="small"
+            label={t('Add “{task}” to calendar', { task: todo.text })}
+            title={t('Add to calendar')}
+            disabled={adding}
+            onClick={addToCalendar}
+          >
+            <CalendarPlus size={14} />
+          </IconButton>
         )}
         <IconButton
           className={'small todo-important' + (todo.important ? ' on' : '')}
@@ -333,6 +369,7 @@ export function TodoList({
   onAdd,
   onChange,
   onDelete,
+  onCalendar,
   onScan,
   onCancelScan,
   onView,
@@ -340,7 +377,7 @@ export function TodoList({
   const t = useT();
   const { open, done, others } = todoLists(data.todos, data.meetings);
   const today = dayOf(Date.now());
-  const groupProps = { rowProps: { today, onChange, onDelete, onEvidence }, onOpen };
+  const groupProps = { rowProps: { today, onChange, onDelete, onCalendar, onEvidence }, onOpen };
   const scanned = Object.keys(data.todoScans).length > 0;
   const view = data.settings.todoView === 'due' ? 'due' : 'meeting';
   const views = { meeting: t('By meeting'), due: t('By deadline') };

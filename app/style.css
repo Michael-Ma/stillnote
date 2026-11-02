@@ -3118,6 +3118,10 @@ dialog.settings-dialog {
 .todo-overdue {
   color: var(--warn);
 }
+.todo-calendar {
+  display: inline-flex;
+  align-items: center;
+}
 .todo-from {
   overflow: hidden;
   max-width: 100%;

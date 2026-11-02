@@ -8,6 +8,8 @@ const msg = (text) => text;
 const fixed = new Set([
   msg('No language could transcribe this audio. The existing transcript was preserved.'),
   msg('Allow Calendar access in System Settings → Privacy & Security.'),
+  msg('Invalid calendar event.'),
+  msg('Choose a default calendar in the Calendar app.'),
   msg('Already recording or finishing a recording.'),
   msg('Audio normalization failed.'),
   msg('Cannot create the local recording file.'),

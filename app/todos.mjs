@@ -104,6 +104,7 @@ export const newTodo = (fields) => ({
   dismissedAt: null,
   foundAs: null,
   important: false,
+  calendarEventId: null,
   ...fields,
 });
 
@@ -353,6 +354,7 @@ export function cleanTodo(row) {
     !nullable(row.due, maxField) ||
     (row.dueDate != null && !isDay(row.dueDate)) ||
     !nullable(row.foundAs, maxTask) ||
+    !nullable(row.calendarEventId, 300) ||
     !date(row.doneAt) ||
     !date(row.dismissedAt) ||
     !Number.isFinite(Date.parse(row.createdAt)) ||
@@ -390,6 +392,7 @@ export function cleanTodo(row) {
     touched: row.touched === true,
     foundAs: row.foundAs ?? null,
     important: row.important === true,
+    calendarEventId: row.calendarEventId ?? null,
   };
 }
 

@@ -68,9 +68,9 @@
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Stillnote uses your microphone to transcribe meetings on your Mac.",
         "NSSpeechRecognitionUsageDescription": "Stillnote transcribes meeting audio on your Mac.",
-        "NSCalendarsFullAccessUsageDescription": "Stillnote reads upcoming meetings from calendars on your Mac.",
+        "NSCalendarsFullAccessUsageDescription": "Stillnote reads upcoming meetings from calendars on your Mac, and adds the todos you choose.",
         "NSAudioCaptureUsageDescription": "Stillnote transcribes audio from your meeting apps.",
-        "NSCalendarsUsageDescription": "Stillnote reads upcoming meetings from calendars on your Mac."
+        "NSCalendarsUsageDescription": "Stillnote reads upcoming meetings from calendars on your Mac, and adds the todos you choose."
       },
       "icon": "assets/icon.icns"
     }

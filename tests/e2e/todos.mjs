@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const mine = 'I will send the pricing draft by Friday.';
 const theirs = 'I can update the onboarding page.';
@@ -192,6 +194,73 @@ export async function todos(h) {
     .getByRole('button', { name: 'Delete “Renew the passport”' })
     .click();
   await h.waitForState((s) => !s.todos.some((t) => t.text === 'Renew the passport'));
+
+  // One click puts a todo with a deadline in the calendar, says which, and can be taken back.
+  const helperSaw = (op) =>
+    readFileSync(join(h.dataDir, 'adapter-events.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .filter((event) => event.type === 'native-command' && event.op === op);
+  const toCalendar = (text) =>
+    row(page, text).getByRole('button', { name: `Add “${text}” to calendar` });
+  const linked = (text) => (s) => s.todos.find((t) => t.text === text)?.calendarEventId;
+  await toCalendar('Pay the invoice').click();
+  await page.getByRole('status').filter({ hasText: 'Added to Home.' }).waitFor();
+  assert.deepEqual(
+    helperSaw('save-event').map(({ title, date, eventId }) => [title, date, eventId]),
+    [['Pay the invoice', dayFromNow(1), undefined]],
+    'only the words and the day go to the calendar',
+  );
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await h.waitForState((s) => !linked('Pay the invoice')(s));
+  assert.equal(helperSaw('remove-event').length, 1);
+  await toCalendar('Pay the invoice').click();
+  await row(page, 'Pay the invoice')
+    .getByRole('img', { name: 'In your calendar', exact: true })
+    .waitFor();
+  assert.equal(await toCalendar('Pay the invoice').count(), 0);
+
+  // The event follows the todo; one deleted in Calendar stays deleted; a refusal is said.
+  await row(page, 'Pay the invoice')
+    .getByRole('button', { name: 'Edit “Pay the invoice”' })
+    .click();
+  await editing.getByRole('textbox', { name: 'Deadline', exact: true }).fill(dayFromNow(3));
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await editing.waitFor({ state: 'hidden' });
+  const moved = helperSaw('save-event').at(-1);
+  assert.deepEqual([moved.date, moved.eventId], [dayFromNow(3), 'fixture-event']);
+  assert.ok(linked('Pay the invoice')(await h.state()));
+
+  await adding.fill('Event deleted in Calendar');
+  await page.getByRole('textbox', { name: 'Deadline', exact: true }).fill(dayFromNow(2));
+  await adding.press('Enter');
+  await toCalendar('Event deleted in Calendar').click();
+  await h.waitForState(linked('Event deleted in Calendar'));
+  await row(page, 'Event deleted in Calendar')
+    .getByRole('button', { name: 'Edit “Event deleted in Calendar”' })
+    .click();
+  await editing.getByRole('textbox', { name: 'Deadline', exact: true }).fill(dayFromNow(4));
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await h.waitForState((s) => !linked('Event deleted in Calendar')(s));
+  await toCalendar('Event deleted in Calendar').waitFor();
+
+  await adding.fill('Calendar refused this');
+  await page.getByRole('textbox', { name: 'Deadline', exact: true }).fill(dayFromNow(2));
+  await adding.press('Enter');
+  await toCalendar('Calendar refused this').click();
+  await page
+    .getByRole('alert')
+    .getByText('Allow Calendar access in System Settings → Privacy & Security.', { exact: true })
+    .waitFor();
+  assert.equal(linked('Calendar refused this')(await h.state()), null);
+  assert.equal(await toCalendar('Calendar refused this').isEnabled(), true);
+  for (const text of ['Event deleted in Calendar', 'Calendar refused this']) {
+    await row(page, text)
+      .getByRole('button', { name: `Delete “${text}”` })
+      .click();
+    await h.waitForState((s, gone) => !s.todos.some((t) => t.text === gone), text);
+  }
 
   // Enhancing again scans again, and none of that is undone.
   await page.locator('.todo-meeting').filter({ hasText: 'E2E pricing sync' }).first().click();

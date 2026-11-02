@@ -565,6 +565,15 @@ function App() {
       action: { label: t('Undo'), run: () => guard(() => call('todos', 'restore', deleted)) },
     });
   }
+  // One click writes to a calendar others may see, so it says which, and can be taken back.
+  async function addTodoToCalendar(todo) {
+    const added = await guard(() => call('todos', 'calendar', todo.id));
+    if (!added) return;
+    setNotice({
+      text: t('Added to {calendar}.', { calendar: added.calendar }),
+      action: { label: t('Undo'), run: () => guard(() => call('todos', 'uncalendar', todo.id)) },
+    });
+  }
   async function navigate(v) {
     await guard(async () => {
       await flushAll();
@@ -1267,6 +1276,7 @@ function App() {
                   onAdd={(fields) => guard(() => call('todos', 'add', fields))}
                   onChange={changeTodo}
                   onDelete={deleteTodo}
+                  onCalendar={addTodoToCalendar}
                   onScan={(days) => guard(() => call('todos', 'scan', days))}
                   onCancelScan={() => guard(() => call('todos', 'cancel'))}
                   onView={(todoView) => guard(() => setting('todoView', todoView))}

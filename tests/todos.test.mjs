@@ -683,6 +683,23 @@ test('marking a todo important survives the next scan', (t) => {
   assert.equal(s.updateTodo(id, { important: false }).important, false);
 });
 
+test('a todo remembers its calendar event through scans and backups', (t) => {
+  const { s } = store(t);
+  const m = s.create({ title: 'Planning' });
+  s.saveTodoScan(m.id, [send]);
+  const { id, calendarEventId } = s.todos()[0];
+  assert.equal(calendarEventId, null);
+  s.updateTodo(id, { calendarEventId: 'event-1' });
+  s.saveTodoScan(m.id, []);
+  assert.equal(s.todo(id).calendarEventId, 'event-1', 'linking is something the user did');
+  const { s: other } = store(t);
+  other.restore(JSON.parse(JSON.stringify(s.backup())));
+  assert.equal(other.todo(id).calendarEventId, 'event-1');
+  assert.equal(s.updateTodo(id, { calendarEventId: null }).calendarEventId, null);
+  assert.throws(() => s.updateTodo(id, { calendarEventId: 'x'.repeat(301) }), /Invalid text/);
+  assert.throws(() => s.todo('missing'), /Todo not found/);
+});
+
 test('deleting a found todo leaves a mark; undoing brings it back', (t) => {
   const { s } = store(t);
   const m = s.create({ title: 'Planning' });

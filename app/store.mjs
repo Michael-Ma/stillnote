@@ -667,11 +667,14 @@ export class Store {
     this.db.prepare('INSERT INTO todos VALUES(?,?,?)').run(row.id, '', JSON.stringify(row));
     return row;
   }
-  // What the user did to one todo: from here on, scans leave it alone.
-  updateTodo(id, patch) {
+  todo(id) {
     const found = this.db.prepare('SELECT data FROM todos WHERE id=?').get(id);
     if (!found) throw new Error('Todo not found.');
-    const row = JSON.parse(found.data);
+    return JSON.parse(found.data);
+  }
+  // What the user did to one todo: from here on, scans leave it alone.
+  updateTodo(id, patch) {
+    const row = this.todo(id);
     const now = new Date().toISOString();
     if ('text' in patch) {
       const task = typedTask(patch.text);
@@ -680,6 +683,8 @@ export class Store {
     }
     if ('dueDate' in patch) row.dueDate = typedDay(patch.dueDate);
     if ('important' in patch) row.important = patch.important === true;
+    if ('calendarEventId' in patch)
+      row.calendarEventId = patch.calendarEventId && text(patch.calendarEventId, 300);
     if ('assignee' in patch) {
       if (!assignees.includes(patch.assignee)) throw new Error('Invalid todo.');
       row.assignee = patch.assignee;

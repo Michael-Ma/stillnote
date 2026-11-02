@@ -485,6 +485,8 @@ export function helperRequests(send) {
     devices: 'devices',
     languages: 'languages',
     'language-installed': 'install-language',
+    'event-saved': 'save-event',
+    'event-removed': 'remove-event',
   };
   return {
     request(op, fields = {}, timeout = 10000) {

@@ -437,6 +437,23 @@ test('native requests share a reply on its way, match replies, time out and reco
   await assert.rejects(retry, /Helper exited/);
   assert.equal(sent.length, 4);
 });
+test('a calendar write gets its answer or its refusal', async () => {
+  const sent = [];
+  const requests = helperRequests((command) => sent.push(command));
+  const saved = requests.request('save-event', { title: 'Send', date: '2026-05-08' });
+  requests.receive({ type: 'event-saved', eventId: 'e1', calendar: 'Home' });
+  assert.equal((await saved).calendar, 'Home');
+  const removed = requests.request('remove-event', { eventId: 'e1' });
+  requests.receive({ type: 'event-removed' });
+  assert.equal((await removed).type, 'event-removed');
+  const refused = requests.request('save-event', { title: 'Send', date: '2026-05-08' });
+  requests.receive({ type: 'error', op: 'save-event', message: 'Allow Calendar access' });
+  await assert.rejects(refused, /Allow Calendar access/);
+  assert.deepEqual(
+    sent.map((command) => command.op),
+    ['save-event', 'remove-event', 'save-event'],
+  );
+});
 test('recording meeting events coalesce at 4/s and final flush sends latest state', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let current = 0;

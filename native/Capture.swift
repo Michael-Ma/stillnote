@@ -2637,7 +2637,7 @@ func hexColor(_ color: CGColor?) -> String? {
   return String(format: "#%02x%02x%02x", channel(parts[0]), channel(parts[1]), channel(parts[2]))
 }
 @MainActor
-func calendar() async throws {
+func calendarAccess() async throws {
   let allowed: Bool
   if #available(macOS 14.0, *) {
     allowed = try await events.requestFullAccessToEvents()
@@ -2647,6 +2647,53 @@ func calendar() async throws {
   guard allowed else {
     throw problem("Allow Calendar access in System Settings → Privacy & Security.")
   }
+}
+// A todo as an all-day event in the default calendar. Given an `eventId` it changes that event
+// instead; one the person has deleted stays deleted, and the reply's empty id says so.
+@MainActor
+func saveEvent(_ obj: [String: Any]) async throws {
+  try await calendarAccess()
+  let days = DateFormatter()
+  days.locale = Locale(identifier: "en_US_POSIX")
+  days.dateFormat = "yyyy-MM-dd"
+  guard let title = obj["title"] as? String, let date = obj["date"] as? String,
+    let day = days.date(from: date)
+  else { throw problem("Invalid calendar event.") }
+  let event: EKEvent
+  if let id = obj["eventId"] as? String {
+    guard let found = events.event(withIdentifier: id) else {
+      emit(["type": "event-saved", "eventId": ""])
+      return
+    }
+    event = found
+  } else {
+    guard let calendar = events.defaultCalendarForNewEvents else {
+      throw problem("Choose a default calendar in the Calendar app.")
+    }
+    event = EKEvent(eventStore: events)
+    event.calendar = calendar
+    event.isAllDay = true
+  }
+  event.title = title
+  event.startDate = day
+  event.endDate = day
+  try events.save(event, span: .thisEvent)
+  emit([
+    "type": "event-saved", "eventId": event.eventIdentifier ?? "",
+    "calendar": event.calendar?.title ?? "",
+  ])
+}
+@MainActor
+func removeEvent(_ obj: [String: Any]) async throws {
+  try await calendarAccess()
+  if let id = obj["eventId"] as? String, let event = events.event(withIdentifier: id) {
+    try events.remove(event, span: .thisEvent)
+  }
+  emit(["type": "event-removed"])
+}
+@MainActor
+func calendar() async throws {
+  try await calendarAccess()
   let from = Calendar.current.startOfDay(for: Date())
   let to = Calendar.current.date(byAdding: .day, value: 7, to: from)!
   let rows = events.events(
@@ -2742,6 +2789,8 @@ func command(_ data: Data) {
           emit(["type": "error", "op": op, "locale": locale, "message": error.localizedDescription])
         }
       case "calendar": try await calendar()
+      case "save-event": try await saveEvent(obj)
+      case "remove-event": try await removeEvent(obj)
       case "watch-microphone":
         if obj["enabled"] as? Bool ?? true {
           microphoneWatch.start()

@@ -606,6 +606,25 @@ export function createTestAdapter({ dataDir }) {
           emit({ type: 'language-installed', locale: command.locale, installed });
         }
       }
+      // A todo's words stand for what the real calendar might do.
+      if (command.op === 'save-event') {
+        if (command.title.includes('refused'))
+          emit({
+            type: 'error',
+            op: command.op,
+            message: 'Allow Calendar access in System Settings → Privacy & Security.',
+          });
+        else
+          emit({
+            type: 'event-saved',
+            eventId:
+              command.eventId && command.title.includes('deleted')
+                ? ''
+                : (command.eventId ?? 'fixture-event'),
+            calendar: 'Home',
+          });
+      }
+      if (command.op === 'remove-event') emit({ type: 'event-removed' });
       if (command.op === 'calendar') {
         const answer = () =>
           emit({
