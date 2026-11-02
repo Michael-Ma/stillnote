@@ -8,6 +8,9 @@
 //                                              the text stays in this process and is never written
 //   node scripts/echo-eval.mjs --audio --levels   also compares what was cut with the audio levels
 //
+// With --audio the rows are also filtered as the app does with the recording's own audio
+// (app/echo-audio.mjs), and the numbers for that come under `withAudio`.
+//
 // Options: --notebook <path>, --only M2,M9b, --baseline <another echo.mjs to compare with>,
 // --out <file> for the numbers as JSON lines.
 import { spawn } from 'node:child_process';
@@ -21,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { echoMatch, suppressEcho, timedWords } from '../app/echo.mjs';
 import { arbitrateOffline } from '../app/language-arbiter.mjs';
 import { words as looseWords } from '../app/own-lines.mjs';
-import { recordingDirectory } from '../app/recordings.mjs';
+import { echoJudge, recordingDirectory } from '../app/recordings.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -199,7 +202,7 @@ function ownWords(mic, system) {
 
 // The same comparison with meeting audio moved far from the microphone: whatever goes here went
 // by chance, not because anyone said it at that moment.
-function unrelatedMatches(rows) {
+function unrelatedMatches(rows, audio) {
   const moved = (by) =>
     rows.map((row) =>
       row.source === 'system'
@@ -216,7 +219,7 @@ function unrelatedMatches(rows) {
   let removed = 0,
     trimmed = 0;
   for (const by of [-90, -45, 45, 90]) {
-    const result = suppressEcho(moved(by));
+    const result = suppressEcho(moved(by), undefined, audio);
     removed += result.removed.length;
     trimmed += result.trimmed.length;
   }
@@ -388,6 +391,55 @@ async function levelCheck({ meeting, recording }, rows, result, lost) {
   };
 }
 
+// What the audio alone took (rows and parts the text kept): how loud it was next to the user's own
+// voice, and whether it moved with meeting audio. `suspect` is what was loud and did not move with
+// it, as in levelCheck.
+async function audioCheck({ meeting, recording }, rows, textLeft, audioLeft) {
+  const dir = recordingDirectory(dataDir, meeting.id, recording.id);
+  const track = (source) => recording.tracks.find((t) => t.source === source);
+  const [mic, system] = await Promise.all(
+    ['microphone', 'system'].map((source) => loudness(join(dir, track(source).fileName))),
+  );
+  const offsets = ['microphone', 'system'].map((source) => track(source).startOffset ?? 0);
+  const end = (row) => Number(row.end) || start(row) + 1;
+  // By time and text: a part's id changes when a part before it goes.
+  const key = (row) => `${start(row)}|${row.text}`;
+  const kept = new Set(audioLeft.map(key));
+  const quiet = (row) =>
+    !side(rows, 'system').some((s) => start(s) < end(row) + 1 && end(s) > start(row) - 1);
+  const ownVoice = percentiles(
+    side(rows, 'microphone')
+      .filter((row) => end(row) - start(row) >= 1 && quiet(row))
+      .map((row) => decibels(mic, offsets[0], start(row), end(row))),
+  );
+  const loud = (value) => value >= (ownVoice.n ? ownVoice.p10 - 10 : -40);
+  const gone = textLeft
+    .filter((row) => !kept.has(key(row)))
+    .map((row) => ({
+      from: start(row),
+      to: Math.max(end(row), start(row) + 0.3),
+      mic: decibels(mic, offsets[0], start(row), Math.max(end(row), start(row) + 0.3)),
+      words: timedWords(row).reduce((sum, w) => sum + w.weight, 0),
+    }));
+  const lag = gone.length ? bestLag(mic, system, offsets, gone.slice(0, 200)) : 0;
+  const moves = (s) => together(mic, system, offsets, [s], lag) >= 0.5;
+  const suspects = gone.filter((s) => loud(s.mic) && !moves(s));
+  return {
+    gone: gone.length,
+    goneShort: gone.filter((s) => s.words < 3).length,
+    goneSeconds: Math.round(gone.reduce((sum, s) => sum + s.to - s.from, 0)),
+    goneMic: percentiles(gone.map((s) => s.mic)),
+    ownVoice,
+    suspect: suspects.length,
+    suspectSeconds: round(suspects.reduce((sum, s) => sum + s.to - s.from, 0)),
+    suspects: suspects.map((s) => ({
+      seconds: round(s.to - s.from),
+      mic: round(s.mic),
+      words: round(s.words),
+    })),
+  };
+}
+
 async function measure(session) {
   const rows = flag('--audio') ? await recognize(session) : session.saved;
   const mic = side(rows, 'microphone'),
@@ -403,6 +455,8 @@ async function measure(session) {
   const old = baseline && side(baseline.suppressEcho(rows).segments, 'microphone');
   return {
     label: session.label,
+    // Recorded with the live filter, which shipped on 2026-11-01.
+    ...(Date.parse(session.recording.startedAt) >= Date.parse('2026-11-01') ? { new: true } : {}),
     minutes: Math.round((session.recording.duration ?? 0) / 60),
     microphoneRows: mic.length,
     timedRows: mic.filter((row) => row.runs?.length).length,
@@ -425,6 +479,37 @@ async function measure(session) {
     ownWordsLost: lost.length,
     unrelated: unrelatedMatches(rows),
     ...(flag('--levels') ? { levels: await levelCheck(session, rows, result, lost) } : {}),
+    ...(flag('--audio') ? { withAudio: await withAudio(session, rows, result) } : {}),
+  };
+}
+
+// The same rows filtered with the recording's own audio, as the app does.
+async function withAudio(session, rows, textOnly) {
+  const dir = recordingDirectory(dataDir, session.meeting.id, session.recording.id);
+  const tracks = session.recording.tracks.map((t) => ({ ...t, startOffset: t.startOffset ?? 0 }));
+  const audio = echoJudge(dir, () => tracks);
+  const result = suppressEcho(rows, undefined, audio);
+  const mic = side(rows, 'microphone'),
+    system = side(rows, 'system'),
+    left = side(result.segments, 'microphone');
+  const lost = [...ownWords(mic, system)].filter((word) => !ownWords(left, system).has(word));
+  const parts = result.trimmed.flatMap((t) => t.pieces);
+  return {
+    looseAfter: looseEchoes(left, system),
+    echoedAfter: echoedWords(left, system).echoed,
+    wordsLeft: echoedWords(left, system).total,
+    rowsRemoved: result.removed.length,
+    rowsTrimmed: result.trimmed.length,
+    fragments: result.fragments,
+    partsLeft: parts.length,
+    shortParts: parts.filter((p) => timedWords(p).reduce((s, w) => s + w.weight, 0) < 3).length,
+    ownWordsLost: lost.length,
+    unrelated: unrelatedMatches(rows, audio),
+    ...(flag('--levels')
+      ? {
+          audio: await audioCheck(session, rows, side(textOnly.segments, 'microphone'), left),
+        }
+      : {}),
   };
 }
 
