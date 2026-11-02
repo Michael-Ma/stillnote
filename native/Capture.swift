@@ -2665,6 +2665,13 @@ func saveEvent(_ obj: [String: Any]) async throws {
       emit(["type": "event-saved", "eventId": ""])
       return
     }
+    // Moved by whole days, so a time or length the person gave it in Calendar is kept.
+    let calendar = Calendar.current
+    let shift =
+      calendar.dateComponents([.day], from: calendar.startOfDay(for: found.startDate), to: day)
+      .day ?? 0
+    found.startDate = calendar.date(byAdding: .day, value: shift, to: found.startDate)!
+    found.endDate = calendar.date(byAdding: .day, value: shift, to: found.endDate)!
     event = found
   } else {
     guard let calendar = events.defaultCalendarForNewEvents else {
@@ -2673,10 +2680,10 @@ func saveEvent(_ obj: [String: Any]) async throws {
     event = EKEvent(eventStore: events)
     event.calendar = calendar
     event.isAllDay = true
+    event.startDate = day
+    event.endDate = day
   }
   event.title = title
-  event.startDate = day
-  event.endDate = day
   try events.save(event, span: .thisEvent)
   emit([
     "type": "event-saved", "eventId": event.eventIdentifier ?? "",

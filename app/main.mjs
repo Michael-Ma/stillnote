@@ -1814,6 +1814,9 @@ if (!app.requestSingleInstanceLock()) {
         await openCall(link.url);
         return link.service;
       });
+      // Which calendar event a todo has, and what Undo brings back, are main's to say: a window
+      // that could name them could remove any event in the calendar.
+      const deletedTodos = new Map();
       register('todos', async (action, ...args) => {
         const changed = (todo) => {
           emit({ type: 'todos', ...todoState() });
@@ -1821,15 +1824,24 @@ if (!app.requestSingleInstanceLock()) {
         };
         if (action === 'add') return changed(store.addTodo(args[0]));
         if (action === 'update') {
-          const [id, patch] = args;
+          const [id, { calendarEventId, ...patch }] = args;
           const todo = changed(store.updateTodo(id, patch));
           if (!todo.calendarEventId || !('text' in patch || 'dueDate' in patch)) return todo;
           // The todo has changed either way: a calendar that refuses must not undo that.
           await followTodo(todo).catch((error) => emit({ type: 'error', message: error.message }));
           return changed(store.todo(id));
         }
-        if (action === 'delete') return changed(store.deleteTodo(args[0]));
-        if (action === 'restore') return changed(store.restoreTodo(args[0]));
+        if (action === 'delete') {
+          const deleted = store.deleteTodo(args[0]);
+          deletedTodos.set(deleted.id, deleted);
+          return changed(deleted);
+        }
+        if (action === 'restore') {
+          const deleted = deletedTodos.get(args[0]);
+          if (!deleted) throw new Error('Todo not found.');
+          deletedTodos.delete(deleted.id);
+          return changed(store.restoreTodo(deleted));
+        }
         if (action === 'calendar') {
           const { id, text, dueDate } = store.todo(args[0]);
           const { eventId, calendar } = await writeCalendar('save-event', {

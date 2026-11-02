@@ -562,7 +562,7 @@ function App() {
     if (!deleted) return;
     setNotice({
       text: t('Todo deleted.'),
-      action: { label: t('Undo'), run: () => guard(() => call('todos', 'restore', deleted)) },
+      action: { label: t('Undo'), run: () => guard(() => call('todos', 'restore', deleted.id)) },
     });
   }
   // One click writes to a calendar others may see, so it says which, and can be taken back.
