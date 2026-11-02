@@ -32,8 +32,8 @@ const offer =
   "And we might give them early access to the new dashboard in their region for, let's say, 6 months.";
 const headStart = 'We give them a 6 week head start on the new release.';
 const reply = 'Six weeks sounds right to me, honestly.';
-const kept = { keep: true, remove: [], trim: [] };
-const leftOut = { keep: false, remove: [], trim: [] };
+const kept = { keep: true, remove: [], trim: [], fragments: 0 };
+const leftOut = { keep: false, remove: [], trim: [], fragments: 0 };
 
 test('words are normalized the same way on both sides', () => {
   const words = (text) => timedWords(mic(0, text)).map((w) => w.word);
@@ -222,7 +222,7 @@ test('Retry leaves out the echoes and keeps everything else in order', () => {
     removed.map((s) => s.timestamp),
     [0.35, 6.65],
   );
-  assert.deepEqual(suppressEcho([]), { segments: [], removed: [], trimmed: [] });
+  assert.deepEqual(suppressEcho([]), { segments: [], removed: [], trimmed: [], fragments: 0 });
 });
 
 test('live: an echo is caught whichever source finalizes first', () => {
@@ -480,4 +480,140 @@ test('live: a row finalized again replaces the parts of its earlier version', ()
   const again = filter.add(mic(100, reply, { id: row.segmentId }));
   assert.equal(again.keep, true);
   assert.deepEqual(again.remove, pieces);
+});
+
+// With the recording's audio (app/echo-audio.mjs), here a stand-in that says the microphone heard
+// only the speakers wherever `echoes` (time spans) say so, and remembers what it was asked.
+function audioSays(...echoes) {
+  const asked = [];
+  const audio = (span, known) => {
+    asked.push({ span, known });
+    return echoes.some(([from, to]) => span[0] >= from && span[1] <= to);
+  };
+  return Object.assign(audio, { asked });
+}
+const always = () => audioSays([-Infinity, Infinity]);
+
+test('with the audio, what is left beside a cut goes when the microphone heard only the speakers', () => {
+  const row = mic(100, `So, ${played} Okay then.`);
+  const speakers = meeting(100.42, played);
+  const [, okay] = [100, 100 + (1 + wordsIn(played)) * rate];
+  // Without the audio, or when it says the user was speaking there, every word stays.
+  for (const audio of [undefined, audioSays()])
+    assert.deepEqual(texts(byTime(suppressEcho([row, speakers], undefined, audio).segments)), [
+      'So,',
+      played,
+      'Okay then.',
+    ]);
+  // Only the speakers there: the row was all echo.
+  const everywhere = always();
+  const all = suppressEcho([row, speakers], undefined, everywhere);
+  assert.deepEqual(texts(all.segments), [played]);
+  assert.deepEqual(all.removed, [row]);
+  assert.equal(all.fragments, 2);
+  // Calibrated on what went as verbatim echo here.
+  assert.ok(everywhere.asked.every(({ known }) => known.some(([a, b]) => a <= 101 && b >= 103)));
+  // Only the speakers before the cut: the end of it stays, timed as it was said.
+  const some = suppressEcho([row, speakers], undefined, audioSays([99, 100.4]));
+  assert.deepEqual(texts(byTime(some.segments)), [played, 'Okay then.']);
+  assert.equal(some.trimmed.length, 1);
+  assert.equal(some.fragments, 1);
+  assert.equal(byTime(some.segments)[1].timestamp, +okay.toFixed(3));
+});
+
+test('with the audio, a word of the first person meeting audio did not say still stays', () => {
+  const { row, speakers } = mixed(100);
+  // The opening says "me" and "I", the closing "I".
+  const { segments, fragments } = suppressEcho([row, speakers], undefined, always());
+  assert.deepEqual(texts(byTime(segments)), [opening, played, closing]);
+  assert.equal(fragments, 0);
+});
+
+test('with the audio, a short or garbled row goes only if meeting audio said much of it', () => {
+  const pairs = [
+    // Too short for the text alone, all of it said.
+    [mic(200.05, 'Okay sounds good.'), meeting(200, 'Okay, sounds good to everyone.')],
+    // Misheard too much for the text alone, most of it said.
+    [
+      mic(300.05, 'We can circle tack on the prizing after the lunch.'),
+      meeting(300, 'We can circle back on the pricing after the launch.'),
+    ],
+  ];
+  for (const [row, speakers] of pairs) {
+    assert.deepEqual(texts(suppressEcho([row, speakers]).segments), [row.text, speakers.text]);
+    const heard = suppressEcho([row, speakers], undefined, always());
+    assert.deepEqual(texts(heard.segments), [speakers.text], row.text);
+    assert.deepEqual(heard.removed, [row]);
+    assert.equal(heard.fragments, 1);
+    assert.deepEqual(texts(suppressEcho([row, speakers], undefined, audioSays()).segments), [
+      row.text,
+      speakers.text,
+    ]);
+  }
+  // Barely said, or said by nobody: the words stay whatever the audio says.
+  const own = [
+    [
+      mic(400, 'Let us look at the budget numbers again tomorrow.'),
+      meeting(400, 'The budget is fine.'),
+    ],
+    [mic(500, 'Can everyone hear me now?'), meeting(520, 'Can everyone hear me now?')],
+    // Much of it said, but with an "I" that meeting audio did not say.
+    [mic(600, 'Okay, I will send it then today.'), meeting(600, 'Okay, will you send it?')],
+  ];
+  for (const [row, speakers] of own)
+    assert.deepEqual(
+      texts(suppressEcho([row, speakers], undefined, always()).segments),
+      [row.text, speakers.text],
+      row.text,
+    );
+});
+
+test('live, with the audio: what is left beside a cut goes whichever source finalizes first', () => {
+  const row = () => mic(100, `So, ${played} Okay then.`);
+  const speakers = () => meeting(100.42, played);
+  // Meeting audio first: the row is all echo.
+  let filter = createEchoFilter(undefined, always());
+  filter.add(speakers());
+  assert.deepEqual(filter.add(row()), { ...leftOut, fragments: 2 });
+  // The microphone first: saved, then shown to be echo, all of it.
+  filter = createEchoFilter(undefined, always());
+  const first = row();
+  assert.deepEqual(filter.add(first), kept);
+  const verdict = filter.add(speakers());
+  assert.deepEqual(verdict.remove, [first]);
+  assert.equal(verdict.fragments, 2);
+  // A part kept for now (the audio not yet there) goes when meeting audio's next row shows it.
+  let ready = false;
+  filter = createEchoFilter(undefined, () => ready);
+  filter.add(speakers());
+  const { pieces } = filter.add(row()).trim[0];
+  assert.deepEqual(texts(pieces), ['So,', 'Okay then.']);
+  ready = true;
+  const later = filter.add(meeting(104.2, 'Okay, then.'));
+  assert.deepEqual(later.remove, pieces.slice(1));
+  assert.equal(later.fragments, 1);
+});
+
+test('provisional microphone text that is so far only the echo is told apart', () => {
+  const filter = createEchoFilter();
+  const partial = (source, at, text) => ({
+    ...phrase(source, at, text, { timed: false }),
+    partial: true,
+  });
+  // Meeting audio's own provisional text, and its final rows.
+  assert.equal(
+    filter.provisional(partial('microphone', 10.1, headStart), [partial('system', 10, headStart)]),
+    true,
+  );
+  filter.add(meeting(20, offer));
+  assert.equal(filter.provisional(partial('microphone', 20.2, offer)), true);
+  // The user's own words, or meeting audio's text, are not.
+  assert.equal(filter.provisional(partial('microphone', 20.2, reply)), false);
+  assert.equal(filter.provisional(partial('system', 20.2, offer)), false);
+  assert.equal(
+    filter.provisional(partial('microphone', 30, headStart), [
+      partial('microphone', 30, headStart),
+    ]),
+    false,
+  );
 });

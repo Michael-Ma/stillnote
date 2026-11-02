@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { headphonesOut } from '../fixtures/echo-audio.mjs';
 
 const ownOpening = 'Right, let me tell you what I think about that.';
 const playedOver = 'We looked at the numbers for the new release and they seem fine.';
@@ -22,6 +24,11 @@ const spoken = (text, at, rate = 0.3) => {
 
 const longRow = spoken(`${ownOpening} ${playedOver} ${ownClosing}`, 8);
 const playedRow = spoken(playedOver, 11.05);
+
+// A call where the headphones come out, its audio written before the app starts.
+const switchAudio = join(tmpdir(), `stillnote-e2e-headphones-${process.pid}`);
+mkdirSync(switchAudio, { recursive: true });
+const headphones = headphonesOut(switchAudio);
 
 export const captureScenario = {
   sessions: [
@@ -114,6 +121,7 @@ export const captureScenario = {
         },
       ],
     },
+    { mode: 'empty', audioFrom: switchAudio, events: headphones.events },
   ],
 };
 
@@ -496,5 +504,33 @@ export async function capture(h) {
   await h.page.getByText(ownClosing, { exact: true }).waitFor();
   assert.equal(await h.page.getByText(`${ownOpening} We looked`).count(), 0);
   await h.call('setting', 'locale', 'en-US');
+  // The headphones come out mid-call: from then on the speakers' echo goes, and with it the words
+  // the microphone heard of it, while the user's own words before and after stay.
+  const switched = await h.create('E2E headphones out');
+  await start(h);
+  await h.waitForState(
+    (s, id) =>
+      s.meetings
+        .find((m) => m.id === id)
+        .transcript.some((segment) => segment.text.startsWith('Let me check')),
+    switched.id,
+  );
+  const switchedSaved = await stop(h, switched.id, 1);
+  rmSync(switchAudio, { recursive: true, force: true });
+  assert.deepEqual(
+    switchedSaved.transcript.map((segment) => [segment.source, segment.text]),
+    headphones.expected,
+  );
+  assert.equal(switchedSaved.recordings[0].diagnostics.echoFragmentsRemoved, 3);
+  await h.page
+    .locator('.dock')
+    .getByRole('button', { name: /^Transcript/ })
+    .click();
+  await h.page
+    .getByText('Let me check the numbers and get back to you.', { exact: true })
+    .waitFor();
+  await h.page.getByText('Sounds good, I can take that one.', { exact: true }).waitFor();
+  for (const scrap of ['Okay sounds good.', 'Okay then.', 'So,'])
+    assert.equal(await h.page.getByText(scrap, { exact: true }).count(), 0, scrap);
   h.assertNoRendererErrors();
 }

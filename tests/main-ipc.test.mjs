@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol } from './fixtures/electron.mjs';
+import { headphonesOut } from './fixtures/echo-audio.mjs';
 
 const hook = registerHooks({
   resolve(specifier, context, next) {
@@ -702,6 +703,42 @@ test('a long microphone row keeps only its own words, live and on Retry', async 
     again.transcript.filter((s) => s.recordingId === id).map((s) => s.timestamp - baseDuration),
     [1, 4.05, 7.9],
   );
+});
+
+test('after the headphones come out, the speakers’ echo goes, word scraps and provisional text too', async (t) => {
+  const audio = mkdtempSync(join(tmpdir(), 'stillnote-ipc-audio-'));
+  t.after(() => rmSync(audio, { recursive: true, force: true }));
+  const { rows, events, expected } = headphonesOut(audio);
+  const { call, win } = await setup(
+    t,
+    'echo-device-switch',
+    [{ mode: 'empty', audioFrom: audio, events }],
+    { transcribeSegments: rows },
+  );
+  await call('setting', 'autoEnhance', false);
+  const note = await call('create', { title: 'Headphones out mid-call' });
+  await call('record', note.id);
+  await waitFor(async () => !(await call('state')).starting);
+  await call('stop');
+  await waitFor(async () => !(await call('state')).recording);
+  const lines = (m) => m.transcript.map((s) => [s.source, s.text]);
+  const saved = (await call('state')).meetings.find((m) => m.id === note.id);
+  assert.deepEqual(lines(saved), expected);
+  const { diagnostics } = saved.recordings[0];
+  assert.equal(diagnostics.echoesRemoved, 2);
+  assert.equal(diagnostics.echoFragmentsRemoved, 3);
+  assert.equal(saved.recordings[0].sources.microphone.device.name, 'MacBook Pro Microphone');
+  // The echo's provisional text never showed as the user's; the user's own did.
+  const shown = (id) => win.events.some((e) => e.type === 'partial' && e.segmentId === id);
+  assert.equal(shown('mic-2'), false);
+  assert.ok(win.events.some((e) => e.type === 'partial-discard' && e.segmentIds.includes('mic-2')));
+  assert.equal(shown('sys-2'), true);
+  assert.equal(shown('mic-4'), true);
+  // Retry reads the same saved audio and comes to the same transcript.
+  const retried = await call('transcribe-recording', note.id, saved.recordings[0].id);
+  assert.deepEqual(lines(retried), expected);
+  assert.equal(retried.recordings[0].diagnostics.echoesRemoved, 2);
+  assert.equal(retried.recordings[0].diagnostics.echoFragmentsRemoved, 3);
 });
 
 test('quitting while A saves cancels the pending B handoff', async (t) => {

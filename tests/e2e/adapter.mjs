@@ -3,6 +3,7 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import {
+  copyFileSync,
   readFileSync,
   mkdirSync,
   renameSync,
@@ -486,6 +487,23 @@ export function createTestAdapter({ dataDir }) {
                 },
           );
       }
+      // Audio already recorded (`audioFrom`: a folder with both tracks), there before any phrase
+      // arrives, for checks that read it while recording.
+      if (command.op === 'start' && active?.fixture.audioFrom) {
+        mkdirSync(active.audioDir, { recursive: true });
+        for (const source of ['microphone', 'system']) {
+          copyFileSync(
+            join(active.fixture.audioFrom, `${source}.wav`),
+            join(active.audioDir, `${source}.wav`),
+          );
+          emit({
+            type: 'track-started',
+            recordingId: command.recordingId,
+            source,
+            startOffset: active.fixture.startOffsets?.[source] ?? 0,
+          });
+        }
+      }
       if (command.op === 'start' && active)
         for (const event of active.fixture.events ?? [])
           emit({ ...event, recordingId: command.recordingId });
@@ -505,14 +523,15 @@ export function createTestAdapter({ dataDir }) {
           (source) => {
             const fileName = source + '.wav';
             const path = join(active.audioDir, fileName);
-            writeFileSync(
-              path,
-              wav(duration, source === 'system' ? 660 : 440, active.fixture.silentAfter),
-            );
+            if (!active.fixture.audioFrom)
+              writeFileSync(
+                path,
+                wav(duration, source === 'system' ? 660 : 440, active.fixture.silentAfter),
+              );
             return {
               source,
               fileName,
-              duration,
+              duration: active.fixture.audioFrom ? (statSync(path).size - 44) / 32000 : duration,
               sampleRate: 16000,
               channels: 1,
               bytes: statSync(path).size,

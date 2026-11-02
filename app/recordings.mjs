@@ -19,6 +19,7 @@ import {
 } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
+import { levels, onlyEcho } from './echo-audio.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const files = { microphone: 'microphone.wav', system: 'system.wav' };
@@ -245,6 +246,66 @@ export function lastSound(filePath, { after = 0, threshold = 0.006, needed = 4, 
   } finally {
     closeSync(fd);
   }
+}
+
+// A helper track's loudness every 10 ms (app/echo-audio.mjs), as `{ start, power }`. A track still
+// being recorded grows, so each call reads only what was written since the last. Null when it is
+// not a helper track.
+export function trackLevels(filePath, startOffset = 0) {
+  let power = new Float32Array(1 << 16),
+    length = 0,
+    position = 44,
+    checked = false;
+  return () => {
+    const fd = openSync(filePath, 'r');
+    try {
+      const size = fstatSync(fd).size;
+      if (!checked && !helperWav(readAt(fd, 44, 0), size)) return null;
+      checked = true;
+      // Whole 10 ms frames only, a few megabytes at a time; the rest waits for the next call.
+      for (let left = Math.floor((size - position) / 320); left > 0;) {
+        const count = Math.min(left, 30_000),
+          data = readAt(fd, count * 320, position);
+        if (!data) break;
+        const more = levels(new Int16Array(data.buffer, data.byteOffset, data.length / 2));
+        if (length + more.length > power.length) {
+          const grown = new Float32Array(Math.max(power.length * 2, length + more.length));
+          grown.set(power.subarray(0, length));
+          power = grown;
+        }
+        power.set(more, length);
+        length += more.length;
+        position += count * 320;
+        left -= count;
+      }
+      return { start: startOffset, power: power.subarray(0, length) };
+    } finally {
+      closeSync(fd);
+    }
+  };
+}
+
+// Whether a stretch of a recording's microphone heard only the speakers (app/echo-audio.mjs), from
+// its own tracks. `tracks()` says where each track starts. A track that is not there yet, or cannot
+// be read, says no, so nothing goes.
+export function echoJudge(dir, tracks) {
+  const readers = {};
+  const read = (source) => {
+    const startOffset = Number(tracks()?.find((track) => track.source === source)?.startOffset);
+    if (!Number.isFinite(startOffset) || !existsSync(join(dir, files[source]))) return null;
+    readers[source] ??= trackLevels(join(dir, files[source]), startOffset);
+    return readers[source]();
+  };
+  return (span, known) => {
+    try {
+      const microphone = read('microphone'),
+        system = microphone && read('system');
+      return !!system && onlyEcho(microphone, system, span, known);
+    } catch (error) {
+      console.error('Could not read the recording for speaker echo:', error.message);
+      return false;
+    }
+  };
 }
 
 // Restore originals after a failed/interrupted multi-track replacement. A committed journal

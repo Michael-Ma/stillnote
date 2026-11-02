@@ -79,7 +79,7 @@ import { enhanceInstructions, enhanceRequest } from './enhance.mjs';
 import { todoScanner } from './todo-scanner.mjs';
 import { backfillIds } from './todos.mjs';
 import { arbitrateOffline, createLiveArbiter, recognitionPlan } from './language-arbiter.mjs';
-import { createEchoFilter, suppressEcho } from './echo.mjs';
+import { createEchoFilter, defaultEcho, suppressEcho } from './echo.mjs';
 import { meetingEndDetector, sustainedSound, trailingCut } from './meeting-end.mjs';
 import { resolveLanguage, translator } from './i18n/index.mjs';
 import { helperMessage } from './helper-messages.mjs';
@@ -104,6 +104,7 @@ import {
   helperRequests,
   meetingAudioDirectory,
   directorySize,
+  echoJudge,
 } from './recordings.mjs';
 protocol.registerSchemesAsPrivileged([
   {
@@ -171,10 +172,12 @@ if (!app.requestSingleInstanceLock()) {
     languageArbiter,
     languageTick,
     // Speaker echo: keeps the microphone's echoes of meeting audio out of the transcript, and
-    // counts them: rows left out, and rows that lost part of themselves.
+    // counts them: rows left out, rows that lost part of themselves, and parts or rows that went on
+    // the audio's evidence.
     echoFilter,
     echoes = 0,
     echoesTrimmed = 0,
+    echoFragments = 0,
     // Set once Stillnote is quitting, so nothing starts the helper again.
     quitting = false,
     // Meeting detection: the helper process told to watch the microphone (and when), and the
@@ -302,7 +305,8 @@ if (!app.requestSingleInstanceLock()) {
         pendingPartials.delete(e.segmentId);
         meetingUpdates.schedule(recording.id);
       } else pendingPartials.set(e.segmentId, segment);
-      emit({ ...e, recordingId: recording.recordingId, recording });
+      if (echoPartial(e)) withdraw(e);
+      else emit({ ...e, recordingId: recording.recordingId, recording });
     }
   }
   // A final row joins the transcript unless it is the microphone's echo of meeting audio, and a
@@ -317,10 +321,11 @@ if (!app.requestSingleInstanceLock()) {
     } catch (error) {
       console.error('Could not check the row for speaker echo:', error.message);
     }
-    const { keep, remove, trim } = verdict ?? { keep: true, remove: [], trim: [] };
+    const { keep, remove, trim, fragments } = verdict ?? { keep: true, remove: [], trim: [] };
     if (keep) store.append(recording.id, segment);
     const gone = keep ? remove : [...remove, event];
     echoes += gone.length;
+    echoFragments += fragments ?? 0;
     const ids = gone.map((row) => row.segmentId).filter(Boolean);
     if (ids.length) store.removeSegments(recording.id, recording.recordingId, ids);
     echoesTrimmed += trim.length;
@@ -336,6 +341,27 @@ if (!app.requestSingleInstanceLock()) {
         })),
       );
   }
+  // Provisional microphone text that is so far only the echo of what meeting audio is saying is
+  // not shown, and is taken back if it was; its final row decides what stays.
+  function echoPartial(e) {
+    if (e.type !== 'partial' || e.source !== 'microphone' || !echoFilter || !recording)
+      return false;
+    const heard = [...pendingPartials.values()]
+      .filter((s) => s.source === 'system')
+      .map((s) => ({ ...s, timestamp: s.timestamp - recording.baseDuration }));
+    try {
+      return echoFilter.provisional(e, heard);
+    } catch (error) {
+      console.error('Could not check provisional text for speaker echo:', error.message);
+      return false;
+    }
+  }
+  const withdraw = (e) =>
+    emit({
+      type: 'partial-discard',
+      recordingId: recording.recordingId,
+      segmentIds: [e.segmentId || e.speaker],
+    });
   function finishCapture(status, event = {}) {
     if (!recording) return null;
     const active = recording;
@@ -375,6 +401,7 @@ if (!app.requestSingleInstanceLock()) {
         ...(removed ? { trailingSilenceRemoved: removed } : {}),
         ...(echoes ? { echoesRemoved: echoes } : {}),
         ...(echoesTrimmed ? { echoesTrimmed } : {}),
+        ...(echoFragments ? { echoFragmentsRemoved: echoFragments } : {}),
         ...assessCoverage(
           segments,
           Math.max(seconds, trackDuration),
@@ -824,7 +851,8 @@ if (!app.requestSingleInstanceLock()) {
           )
             finishCapture('startfailed', e);
         }
-        if (!muted)
+        if (echoPartial(e)) withdraw(e);
+        else if (!muted)
           emit({
             ...e,
             ...(e.type === 'calendar'
@@ -1474,9 +1502,14 @@ if (!app.requestSingleInstanceLock()) {
           },
         };
         pendingPartials.clear();
-        echoFilter = createEchoFilter();
+        // The audio is read as it is written, from where each track's first sound arrived.
+        echoFilter = createEchoFilter(
+          defaultEcho,
+          echoJudge(audioDir, () => recording?.trackOffsets),
+        );
         echoes = 0;
         echoesTrimmed = 0;
+        echoFragments = 0;
         meetingEnd = meetingEndDetector(testAdapter?.meetingEnd);
         endSounds = {};
         speechEnd = 0;
@@ -1670,13 +1703,21 @@ if (!app.requestSingleInstanceLock()) {
         const decided =
           plan.locales.length > 1 ? arbitrateOffline(candidates, plan.locales) : candidates;
         // Without headphones the microphone also heard meeting audio: those rows are left out, and
-        // long rows that hold some of it lose that part.
-        const { segments, removed, trimmed } = suppressEcho(decided);
+        // long rows that hold some of it lose that part; the saved audio shows what else was echo.
+        const { segments, removed, trimmed, fragments } = suppressEcho(
+          decided,
+          defaultEcho,
+          echoJudge(
+            recordingDirectory(app.getPath('userData'), meetingId, recordingId),
+            () => tracks,
+          ),
+        );
         const diagnostics = {
           ...assessCoverage(segments, session.duration, session.diagnostics?.sourceStats),
           languageFallbacks: result.fallbacks,
           ...(removed.length ? { echoesRemoved: removed.length } : {}),
           ...(trimmed.length ? { echoesTrimmed: trimmed.length } : {}),
+          ...(fragments ? { echoFragmentsRemoved: fragments } : {}),
         };
         const updated = store.replaceRecordingTranscript(
           meetingId,
