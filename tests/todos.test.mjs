@@ -320,6 +320,17 @@ test('a dismissed todo does not come back', () => {
   ]);
 });
 
+test('a todo the user rewrote is still the task a scan finds again', () => {
+  const edited = row('Email Priya the deck', {
+    foundAs: 'Send the pricing draft',
+    assignee: 'me',
+    touched: true,
+  });
+  assert.deepEqual(mergeTodos([edited], [proposal('Send the pricing draft')], fresh), [edited]);
+  const deleted = { ...edited, dismissedAt: '2026-05-05T10:00:00.000Z' };
+  assert.deepEqual(mergeTodos([deleted], [proposal('Send the pricing draft')], fresh), [deleted]);
+});
+
 test('todos the new scan no longer finds stay only if the user touched them', () => {
   const touched = row('Call the supplier', { touched: true, assignee: 'me' });
   const untouched = row('Review the contract');
@@ -434,6 +445,29 @@ test('the page keeps mine and unclear together, newest first, and others apart',
   assert.equal(openTodoCount(rows, [older, newer, trashed]), 2);
 });
 
+test('what the user typed comes before every meeting, and counts', () => {
+  const m = meeting({ id: 'newest', createdAt: '2026-05-30T10:00:00.000Z' });
+  const rows = [
+    row('a', { meetingId: 'newest', assignee: 'me' }),
+    row('b', { meetingId: null, assignee: 'me' }),
+    row('c', { meetingId: null, assignee: 'me', doneAt: '2026-05-31T10:00:00.000Z' }),
+  ];
+  const lists = todoLists(rows, [m]);
+  assert.deepEqual(
+    lists.open.map((g) => [g.meeting?.id ?? null, g.todos.map((t) => t.text)]),
+    [
+      [null, ['b']],
+      ['newest', ['a']],
+    ],
+  );
+  assert.deepEqual(
+    lists.done.map((g) => [g.meeting, g.todos.map((t) => t.text)]),
+    [[null, ['c']]],
+  );
+  assert.equal(openTodoCount(rows, [m]), 2);
+  assert.equal(openTodoCount(rows, [{ ...m, deletedAt: '2026-05-31T10:00:00.000Z' }]), 1);
+});
+
 function store(t) {
   const dir = mkdtempSync(join(tmpdir(), 'stillnote-todos-'));
   const s = new Store(dir);
@@ -479,6 +513,75 @@ test('what the user does outlives the next scan', (t) => {
   assert.ok(s.todos().find((row) => row.id === second.id).dismissedAt);
   assert.throws(() => s.updateTodo(first.id, { assignee: 'nobody' }), /Invalid todo/);
   assert.throws(() => s.updateTodo('missing', { done: true }), /Todo not found/);
+});
+
+test('a typed todo is the user’s own: no meeting, no scan, and it survives one', (t) => {
+  const { s, dir } = store(t);
+  const typed = s.addTodo({ text: '  Book the dentist  ' });
+  assert.equal(typed.text, 'Book the dentist');
+  assert.equal(typed.meetingId, null);
+  assert.equal(typed.assignee, 'me');
+  assert.equal(typed.touched, true);
+  const m = s.create({ title: 'Planning' });
+  s.saveTodoScan(m.id, [proposal('Book the dentist')]);
+  assert.equal(s.todos().length, 2, 'a scan reads only its own meeting');
+  s.update(m.id, { deletedAt: true });
+  s.deleteForever([m.id]);
+  assert.deepEqual(s.todos(), [typed]);
+  const again = new Store(dir);
+  assert.deepEqual(again.todos(), [typed]);
+  again.close();
+  assert.throws(() => s.addTodo({ text: '   ' }), /Invalid todo/);
+  assert.throws(() => s.addTodo({ text: 7 }), /Invalid todo/);
+});
+
+test('an edit changes the text and remembers what the model wrote', (t) => {
+  const { s } = store(t);
+  const m = s.create({ title: 'Planning' });
+  s.saveTodoScan(m.id, [send]);
+  const { id } = s.todos()[0];
+  s.updateTodo(id, { text: 'Email Priya the deck' });
+  s.updateTodo(id, { text: 'Email Priya the final deck' });
+  const edited = s.todos()[0];
+  assert.equal(edited.text, 'Email Priya the final deck');
+  assert.equal(edited.foundAs, send.text);
+  assert.equal(edited.touched, true);
+  s.saveTodoScan(m.id, [send]);
+  assert.deepEqual(s.todos(), [edited], 'the next scan neither undoes nor repeats it');
+  assert.throws(() => s.updateTodo(id, { text: ' ' }), /Invalid todo/);
+  const typed = s.addTodo({ text: 'Book the dentist' });
+  assert.equal(s.updateTodo(typed.id, { text: 'Book the vet' }).foundAs, null);
+});
+
+test('deleting a found todo leaves a mark; undoing brings it back', (t) => {
+  const { s } = store(t);
+  const m = s.create({ title: 'Planning' });
+  s.saveTodoScan(m.id, [send]);
+  const deleted = s.deleteTodo(s.todos()[0].id);
+  assert.ok(deleted.dismissedAt);
+  s.saveTodoScan(m.id, [send]);
+  assert.equal(s.todos().length, 1);
+  assert.ok(s.todos()[0].dismissedAt, 'the scan did not bring it back');
+  s.restoreTodo(deleted);
+  assert.equal(s.todos()[0].dismissedAt, null);
+});
+
+test('deleting a typed todo removes it; undoing brings it back as it was', (t) => {
+  const { s, dir } = store(t);
+  const typed = s.addTodo({ text: 'Book the dentist' });
+  s.updateTodo(typed.id, { done: true });
+  const deleted = s.deleteTodo(typed.id);
+  assert.deepEqual(s.todos(), []);
+  const reread = new Store(dir);
+  assert.deepEqual(reread.todos(), []);
+  reread.close();
+  s.restoreTodo(deleted);
+  const [back] = s.todos();
+  assert.equal(back.id, typed.id);
+  assert.ok(back.doneAt);
+  assert.equal(back.dismissedAt, null);
+  assert.throws(() => s.restoreTodo({ ...deleted, text: '' }), /Invalid todo/);
+  assert.throws(() => s.deleteTodo('missing'), /Todo not found/);
 });
 
 test('a failed scan keeps the earlier todos and asks to be repeated', (t) => {
@@ -531,6 +634,16 @@ test('a backup carries todos to another Mac, with what the user did', (t) => {
   assert.equal(other.settings().autoTodos, false);
 });
 
+test('a typed todo travels in a backup, once', (t) => {
+  const { s } = store(t);
+  s.addTodo({ text: 'Book the dentist' });
+  const backup = JSON.parse(JSON.stringify(s.backup()));
+  const { s: other } = store(t);
+  other.restore(backup);
+  other.restore(backup);
+  assert.deepEqual(other.todos(), s.todos());
+});
+
 test('a backup from before todos restores, and its meetings count as not scanned', (t) => {
   const { s } = store(t);
   s.create({ title: 'Planning' });
@@ -564,6 +677,8 @@ test('a malformed todo stops a restore before anything changes', (t) => {
   for (const change of [
     { id: 7 },
     { meetingId: '' },
+    { meetingId: undefined },
+    { foundAs: 7 },
     { text: 'x'.repeat(501) },
     { assignee: 'everyone' },
     { createdAt: 'yesterday' },

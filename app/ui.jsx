@@ -557,11 +557,12 @@ function App() {
     else await openNote(m);
   }
   const changeTodo = (id, patch) => guard(() => call('todos', 'update', id, patch));
-  async function dismissTodo(todo) {
-    await changeTodo(todo.id, { dismissed: true });
+  async function deleteTodo(todo) {
+    const deleted = await guard(() => call('todos', 'delete', todo.id));
+    if (!deleted) return;
     setNotice({
-      text: t('Todo removed.'),
-      action: { label: t('Undo'), run: () => changeTodo(todo.id, { dismissed: false }) },
+      text: t('Todo deleted.'),
+      action: { label: t('Undo'), run: () => guard(() => call('todos', 'restore', deleted)) },
     });
   }
   async function navigate(v) {
@@ -1263,8 +1264,9 @@ function App() {
                   aiActions={aiActions}
                   onOpen={openNote}
                   onEvidence={openTodoSource}
+                  onAdd={(fields) => guard(() => call('todos', 'add', fields))}
                   onChange={changeTodo}
-                  onDismiss={dismissTodo}
+                  onDelete={deleteTodo}
                   onScan={(days) => guard(() => call('todos', 'scan', days))}
                   onCancelScan={() => guard(() => call('todos', 'cancel'))}
                 />

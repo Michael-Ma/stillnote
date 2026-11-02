@@ -3075,8 +3075,41 @@ dialog.settings-dialog {
   color: var(--muted);
   font-size: var(--text-sm);
 }
+.todo-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 6px 10px;
+  color: var(--muted);
+}
+.todo-form input {
+  flex: 1 1 240px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--text-base);
+}
+.todo-row.editing {
+  display: block;
+}
+.todo-row.editing .todo-form {
+  margin: 0;
+  padding: 0;
+}
 .todo-group {
   margin-bottom: 20px;
+}
+.todo-added {
+  margin: 0;
+  padding: 4px 10px;
+  font-size: var(--text-base);
+  font-weight: 500;
 }
 .todo-group ul {
   margin: 0;

@@ -89,15 +89,64 @@ export async function todos(h) {
     .click();
   await h.waitForState((s) => s.todos.find((t) => t.text === update.task).assignee === 'me');
   await row(page, 'Book a room for the offsite')
-    .getByRole('button', { name: '“Book a room for the offsite” is not a todo' })
+    .getByRole('button', { name: 'Delete “Book a room for the offsite”' })
     .click();
   await h.waitForState((s) => s.todos.find((t) => t.text === book.task).dismissedAt);
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await h.waitForState((s) => !s.todos.find((t) => t.text === book.task).dismissedAt);
   await row(page, 'Book a room for the offsite')
-    .getByRole('button', { name: '“Book a room for the offsite” is not a todo' })
+    .getByRole('button', { name: 'Delete “Book a room for the offsite”' })
     .click();
   await h.waitForState((s) => s.todos.find((t) => t.text === book.task).dismissedAt);
+
+  // The user's own words, and their own todos, need no AI and no meeting.
+  await row(page, 'Update the onboarding page')
+    .getByRole('button', { name: 'Edit “Update the onboarding page”' })
+    .click();
+  const editing = page.locator('.todo-row.editing');
+  await editing.getByRole('textbox', { name: 'Todo', exact: true }).fill('Rewrite onboarding');
+  await page.keyboard.press('Escape');
+  await editing.waitFor({ state: 'hidden' });
+  assert.equal(
+    (await h.state()).todos.some((t) => t.text === 'Rewrite onboarding'),
+    false,
+  );
+  await row(page, 'Update the onboarding page')
+    .getByRole('button', { name: 'Edit “Update the onboarding page”' })
+    .click();
+  await editing.getByRole('textbox', { name: 'Todo', exact: true }).fill('Rewrite onboarding');
+  await page.keyboard.press('Enter');
+  await row(page, 'Rewrite onboarding').waitFor();
+
+  const adding = page.getByRole('textbox', { name: 'Add a todo', exact: true });
+  await adding.fill('Book the dentist');
+  await adding.press('Enter');
+  await row(page, 'Book the dentist').waitFor();
+  assert.equal(await adding.inputValue(), '', 'the box is ready for the next one');
+  await adding.fill('Renew the passport');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await row(page, 'Renew the passport').waitFor();
+  await page
+    .locator('.todo-group')
+    .first()
+    .getByRole('heading', { name: 'Added by you', exact: true })
+    .waitFor();
+  await page
+    .getByRole('navigation', { name: 'Notebook' })
+    .getByRole('button', { name: /^Todos/ })
+    .filter({ hasText: '3' })
+    .waitFor();
+  await h.screenshot('todos-added');
+  await row(page, 'Renew the passport')
+    .getByRole('button', { name: 'Delete “Renew the passport”' })
+    .click();
+  await h.waitForState((s) => !s.todos.some((t) => t.text === 'Renew the passport'));
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await row(page, 'Renew the passport').waitFor();
+  await row(page, 'Renew the passport')
+    .getByRole('button', { name: 'Delete “Renew the passport”' })
+    .click();
+  await h.waitForState((s) => !s.todos.some((t) => t.text === 'Renew the passport'));
 
   // Enhancing again scans again, and none of that is undone.
   await page.locator('.todo-meeting').filter({ hasText: 'E2E pricing sync' }).first().click();
@@ -108,11 +157,13 @@ export async function todos(h) {
     at: scanned,
   });
   const after = (await h.state()).todos;
-  assert.equal(after.length, 3);
+  assert.equal(after.length, 4);
   assert.ok(after.find((t) => t.text === send.task).doneAt, 'the tick survives');
   assert.equal(after.find((t) => t.text === send.task).assignee, 'me', 'mine stays mine');
-  assert.equal(after.find((t) => t.text === update.task).assignee, 'me', 'my change survives');
-  assert.ok(after.find((t) => t.text === book.task).dismissedAt, 'dismissed stays dismissed');
+  const rewritten = after.find((t) => t.text === 'Rewrite onboarding');
+  assert.equal(rewritten.assignee, 'me', 'my change survives');
+  assert.equal(rewritten.foundAs, update.task, 'and the scan knows it, so it is not repeated');
+  assert.ok(after.find((t) => t.text === book.task).dismissedAt, 'deleted stays deleted');
 
   // Past meetings wait for the button, and stop when told to.
   await page.getByRole('button', { name: 'Back to Todos', exact: true }).click();
@@ -145,12 +196,14 @@ export async function todos(h) {
   // A restart keeps it all; deleting forever removes.
   const reopened = await h.restart();
   await openTodos(reopened);
-  await row(reopened, 'Update the onboarding page').waitFor();
+  await row(reopened, 'Rewrite onboarding').waitFor();
+  await row(reopened, 'Book the dentist').waitFor();
   await h.call('update', meeting.id, { deletedAt: true });
   await h.call('delete-forever', [meeting.id]);
   const gone = await h.waitForState((s) => !s.todos.some((t) => t.meetingId === meeting.id));
   assert.equal(gone.todoScans[meeting.id], undefined);
-  await row(reopened, 'Update the onboarding page').waitFor({ state: 'hidden' });
+  await row(reopened, 'Rewrite onboarding').waitFor({ state: 'hidden' });
+  await row(reopened, 'Book the dentist').waitFor();
   await h.screenshot('todos-after-delete');
   h.assertNoRendererErrors();
 }

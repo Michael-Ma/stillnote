@@ -72,6 +72,24 @@ const unreadable = () => new Error('The AI answered in a form Stillnote could no
 const optional = (value, max) =>
   typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null;
 
+// A new row. Rows saved before a field existed simply lack it.
+export const newTodo = (fields) => ({
+  owner: null,
+  due: null,
+  evidence: null,
+  doneAt: null,
+  dismissedAt: null,
+  foundAs: null,
+  ...fields,
+});
+
+// What the user typed as a todo; the form has already kept it short and non-empty.
+export function typedTask(value) {
+  const task = optional(value, maxTask);
+  if (!task) throw new Error('Invalid todo.');
+  return task;
+}
+
 // Throws when the answer as a whole cannot be trusted; a scan then fails instead of half-saving.
 export function parseTodoResponse(text) {
   const raw = String(text ?? '');
@@ -237,9 +255,14 @@ export function likeness(a, b) {
 }
 export const sameTask = 0.5;
 
+// A scan repeats what the model wrote, not what the user rewrote it to, so an edited todo is
+// recognized by both.
+const likeRow = (row, item) =>
+  Math.max(likeness(row, item), row.foundAs ? likeness({ text: row.foundAs }, item) : 0);
+
 // The meeting's todos after a new scan. What the user did to a todo always survives: one they
-// touched keeps its text and owner, one they dismissed stays dismissed, and one the new scan no
-// longer finds stays if they touched it. Untouched todos follow the new scan.
+// touched keeps its text and owner, one they deleted stays deleted, and one the new scan no longer
+// finds stays if they touched it. Untouched todos follow the new scan.
 export function mergeTodos(existing, proposed, newRow) {
   const unique = [];
   for (const item of proposed)
@@ -250,7 +273,7 @@ export function mergeTodos(existing, proposed, newRow) {
     let best = -1,
       bestScore = sameTask;
     open.forEach((row, i) => {
-      const score = likeness(row, item);
+      const score = likeRow(row, item);
       if (score >= bestScore) {
         best = i;
         bestScore = score;
@@ -293,11 +316,12 @@ export function cleanTodo(row) {
   const evidence = row?.evidence;
   if (
     !text(row?.id, 100) ||
-    !text(row.meetingId, 100) ||
+    (row.meetingId !== null && !text(row.meetingId, 100)) ||
     !text(row.text, maxTask) ||
     !assignees.includes(row.assignee) ||
     !nullable(row.owner, maxField) ||
     !nullable(row.due, maxField) ||
+    !nullable(row.foundAs, maxTask) ||
     !date(row.doneAt) ||
     !date(row.dismissedAt) ||
     !Number.isFinite(Date.parse(row.createdAt)) ||
@@ -332,6 +356,7 @@ export function cleanTodo(row) {
     doneAt: row.doneAt ?? null,
     dismissedAt: row.dismissedAt ?? null,
     touched: row.touched === true,
+    foundAs: row.foundAs ?? null,
   };
 }
 
@@ -346,6 +371,13 @@ export function cleanTodoScan(scan) {
   return { meetingId: scan.meetingId, at: scan.at, status: scan.status, version: scan.version };
 }
 
+// What the user typed has no meeting, and comes before every meeting.
+const newestFirst = (a, b) => {
+  if (!a.meeting) return -1;
+  if (!b.meeting) return 1;
+  return b.meeting.createdAt.localeCompare(a.meeting.createdAt);
+};
+
 // The Todos page. Mine and unclear stay together, newest meeting first, with their meeting. Notes
 // in Trash keep their todos out of sight; dismissed ones are gone unless a scan finds them again,
 // and then they stay dismissed.
@@ -353,9 +385,14 @@ export function todoLists(todos = [], meetings = []) {
   const live = new Map(meetings.filter((m) => !m.deletedAt).map((m) => [m.id, m]));
   const groups = (rows) =>
     [...new Set(rows.map((row) => row.meetingId))]
-      .map((id) => ({ meeting: live.get(id), todos: rows.filter((row) => row.meetingId === id) }))
-      .sort((a, b) => b.meeting.createdAt.localeCompare(a.meeting.createdAt));
-  const rows = todos.filter((row) => live.has(row.meetingId) && !row.dismissedAt);
+      .map((id) => ({
+        meeting: live.get(id) ?? null,
+        todos: rows.filter((row) => row.meetingId === id),
+      }))
+      .sort(newestFirst);
+  const rows = todos.filter(
+    (row) => (row.meetingId === null || live.has(row.meetingId)) && !row.dismissedAt,
+  );
   const others = rows.filter((row) => row.assignee === 'other');
   const mine = rows.filter((row) => row.assignee !== 'other');
   return {

@@ -7,7 +7,15 @@ import { startableServices } from './calls.mjs';
 import { withoutImages } from './note-images.mjs';
 import { defaultLocale } from './language-arbiter.mjs';
 import { parseNoteFile } from './import-formats.mjs';
-import { assignees, cleanTodo, cleanTodoScan, mergeTodos, todoScanVersion } from './todos.mjs';
+import {
+  assignees,
+  cleanTodo,
+  cleanTodoScan,
+  mergeTodos,
+  newTodo,
+  todoScanVersion,
+  typedTask,
+} from './todos.mjs';
 
 // Each template states the meeting's purpose, then its sections, as Granola's template guide
 // suggests; enhance.mjs supplies the shared writing rules.
@@ -616,15 +624,9 @@ export class Store {
         .prepare('SELECT data FROM todos WHERE meeting_id=?')
         .all(meetingId)
         .map((row) => JSON.parse(row.data));
-      const rows = mergeTodos(existing, proposed, (item) => ({
-        ...item,
-        id: randomUUID(),
-        meetingId,
-        createdAt: now,
-        doneAt: null,
-        dismissedAt: null,
-        touched: false,
-      }));
+      const rows = mergeTodos(existing, proposed, (item) =>
+        newTodo({ ...item, id: randomUUID(), meetingId, createdAt: now, touched: false }),
+      );
       this.db.prepare('DELETE FROM todos WHERE meeting_id=?').run(meetingId);
       for (const row of rows)
         this.db
@@ -648,12 +650,31 @@ export class Store {
     });
     return true;
   }
+  // A todo the user typed. It belongs to no meeting, so its meeting_id is empty; no scan reads it,
+  // and only the user removes it.
+  addTodo({ text: task }) {
+    const row = newTodo({
+      id: randomUUID(),
+      meetingId: null,
+      text: typedTask(task),
+      assignee: 'me',
+      createdAt: new Date().toISOString(),
+      touched: true,
+    });
+    this.db.prepare('INSERT INTO todos VALUES(?,?,?)').run(row.id, '', JSON.stringify(row));
+    return row;
+  }
   // What the user did to one todo: from here on, scans leave it alone.
   updateTodo(id, patch) {
     const found = this.db.prepare('SELECT data FROM todos WHERE id=?').get(id);
     if (!found) throw new Error('Todo not found.');
     const row = JSON.parse(found.data);
     const now = new Date().toISOString();
+    if ('text' in patch) {
+      const task = typedTask(patch.text);
+      if (row.meetingId && task !== row.text) row.foundAs ??= row.text;
+      row.text = task;
+    }
     if ('assignee' in patch) {
       if (!assignees.includes(patch.assignee)) throw new Error('Invalid todo.');
       row.assignee = patch.assignee;
@@ -662,6 +683,23 @@ export class Store {
     if ('dismissed' in patch) row.dismissedAt = patch.dismissed ? now : null;
     row.touched = true;
     this.db.prepare('UPDATE todos SET data=? WHERE id=?').run(JSON.stringify(row), id);
+    return row;
+  }
+  // A todo found in a meeting stays as a mark, or the next scan would bring it back, and goes for
+  // good with its meeting. One the user typed has no meeting to go with, so it goes now. Returns
+  // what restoreTodo needs.
+  deleteTodo(id) {
+    const row = this.updateTodo(id, { dismissed: true });
+    if (!row.meetingId) this.db.prepare('DELETE FROM todos WHERE id=?').run(id);
+    return row;
+  }
+  // Undo of deleteTodo.
+  restoreTodo(todo) {
+    const row = { ...cleanTodo(todo), dismissedAt: null };
+    if (row.meetingId) return this.updateTodo(row.id, { dismissed: false });
+    this.db
+      .prepare('INSERT OR IGNORE INTO todos VALUES(?,?,?)')
+      .run(row.id, '', JSON.stringify(row));
     return row;
   }
   folders() {
@@ -918,15 +956,15 @@ export class Store {
           .prepare('INSERT OR IGNORE INTO settings VALUES(?,?)')
           .run(key, JSON.stringify(value));
       // Todos come back with notes that were not scanned here; a note already scanned on this Mac
-      // keeps what the user did to it here.
+      // keeps what the user did to it here. Todos the user typed need no note.
       const scanned = this.todoScans();
       const fits = (meetingId) =>
         !scanned[meetingId] &&
         !!this.db.prepare('SELECT 1 FROM meetings WHERE id=?').get(meetingId);
-      for (const row of todos.filter((row) => fits(row.meetingId)))
+      for (const row of todos.filter((row) => row.meetingId === null || fits(row.meetingId)))
         this.db
           .prepare('INSERT OR IGNORE INTO todos VALUES(?,?,?)')
-          .run(row.id, row.meetingId, JSON.stringify(row));
+          .run(row.id, row.meetingId ?? '', JSON.stringify(row));
       for (const { meetingId, ...scan } of todoScans.filter((scan) => fits(scan.meetingId)))
         this.writeTodoScan(meetingId, scan);
       this.db.exec('COMMIT');

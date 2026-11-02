@@ -1799,12 +1799,14 @@ if (!app.requestSingleInstanceLock()) {
         return link.service;
       });
       register('todos', (action, ...args) => {
-        if (action === 'update') {
-          const [id, patch] = args;
-          const todo = store.updateTodo(id, patch);
+        const changed = (todo) => {
           emit({ type: 'todos', ...todoState() });
           return todo;
-        }
+        };
+        if (action === 'add') return changed(store.addTodo(args[0]));
+        if (action === 'update') return changed(store.updateTodo(...args));
+        if (action === 'delete') return changed(store.deleteTodo(args[0]));
+        if (action === 'restore') return changed(store.restoreTodo(args[0]));
         if (action === 'scan') {
           const [days] = args;
           if (days !== null && !(Number.isFinite(days) && days > 0))

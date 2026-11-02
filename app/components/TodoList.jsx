@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { LoaderCircle } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { LoaderCircle, Pencil, Plus, Trash2 } from 'lucide-react';
 import { AiConnect } from './AiConnect.jsx';
+import { IconButton } from './Content.jsx';
 import { date, duration } from '../format.mjs';
 import { backfillIds, todoLists } from '../todos.mjs';
 import { useT } from '../i18n/react.jsx';
@@ -62,11 +63,71 @@ function ScanBanner({ meetings, scans, progress, onScan, onCancel }) {
   );
 }
 
-function TodoRow({ todo, onChange, onDismiss, onEvidence }) {
+// Adding and editing share a form. It submits natively, so the Enter that picks a word in a Chinese
+// input method never saves half a sentence.
+function TodoForm({ todo, onSave, onCancel }) {
   const t = useT();
+  const field = useRef(null);
+  const [task, setTask] = useState(todo?.text ?? '');
+  const editing = !!todo;
+  const typed = task.trim();
+  async function save(e) {
+    e.preventDefault();
+    if (!typed || !(await onSave({ text: typed })) || editing) return;
+    setTask('');
+    field.current.focus();
+  }
+  return (
+    <form
+      className="todo-form"
+      onSubmit={save}
+      onKeyDown={(e) => {
+        if (e.key !== 'Escape' || e.nativeEvent.isComposing) return;
+        if (editing) onCancel();
+        else setTask('');
+      }}
+    >
+      {!editing && <Plus size={15} aria-hidden="true" />}
+      <input
+        ref={field}
+        autoFocus={editing}
+        aria-label={editing ? t('Todo') : t('Add a todo')}
+        placeholder={editing ? undefined : t('Add a todo')}
+        maxLength={500}
+        value={task}
+        onChange={(e) => setTask(e.target.value)}
+      />
+      {(editing || typed) && (
+        <button className="primary small" disabled={!typed}>
+          {editing ? t('Save') : t('Add')}
+        </button>
+      )}
+      {editing && (
+        <button type="button" className="secondary small" onClick={onCancel}>
+          {t('Cancel')}
+        </button>
+      )}
+    </form>
+  );
+}
+
+function TodoRow({ todo, onChange, onDelete, onEvidence }) {
+  const t = useT();
+  const [editing, setEditing] = useState(false);
   const done = !!todo.doneAt,
     unclear = todo.assignee === 'unclear',
     theirs = todo.assignee === 'other';
+  async function save(fields) {
+    const saved = fields.text === todo.text || (await onChange(todo.id, fields));
+    if (saved) setEditing(false);
+    return saved;
+  }
+  if (editing)
+    return (
+      <li className="todo-row editing">
+        <TodoForm todo={todo} onSave={save} onCancel={() => setEditing(false)} />
+      </li>
+    );
   return (
     <li className={'todo-row' + (done ? ' done' : '') + (unclear ? ' unclear' : '')}>
       {theirs ? (
@@ -111,7 +172,7 @@ function TodoRow({ todo, onChange, onDismiss, onEvidence }) {
             {t('It’s mine')}
           </button>
         )}
-        {!theirs && !done && (
+        {!theirs && !done && todo.meetingId && (
           <button
             className="text-button"
             onClick={() => onChange(todo.id, { assignee: 'other' })}
@@ -120,15 +181,22 @@ function TodoRow({ todo, onChange, onDismiss, onEvidence }) {
             {t('Not mine')}
           </button>
         )}
-        {!done && (
-          <button
-            className="text-button"
-            onClick={() => onDismiss(todo)}
-            aria-label={t('“{task}” is not a todo', { task: todo.text })}
-          >
-            {t('Not a todo')}
-          </button>
-        )}
+        <IconButton
+          className="small"
+          label={t('Edit “{task}”', { task: todo.text })}
+          title={t('Edit')}
+          onClick={() => setEditing(true)}
+        >
+          <Pencil size={14} />
+        </IconButton>
+        <IconButton
+          className="small"
+          label={t('Delete “{task}”', { task: todo.text })}
+          title={t('Delete')}
+          onClick={() => onDelete(todo)}
+        >
+          <Trash2 size={14} />
+        </IconButton>
       </div>
     </li>
   );
@@ -137,11 +205,15 @@ function TodoRow({ todo, onChange, onDismiss, onEvidence }) {
 function Groups({ groups, rowProps, onOpen }) {
   const t = useT();
   return groups.map(({ meeting, todos }) => (
-    <section className="todo-group" key={meeting.id}>
-      <button className="todo-meeting" onClick={() => onOpen(meeting)}>
-        <strong>{meeting.title}</strong>
-        <small>{date(meeting.createdAt, t.locale)}</small>
-      </button>
+    <section className="todo-group" key={meeting?.id ?? 'added'}>
+      {meeting ? (
+        <button className="todo-meeting" onClick={() => onOpen(meeting)}>
+          <strong>{meeting.title}</strong>
+          <small>{date(meeting.createdAt, t.locale)}</small>
+        </button>
+      ) : (
+        <h2 className="todo-added">{t('Added by you')}</h2>
+      )}
       <ul>
         {todos.map((todo) => (
           <TodoRow key={todo.id} todo={todo} {...rowProps} />
@@ -170,14 +242,15 @@ export function TodoList({
   aiActions,
   onOpen,
   onEvidence,
+  onAdd,
   onChange,
-  onDismiss,
+  onDelete,
   onScan,
   onCancelScan,
 }) {
   const t = useT();
   const { open, done, others } = todoLists(data.todos, data.meetings);
-  const groupProps = { rowProps: { onChange, onDismiss, onEvidence }, onOpen };
+  const groupProps = { rowProps: { onChange, onDelete, onEvidence }, onOpen };
   const scanned = Object.keys(data.todoScans).length > 0;
   return (
     <div className="home-feed todo-page">
@@ -195,6 +268,7 @@ export function TodoList({
       ) : (
         <AiConnect ai={ai} actions={aiActions} title={t('Connect an AI to find your todos')} />
       )}
+      <TodoForm onSave={onAdd} />
       {open.length > 0 ? (
         <Groups groups={open} {...groupProps} />
       ) : (
