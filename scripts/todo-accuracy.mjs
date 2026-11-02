@@ -195,6 +195,7 @@ const commands = {
           const items = proposedTodos(m, parsed, split.names).map((item, i) => ({
             ...item,
             said: parsed[i].assignee,
+            saidDueDate: parsed[i].dueDate,
             why: parsed[i].why,
           }));
           write(`runs/${run}/${id}.json`, {
