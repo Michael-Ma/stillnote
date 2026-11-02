@@ -14,6 +14,7 @@ import {
   mergeTodos,
   newTodo,
   todoScanVersion,
+  typedDay,
   typedTask,
 } from './todos.mjs';
 
@@ -96,6 +97,7 @@ const portableSettings = new Set([
   'meetingEnd',
   'callService',
   'autoTodos',
+  'todoView',
   'myNames',
   'templates',
   'recipes',
@@ -652,11 +654,12 @@ export class Store {
   }
   // A todo the user typed. It belongs to no meeting, so its meeting_id is empty; no scan reads it,
   // and only the user removes it.
-  addTodo({ text: task }) {
+  addTodo({ text: task, dueDate }) {
     const row = newTodo({
       id: randomUUID(),
       meetingId: null,
       text: typedTask(task),
+      dueDate: typedDay(dueDate),
       assignee: 'me',
       createdAt: new Date().toISOString(),
       touched: true,
@@ -675,6 +678,7 @@ export class Store {
       if (row.meetingId && task !== row.text) row.foundAs ??= row.text;
       row.text = task;
     }
+    if ('dueDate' in patch) row.dueDate = typedDay(patch.dueDate);
     if ('assignee' in patch) {
       if (!assignees.includes(patch.assignee)) throw new Error('Invalid todo.');
       row.assignee = patch.assignee;
@@ -1050,6 +1054,8 @@ export function validateSetting(key, value) {
     ].includes(key)
   ) {
     if (typeof value !== 'boolean') throw new Error('Invalid preference.');
+  } else if (key === 'todoView') {
+    if (!['meeting', 'due'].includes(value)) throw new Error('Invalid preference.');
   } else if (key === 'myNames') {
     // What people call the user, comma-separated: how a todo is recognized as theirs.
     text(value, 300);

@@ -40,13 +40,14 @@ For each item:
 - "task": the action, short and imperative. Add what the reader needs to understand it later, nothing more.
 - "assignee": "me", "other" or "unclear".
 - "owner": the person's name as stated, or null. Null for me.
-- "due": the deadline as stated ("by Friday"), or null. Never work out a date.
+- "due": the deadline as stated ("by Friday"), or null.
+- "dueDate": the day "due" means, as YYYY-MM-DD, counted from the date in <meeting>: "Friday" is the first Friday after the meeting. Null when "due" is null or names no single day ("soon", "next week", "下周").
 - "quote": one sentence copied exactly from the transcript or my notes, recognition errors included, that best shows whose it is. Never translate or tidy it. Use "" when only the enhanced notes have it.
 - "why": under 15 words on how you decided the assignee.
 
 Write "task" in the language of my notes, or, when they are empty, the main language of the transcript. Keep names, product names and technical terms as spoken.
 
-Reply with JSON only, no code fence, no comments: {"items":[{"task":"","assignee":"","owner":null,"due":null,"quote":"","why":""}]}. With no action items, reply {"items":[]}. Never invent tasks.`;
+Reply with JSON only, no code fence, no comments: {"items":[{"task":"","assignee":"","owner":null,"due":null,"dueDate":null,"quote":"","why":""}]}. With no action items, reply {"items":[]}. Never invent tasks.`;
 
 export function todoRequest(meeting, names = '') {
   const blocks = meetingBlocks(meeting);
@@ -72,10 +73,32 @@ const unreadable = () => new Error('The AI answered in a form Stillnote could no
 const optional = (value, max) =>
   typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null;
 
+// A deadline is a day on the calendar, written YYYY-MM-DD, not a moment.
+const isDay = (value) => {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const at = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(at) && new Date(at).toISOString().startsWith(value);
+};
+const twoDigits = (number) => String(number).padStart(2, '0');
+export const dayOf = (at) => {
+  const local = new Date(at);
+  return `${local.getFullYear()}-${twoDigits(local.getMonth() + 1)}-${twoDigits(local.getDate())}`;
+};
+const nextDay = (day) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+
+// What the date field gave; it can only give a real day or nothing.
+export function typedDay(value) {
+  if (value === null || value === undefined) return null;
+  if (!isDay(value)) throw new Error('Invalid todo.');
+  return value;
+}
+
 // A new row. Rows saved before a field existed simply lack it.
 export const newTodo = (fields) => ({
   owner: null,
   due: null,
+  dueDate: null,
   evidence: null,
   doneAt: null,
   dismissedAt: null,
@@ -108,6 +131,7 @@ export function parseTodoResponse(text) {
       assignee: item.assignee,
       owner: optional(item.owner, maxField),
       due: optional(item.due, maxField),
+      dueDate: optional(item.dueDate, maxField),
       quote: optional(item.quote, maxTask) ?? '',
       why: optional(item.why, maxField),
     };
@@ -229,15 +253,20 @@ export function judgeAssignee(assignee, evidence, meeting, names = '') {
   return twoSided(meeting) ? 'me' : 'unclear';
 }
 
+// The model's date needs words to rest on, and no deadline falls before the meeting that set it.
+export const judgeDueDate = (dueDate, due, meeting) =>
+  due && isDay(dueDate) && dueDate >= dayOf(meeting.createdAt) ? dueDate : null;
+
 // A parsed answer as the todos it proposes for this meeting.
 export const proposedTodos = (meeting, items, names = '') =>
-  items.map(({ task, assignee, owner, due, quote }) => {
+  items.map(({ task, assignee, owner, due, dueDate, quote }) => {
     const evidence = locateEvidence(meeting, quote);
     return {
       text: task,
       assignee: judgeAssignee(assignee, evidence, meeting, names),
       owner,
       due,
+      dueDate: judgeDueDate(dueDate, due, meeting),
       evidence,
     };
   });
@@ -321,6 +350,7 @@ export function cleanTodo(row) {
     !assignees.includes(row.assignee) ||
     !nullable(row.owner, maxField) ||
     !nullable(row.due, maxField) ||
+    (row.dueDate != null && !isDay(row.dueDate)) ||
     !nullable(row.foundAs, maxTask) ||
     !date(row.doneAt) ||
     !date(row.dismissedAt) ||
@@ -339,6 +369,7 @@ export function cleanTodo(row) {
     assignee: row.assignee,
     owner: row.owner ?? null,
     due: row.due ?? null,
+    dueDate: row.dueDate ?? null,
     evidence: evidence
       ? {
           from: evidence.from,
@@ -404,6 +435,27 @@ export function todoLists(todos = [], meetings = []) {
 
 export const openTodoCount = (todos, meetings) =>
   todoLists(todos, meetings).open.reduce((sum, group) => sum + group.todos.length, 0);
+
+// How a deadline reads today. Both are local days, so this never crosses a time zone.
+export function dueState(dueDate, today) {
+  if (dueDate < today) return 'overdue';
+  if (dueDate === today) return 'today';
+  return dueDate === nextDay(today) ? 'tomorrow' : 'later';
+}
+
+// The same open todos by deadline: soonest first in each part, and empty parts left out.
+export function todosByDue(groups, today) {
+  const rows = groups.flatMap((group) => group.todos);
+  const dated = rows
+    .filter((row) => row.dueDate)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  return [
+    { key: 'overdue', todos: dated.filter((row) => row.dueDate < today) },
+    { key: 'today', todos: dated.filter((row) => row.dueDate === today) },
+    { key: 'later', todos: dated.filter((row) => row.dueDate > today) },
+    { key: 'none', todos: rows.filter((row) => !row.dueDate) },
+  ].filter(({ todos }) => todos.length > 0);
+}
 
 const dayMs = 86_400_000;
 // Meetings a backfill over this range would scan, newest first. `days` null means all of them.

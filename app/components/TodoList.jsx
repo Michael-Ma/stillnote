@@ -2,8 +2,8 @@ import React, { useRef, useState } from 'react';
 import { LoaderCircle, Pencil, Plus, Trash2 } from 'lucide-react';
 import { AiConnect } from './AiConnect.jsx';
 import { IconButton } from './Content.jsx';
-import { date, duration } from '../format.mjs';
-import { backfillIds, todoLists } from '../todos.mjs';
+import { date, dateFormat, duration } from '../format.mjs';
+import { backfillIds, dayOf, dueState, todoLists, todosByDue } from '../todos.mjs';
 import { useT } from '../i18n/react.jsx';
 
 // Finding todos in past meetings spends the user's plan, so it only starts from this button, and
@@ -69,12 +69,17 @@ function TodoForm({ todo, onSave, onCancel }) {
   const t = useT();
   const field = useRef(null);
   const [task, setTask] = useState(todo?.text ?? '');
+  const [day, setDay] = useState(todo?.dueDate ?? '');
   const editing = !!todo;
   const typed = task.trim();
+  const clear = () => {
+    setTask('');
+    setDay('');
+  };
   async function save(e) {
     e.preventDefault();
-    if (!typed || !(await onSave({ text: typed })) || editing) return;
-    setTask('');
+    if (!typed || !(await onSave({ text: typed, dueDate: day || null })) || editing) return;
+    clear();
     field.current.focus();
   }
   return (
@@ -84,7 +89,7 @@ function TodoForm({ todo, onSave, onCancel }) {
       onKeyDown={(e) => {
         if (e.key !== 'Escape' || e.nativeEvent.isComposing) return;
         if (editing) onCancel();
-        else setTask('');
+        else clear();
       }}
     >
       {!editing && <Plus size={15} aria-hidden="true" />}
@@ -98,9 +103,17 @@ function TodoForm({ todo, onSave, onCancel }) {
         onChange={(e) => setTask(e.target.value)}
       />
       {(editing || typed) && (
-        <button className="primary small" disabled={!typed}>
-          {editing ? t('Save') : t('Add')}
-        </button>
+        <>
+          <input
+            type="date"
+            aria-label={t('Deadline')}
+            value={day}
+            onChange={(e) => setDay(e.target.value)}
+          />
+          <button className="primary small" disabled={!typed}>
+            {editing ? t('Save') : t('Add')}
+          </button>
+        </>
       )}
       {editing && (
         <button type="button" className="secondary small" onClick={onCancel}>
@@ -111,14 +124,41 @@ function TodoForm({ todo, onSave, onCancel }) {
   );
 }
 
-function TodoRow({ todo, onChange, onDelete, onEvidence }) {
+// A real day when there is one, with what was said kept for hovering; otherwise what was said.
+function Deadline({ todo, today, done }) {
+  const t = useT();
+  if (!todo.dueDate) return todo.due ? <span>{todo.due}</span> : null;
+  const state = dueState(todo.dueDate, today);
+  const noon = `${todo.dueDate}T12:00:00`;
+  const label =
+    state === 'today'
+      ? t('Today')
+      : state === 'tomorrow'
+        ? t('Tomorrow')
+        : todo.dueDate.slice(0, 4) === today.slice(0, 4)
+          ? date(noon, t.locale)
+          : dateFormat(t.locale, { year: 'numeric', month: 'short', day: 'numeric' }).format(
+              new Date(noon),
+            );
+  return (
+    <span
+      className={state === 'overdue' && !done ? 'todo-overdue' : undefined}
+      title={todo.due ?? undefined}
+    >
+      {label}
+    </span>
+  );
+}
+
+function TodoRow({ todo, meeting, today, onOpen, onChange, onDelete, onEvidence }) {
   const t = useT();
   const [editing, setEditing] = useState(false);
   const done = !!todo.doneAt,
     unclear = todo.assignee === 'unclear',
     theirs = todo.assignee === 'other';
   async function save(fields) {
-    const saved = fields.text === todo.text || (await onChange(todo.id, fields));
+    const same = fields.text === todo.text && fields.dueDate === (todo.dueDate ?? null);
+    const saved = same || (await onChange(todo.id, fields));
     if (saved) setEditing(false);
     return saved;
   }
@@ -146,11 +186,16 @@ function TodoRow({ todo, onChange, onDelete, onEvidence }) {
       )}
       <div className="todo-body">
         <p>{todo.text}</p>
-        {(unclear || todo.due || todo.owner) && (
+        {(unclear || todo.dueDate || todo.due || (theirs && todo.owner) || meeting) && (
           <div className="todo-meta">
             {unclear && <span className="todo-flag">{t('Might not be yours')}</span>}
             {theirs && todo.owner && <span>{todo.owner}</span>}
-            {todo.due && <span>{todo.due}</span>}
+            <Deadline todo={todo} today={today} done={done} />
+            {meeting && (
+              <button className="todo-from" onClick={() => onOpen(meeting)}>
+                {meeting.title}
+              </button>
+            )}
           </div>
         )}
         {todo.evidence && (
@@ -212,11 +257,41 @@ function Groups({ groups, rowProps, onOpen }) {
           <small>{date(meeting.createdAt, t.locale)}</small>
         </button>
       ) : (
-        <h2 className="todo-added">{t('Added by you')}</h2>
+        <h2 className="todo-heading">{t('Added by you')}</h2>
       )}
       <ul>
         {todos.map((todo) => (
           <TodoRow key={todo.id} todo={todo} {...rowProps} />
+        ))}
+      </ul>
+    </section>
+  ));
+}
+
+// With no meeting heading above them, todos say which meeting they came from.
+function DueParts({ groups, meetings, today, rowProps, onOpen }) {
+  const t = useT();
+  const headings = {
+    overdue: t('Overdue'),
+    today: t('Today'),
+    later: t('Upcoming'),
+    none: t('No deadline'),
+  };
+  const meetingOf = new Map(meetings.map((meeting) => [meeting.id, meeting]));
+  return todosByDue(groups, today).map(({ key, todos }) => (
+    <section className="todo-group" key={key}>
+      <h2 className={'todo-heading' + (key === 'overdue' ? ' todo-overdue' : '')}>
+        {headings[key]}
+      </h2>
+      <ul>
+        {todos.map((todo) => (
+          <TodoRow
+            key={todo.id}
+            todo={todo}
+            meeting={meetingOf.get(todo.meetingId)}
+            onOpen={onOpen}
+            {...rowProps}
+          />
         ))}
       </ul>
     </section>
@@ -247,15 +322,32 @@ export function TodoList({
   onDelete,
   onScan,
   onCancelScan,
+  onView,
 }) {
   const t = useT();
   const { open, done, others } = todoLists(data.todos, data.meetings);
-  const groupProps = { rowProps: { onChange, onDelete, onEvidence }, onOpen };
+  const today = dayOf(Date.now());
+  const groupProps = { rowProps: { today, onChange, onDelete, onEvidence }, onOpen };
   const scanned = Object.keys(data.todoScans).length > 0;
+  const view = data.settings.todoView === 'due' ? 'due' : 'meeting';
+  const views = { meeting: t('By meeting'), due: t('By deadline') };
   return (
     <div className="home-feed todo-page">
       <div className="section-heading">
         <h1>{t('Todos')}</h1>
+        <div className="view-switch" role="tablist" aria-label={t('Todo view')}>
+          {Object.entries(views).map(([key, label]) => (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={view === key}
+              className={view === key ? 'active' : ''}
+              onClick={() => onView(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
       {ai.ready ? (
         <ScanBanner
@@ -270,7 +362,11 @@ export function TodoList({
       )}
       <TodoForm onSave={onAdd} />
       {open.length > 0 ? (
-        <Groups groups={open} {...groupProps} />
+        view === 'due' ? (
+          <DueParts groups={open} meetings={data.meetings} today={today} {...groupProps} />
+        ) : (
+          <Groups groups={open} {...groupProps} />
+        )
       ) : (
         <div className="document-empty">
           <h2>{scanned ? t('Nothing to do') : t('No todos yet')}</h2>

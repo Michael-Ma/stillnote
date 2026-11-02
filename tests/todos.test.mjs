@@ -7,6 +7,8 @@ import { Store } from '../app/store.mjs';
 import {
   backfillIds,
   cleanTodo,
+  dayOf,
+  dueState,
   judgeAssignee,
   locateEvidence,
   mergeTodos,
@@ -19,6 +21,7 @@ import {
   todoLists,
   todoRequest,
   todoScanVersion,
+  todosByDue,
 } from '../app/todos.mjs';
 
 const segment = (text, source, timestamp = 0) => ({
@@ -83,10 +86,19 @@ test('a valid answer is read, in a code fence or after a preamble too', () => {
       assignee: 'me',
       owner: null,
       due: 'by Friday',
+      dueDate: null,
       quote: 'I will',
       why: null,
     },
-    { task: 'Update page', assignee: 'other', owner: 'Priya', due: null, quote: '', why: 'said' },
+    {
+      task: 'Update page',
+      assignee: 'other',
+      owner: 'Priya',
+      due: null,
+      dueDate: null,
+      quote: '',
+      why: 'said',
+    },
   ];
   assert.deepEqual(parseTodoResponse(answer), expected);
   assert.deepEqual(parseTodoResponse('```json\n' + answer + '\n```'), expected);
@@ -375,6 +387,77 @@ test('Chinese tasks are matched by their character pairs, not single characters'
   assert.equal(different.length, 2);
 });
 
+test('a stated deadline becomes a day only if it holds up', () => {
+  const [parsed] = parseTodoResponse(
+    '{"items":[{"task":"Send","assignee":"me","due":"by Friday","dueDate":"2026-05-08"}]}',
+  );
+  assert.equal(parsed.dueDate, '2026-05-08');
+  const day = (dueDate, due = 'by Friday') =>
+    proposedTodos(meeting(), [{ task: 'Send', assignee: 'unclear', due, dueDate, quote: '' }])[0]
+      .dueDate;
+  assert.equal(day('2026-05-08'), '2026-05-08');
+  assert.equal(day('2026-05-04'), '2026-05-04', 'the meeting day itself');
+  assert.equal(day('2026-05-03'), null, 'before the meeting');
+  assert.equal(day('2026-05-08', null), null, 'nobody said so');
+  assert.equal(day('2026-02-31'), null, 'no such day');
+  assert.equal(day('Friday'), null);
+  assert.equal(day(null), null);
+});
+
+test('a scan fills in a deadline, and never changes one the user set', () => {
+  const [found] = mergeTodos(
+    [row('Send the pricing draft')],
+    [proposal('Send the pricing draft', { dueDate: '2026-05-08' })],
+    fresh,
+  );
+  assert.equal(found.dueDate, '2026-05-08');
+  const mine = row('Send the pricing draft', { dueDate: '2026-05-20', touched: true });
+  assert.deepEqual(
+    mergeTodos([mine], [proposal('Send the pricing draft', { dueDate: '2026-05-08' })], fresh),
+    [mine],
+  );
+});
+
+test('a deadline reads as today, tomorrow, overdue or later', () => {
+  assert.equal(dueState('2026-05-30', '2026-05-31'), 'overdue');
+  assert.equal(dueState('2026-05-31', '2026-05-31'), 'today');
+  assert.equal(dueState('2026-06-01', '2026-05-31'), 'tomorrow', 'across a month');
+  assert.equal(dueState('2027-01-01', '2026-12-31'), 'tomorrow', 'across a year');
+  assert.equal(dueState('2026-06-02', '2026-05-31'), 'later');
+  assert.equal(dayOf(new Date(2026, 0, 2, 23, 59)), '2026-01-02', 'the local day');
+  assert.equal(dayOf(new Date(2026, 0, 3, 0, 0)), '2026-01-03');
+});
+
+test('todos by deadline: soonest first, and only the parts that have any', () => {
+  const dated = (text, dueDate) => row(text, { dueDate });
+  const groups = [
+    { meeting: null, todos: [dated('later', '2026-06-09'), dated('sooner', '2026-06-02')] },
+    {
+      meeting: meeting(),
+      todos: [
+        dated('none', null),
+        dated('today', '2026-05-31'),
+        dated('late', '2026-05-30'),
+        dated('later still', '2026-07-01'),
+      ],
+    },
+  ];
+  assert.deepEqual(
+    todosByDue(groups, '2026-05-31').map(({ key, todos }) => [key, todos.map((t) => t.text)]),
+    [
+      ['overdue', ['late']],
+      ['today', ['today']],
+      ['later', ['sooner', 'later', 'later still']],
+      ['none', ['none']],
+    ],
+  );
+  assert.deepEqual(
+    todosByDue([groups[0]], '2026-05-31').map(({ key }) => key),
+    ['later'],
+  );
+  assert.deepEqual(todosByDue([], '2026-05-31'), []);
+});
+
 test('a meeting with nothing to read costs no request', () => {
   assert.equal(scannable(meeting()), false);
   assert.equal(scannable(meeting({ notes: 'Meeting context\nAgenda: pricing' })), false);
@@ -553,6 +636,18 @@ test('an edit changes the text and remembers what the model wrote', (t) => {
   assert.equal(s.updateTodo(typed.id, { text: 'Book the vet' }).foundAs, null);
 });
 
+test('a deadline is a real day, set when adding or later, and can be cleared', (t) => {
+  const { s } = store(t);
+  const typed = s.addTodo({ text: 'Book the dentist', dueDate: '2026-05-08' });
+  assert.equal(typed.dueDate, '2026-05-08');
+  assert.equal(s.updateTodo(typed.id, { dueDate: '2026-05-09' }).dueDate, '2026-05-09');
+  assert.equal(s.updateTodo(typed.id, { dueDate: null }).dueDate, null);
+  for (const bad of ['tomorrow', '2026-13-01', '2026-02-31', 7]) {
+    assert.throws(() => s.addTodo({ text: 'x', dueDate: bad }), /Invalid todo/);
+    assert.throws(() => s.updateTodo(typed.id, { dueDate: bad }), /Invalid todo/);
+  }
+});
+
 test('deleting a found todo leaves a mark; undoing brings it back', (t) => {
   const { s } = store(t);
   const m = s.create({ title: 'Planning' });
@@ -636,7 +731,7 @@ test('a backup carries todos to another Mac, with what the user did', (t) => {
 
 test('a typed todo travels in a backup, once', (t) => {
   const { s } = store(t);
-  s.addTodo({ text: 'Book the dentist' });
+  s.addTodo({ text: 'Book the dentist', dueDate: '2026-05-08' });
   const backup = JSON.parse(JSON.stringify(s.backup()));
   const { s: other } = store(t);
   other.restore(backup);
@@ -679,6 +774,8 @@ test('a malformed todo stops a restore before anything changes', (t) => {
     { meetingId: '' },
     { meetingId: undefined },
     { foundAs: 7 },
+    { dueDate: 'Friday' },
+    { dueDate: '2026-02-31' },
     { text: 'x'.repeat(501) },
     { assignee: 'everyone' },
     { createdAt: 'yesterday' },
@@ -731,4 +828,7 @@ test('settings for todos are checked', (t) => {
   assert.throws(() => s.setting('myNames', 'x'.repeat(301)), /Invalid text/);
   assert.throws(() => s.setting('myNames', 7), /Invalid text/);
   assert.throws(() => s.setting('autoTodos', 'yes'), /Invalid preference/);
+  assert.throws(() => s.setting('todoView', 'list'), /Invalid preference/);
+  s.setting('todoView', 'due');
+  assert.equal(s.settings().todoView, 'due');
 });

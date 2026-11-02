@@ -1269,6 +1269,7 @@ function App() {
                   onDelete={deleteTodo}
                   onScan={(days) => guard(() => call('todos', 'scan', days))}
                   onCancelScan={() => guard(() => call('todos', 'cancel'))}
+                  onView={(todoView) => guard(() => setting('todoView', todoView))}
                 />
               ) : (
                 <HomeFeed

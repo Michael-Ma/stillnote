@@ -26,7 +26,16 @@ export const todosScenario = {
       text: items({ ...send, assignee: 'other' }, { ...update, assignee: 'me' }, book),
     },
     { mode: 'wait-for-cancel' },
-    { mode: 'success', text: items({ task: 'Call the supplier', assignee: 'unclear', quote: '' }) },
+    {
+      mode: 'success',
+      text: items({
+        task: 'Call the supplier',
+        assignee: 'unclear',
+        due: 'in the new year',
+        dueDate: '2099-01-05',
+        quote: '',
+      }),
+    },
   ],
 };
 
@@ -39,6 +48,11 @@ async function transcribe(h, id) {
     await h.call('transcript', id, { text, source, speaker, timestamp });
 }
 const row = (page, text) => page.locator('.todo-row').filter({ hasText: text });
+const dayFromNow = (days) => {
+  const at = new Date();
+  at.setDate(at.getDate() + days);
+  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
+};
 const openTodos = (page) =>
   page
     .getByRole('navigation', { name: 'Notebook' })
@@ -136,6 +150,18 @@ export async function todos(h) {
     .getByRole('button', { name: /^Todos/ })
     .filter({ hasText: '3' })
     .waitFor();
+
+  // A deadline is a day, set while adding or later.
+  await adding.fill('Pay the invoice');
+  await page.getByRole('textbox', { name: 'Deadline', exact: true }).fill(dayFromNow(1));
+  await adding.press('Enter');
+  await row(page, 'Pay the invoice').getByText('Tomorrow', { exact: true }).waitFor();
+  await row(page, 'Book the dentist')
+    .getByRole('button', { name: 'Edit “Book the dentist”' })
+    .click();
+  await editing.getByRole('textbox', { name: 'Deadline', exact: true }).fill(dayFromNow(-2));
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await row(page, 'Book the dentist').locator('.todo-overdue').waitFor();
   await h.screenshot('todos-added');
   await row(page, 'Renew the passport')
     .getByRole('button', { name: 'Delete “Renew the passport”' })
@@ -157,7 +183,7 @@ export async function todos(h) {
     at: scanned,
   });
   const after = (await h.state()).todos;
-  assert.equal(after.length, 4);
+  assert.equal(after.length, 5);
   assert.ok(after.find((t) => t.text === send.task).doneAt, 'the tick survives');
   assert.equal(after.find((t) => t.text === send.task).assignee, 'me', 'mine stays mine');
   const rewritten = after.find((t) => t.text === 'Rewrite onboarding');
@@ -191,11 +217,34 @@ export async function todos(h) {
   assert.equal(await requests(), 1, 'a stopped scan saves nothing');
   await page.getByRole('button', { name: 'Find todos', exact: true }).click();
   await h.waitForState((s) => !s.todoProgress.running && Object.keys(s.todoScans).length === 3);
-  await row(page, 'Call the supplier').waitFor();
+  await row(page, 'Call the supplier').getByText('Jan 5, 2099', { exact: true }).waitFor();
+
+  // The same todos by deadline, each saying which meeting it came from.
+  await page.getByRole('tab', { name: 'By deadline', exact: true }).click();
+  const part = (name) =>
+    page.locator('.todo-group').filter({ has: page.getByRole('heading', { name, exact: true }) });
+  await part('Overdue').locator('.todo-row').filter({ hasText: 'Book the dentist' }).waitFor();
+  await part('Upcoming')
+    .locator('.todo-row')
+    .first()
+    .filter({ hasText: 'Pay the invoice' })
+    .waitFor();
+  await part('Upcoming')
+    .locator('.todo-row')
+    .last()
+    .filter({ hasText: 'Call the supplier' })
+    .waitFor();
+  await part('No deadline')
+    .locator('.todo-row')
+    .filter({ hasText: 'Rewrite onboarding' })
+    .getByRole('button', { name: 'E2E pricing sync', exact: true })
+    .waitFor();
+  await h.screenshot('todos-by-deadline');
 
   // A restart keeps it all; deleting forever removes.
   const reopened = await h.restart();
   await openTodos(reopened);
+  await reopened.getByRole('tab', { name: 'By deadline', exact: true, selected: true }).waitFor();
   await row(reopened, 'Rewrite onboarding').waitFor();
   await row(reopened, 'Book the dentist').waitFor();
   await h.call('update', meeting.id, { deletedAt: true });

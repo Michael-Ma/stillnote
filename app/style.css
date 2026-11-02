@@ -3095,6 +3095,10 @@ dialog.settings-dialog {
   color: var(--ink);
   font-size: var(--text-base);
 }
+.todo-form input[type='date'] {
+  flex: none;
+  width: 140px;
+}
 .todo-row.editing {
   display: block;
 }
@@ -3105,11 +3109,24 @@ dialog.settings-dialog {
 .todo-group {
   margin-bottom: 20px;
 }
-.todo-added {
+.todo-heading {
   margin: 0;
   padding: 4px 10px;
   font-size: var(--text-base);
   font-weight: 500;
+}
+.todo-overdue {
+  color: var(--warn);
+}
+.todo-from {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.todo-from:hover {
+  color: var(--ink);
 }
 .todo-group ul {
   margin: 0;
