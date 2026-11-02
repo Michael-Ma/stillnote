@@ -458,6 +458,29 @@ test('todos by deadline: soonest first, and only the parts that have any', () =>
   assert.deepEqual(todosByDue([], '2026-05-31'), []);
 });
 
+test('important todos lead their group and each part, in their own order', () => {
+  const m = meeting();
+  const rows = [
+    row('plain', { assignee: 'me', dueDate: '2026-06-01' }),
+    row('flagged later', { assignee: 'me', dueDate: '2026-06-09', important: true }),
+    row('flagged sooner', { assignee: 'me', dueDate: '2026-06-02', important: true }),
+    row('old row with no flag field', { assignee: 'me' }),
+    row('flagged, no date', { assignee: 'me', important: true }),
+  ];
+  const { open } = todoLists(rows, [m]);
+  assert.deepEqual(
+    open[0].todos.map((t) => t.text),
+    ['flagged later', 'flagged sooner', 'flagged, no date', 'plain', 'old row with no flag field'],
+  );
+  assert.deepEqual(
+    todosByDue(open, '2026-05-31').map(({ todos }) => todos.map((t) => t.text)),
+    [
+      ['flagged sooner', 'flagged later', 'plain'],
+      ['flagged, no date', 'old row with no flag field'],
+    ],
+  );
+});
+
 test('a meeting with nothing to read costs no request', () => {
   assert.equal(scannable(meeting()), false);
   assert.equal(scannable(meeting({ notes: 'Meeting context\nAgenda: pricing' })), false);
@@ -646,6 +669,18 @@ test('a deadline is a real day, set when adding or later, and can be cleared', (
     assert.throws(() => s.addTodo({ text: 'x', dueDate: bad }), /Invalid todo/);
     assert.throws(() => s.updateTodo(typed.id, { dueDate: bad }), /Invalid todo/);
   }
+});
+
+test('marking a todo important survives the next scan', (t) => {
+  const { s } = store(t);
+  const m = s.create({ title: 'Planning' });
+  s.saveTodoScan(m.id, [send]);
+  const { id, important } = s.todos()[0];
+  assert.equal(important, false);
+  assert.equal(s.updateTodo(id, { important: true }).important, true);
+  s.saveTodoScan(m.id, [send]);
+  assert.equal(s.todos()[0].important, true);
+  assert.equal(s.updateTodo(id, { important: false }).important, false);
 });
 
 test('deleting a found todo leaves a mark; undoing brings it back', (t) => {

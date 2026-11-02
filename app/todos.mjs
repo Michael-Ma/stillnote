@@ -103,6 +103,7 @@ export const newTodo = (fields) => ({
   doneAt: null,
   dismissedAt: null,
   foundAs: null,
+  important: false,
   ...fields,
 });
 
@@ -388,6 +389,7 @@ export function cleanTodo(row) {
     dismissedAt: row.dismissedAt ?? null,
     touched: row.touched === true,
     foundAs: row.foundAs ?? null,
+    important: row.important === true,
   };
 }
 
@@ -401,6 +403,9 @@ export function cleanTodoScan(scan) {
     throw new Error('Invalid todo in backup.');
   return { meetingId: scan.meetingId, at: scan.at, status: scan.status, version: scan.version };
 }
+
+// Stable, so the order within each kind stays as it was.
+const importantFirst = (rows) => rows.toSorted((a, b) => !!b.important - !!a.important);
 
 // What the user typed has no meeting, and comes before every meeting.
 const newestFirst = (a, b) => {
@@ -418,7 +423,7 @@ export function todoLists(todos = [], meetings = []) {
     [...new Set(rows.map((row) => row.meetingId))]
       .map((id) => ({
         meeting: live.get(id) ?? null,
-        todos: rows.filter((row) => row.meetingId === id),
+        todos: importantFirst(rows.filter((row) => row.meetingId === id)),
       }))
       .sort(newestFirst);
   const rows = todos.filter(
@@ -443,7 +448,8 @@ export function dueState(dueDate, today) {
   return dueDate === nextDay(today) ? 'tomorrow' : 'later';
 }
 
-// The same open todos by deadline: soonest first in each part, and empty parts left out.
+// The same open todos by deadline: important ones first in each part, then soonest first, and empty
+// parts left out.
 export function todosByDue(groups, today) {
   const rows = groups.flatMap((group) => group.todos);
   const dated = rows
@@ -454,7 +460,9 @@ export function todosByDue(groups, today) {
     { key: 'today', todos: dated.filter((row) => row.dueDate === today) },
     { key: 'later', todos: dated.filter((row) => row.dueDate > today) },
     { key: 'none', todos: rows.filter((row) => !row.dueDate) },
-  ].filter(({ todos }) => todos.length > 0);
+  ]
+    .map(({ key, todos }) => ({ key, todos: importantFirst(todos) }))
+    .filter(({ todos }) => todos.length > 0);
 }
 
 const dayMs = 86_400_000;

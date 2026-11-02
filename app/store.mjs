@@ -679,6 +679,7 @@ export class Store {
       row.text = task;
     }
     if ('dueDate' in patch) row.dueDate = typedDay(patch.dueDate);
+    if ('important' in patch) row.important = patch.important === true;
     if ('assignee' in patch) {
       if (!assignees.includes(patch.assignee)) throw new Error('Invalid todo.');
       row.assignee = patch.assignee;

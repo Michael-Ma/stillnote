@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { LoaderCircle, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Flag, LoaderCircle, Pencil, Plus, Trash2 } from 'lucide-react';
 import { AiConnect } from './AiConnect.jsx';
 import { IconButton } from './Content.jsx';
 import { date, dateFormat, duration } from '../format.mjs';
@@ -226,6 +226,19 @@ function TodoRow({ todo, meeting, today, onOpen, onChange, onDelete, onEvidence 
             {t('Not mine')}
           </button>
         )}
+        <IconButton
+          className={'small todo-important' + (todo.important ? ' on' : '')}
+          label={
+            todo.important
+              ? t('Remove “{task}” from important', { task: todo.text })
+              : t('Mark “{task}” as important', { task: todo.text })
+          }
+          title={t('Important')}
+          aria-pressed={!!todo.important}
+          onClick={() => onChange(todo.id, { important: !todo.important })}
+        >
+          <Flag size={14} fill={todo.important ? 'currentColor' : 'none'} />
+        </IconButton>
         <IconButton
           className="small"
           label={t('Edit “{task}”', { task: todo.text })}

@@ -3234,13 +3234,20 @@ dialog.settings-dialog {
 }
 .todo-actions {
   display: flex;
+  align-items: center;
   gap: 2px;
+}
+.todo-actions > * {
   opacity: 0;
 }
-.todo-actions.shown,
-.todo-row:hover .todo-actions,
-.todo-row:focus-within .todo-actions {
+.todo-actions.shown > *,
+.todo-actions > .todo-important.on,
+.todo-row:hover .todo-actions > *,
+.todo-row:focus-within .todo-actions > * {
   opacity: 1;
+}
+.icon-button.todo-important.on {
+  color: var(--warn);
 }
 .todo-actions .text-button {
   height: 24px;

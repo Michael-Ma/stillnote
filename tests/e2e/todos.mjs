@@ -162,6 +162,25 @@ export async function todos(h) {
   await editing.getByRole('textbox', { name: 'Deadline', exact: true }).fill(dayFromNow(-2));
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await row(page, 'Book the dentist').locator('.todo-overdue').waitFor();
+
+  // An important todo leads its group, and shows without the pointer on it.
+  await row(page, 'Pay the invoice')
+    .getByRole('button', { name: 'Mark “Pay the invoice” as important' })
+    .click();
+  await page
+    .locator('.todo-group')
+    .first()
+    .locator('.todo-row')
+    .first()
+    .filter({ hasText: 'Pay the invoice' })
+    .waitFor();
+  await page.mouse.move(1, 1);
+  await page.locator('h1').click();
+  const flag = row(page, 'Pay the invoice').getByRole('button', {
+    name: 'Remove “Pay the invoice” from important',
+  });
+  await flag.waitFor();
+  assert.equal(await flag.evaluate((button) => getComputedStyle(button).opacity), '1');
   await h.screenshot('todos-added');
   await row(page, 'Renew the passport')
     .getByRole('button', { name: 'Delete “Renew the passport”' })
