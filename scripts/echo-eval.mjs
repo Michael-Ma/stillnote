@@ -12,7 +12,7 @@
 // (app/echo-audio.mjs), and the numbers for that come under `withAudio`.
 //
 // Options: --notebook <path>, --only M2,M9b, --baseline <another echo.mjs to compare with>,
-// --out <file> for the numbers as JSON lines.
+// --out <file> for the numbers as JSON lines; --aec on|off (default on) controls audio retries.
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync } from 'node:fs';
@@ -20,28 +20,31 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { echoMatch, suppressEcho, timedWords } from '../app/echo.mjs';
 import { arbitrateOffline } from '../app/language-arbiter.mjs';
 import { words as looseWords } from '../app/own-lines.mjs';
 import { echoJudge, recordingDirectory } from '../app/recordings.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const args = process.argv.slice(2);
+let args, dataDir, notebook, only, out, baseline, aec;
 const option = (name, fallback) => {
   const at = args.indexOf(name);
-  return at < 0 ? fallback : args[at + 1];
+  if (at < 0) return fallback;
+  if (!args[at + 1] || args[at + 1].startsWith('--')) throw new Error('missing option value');
+  return args[at + 1];
 };
 const flag = (name) => args.includes(name);
-const dataDir = join(homedir(), 'Library/Application Support/Stillnote');
-const notebook = option('--notebook', join(dataDir, 'notebook.sqlite'));
-const only = option('--only')?.split(',');
-const out = option('--out');
-const baseline = option('--baseline') && (await import(resolve(option('--baseline'))));
 const helper = join(root, 'native/bin/StillnoteCapture');
+
+export function aecMode(value = 'on') {
+  if (!['on', 'off'].includes(value)) throw new Error('--aec must be on or off');
+  return value === 'off' ? 'off' : 'auto';
+}
+
 const ffmpeg = '/opt/homebrew/bin/ffmpeg';
 
-function readNotebook() {
+export function readNotebook(notebook) {
   const db = new DatabaseSync(notebook, { readOnly: true });
   try {
     const rows = db.prepare('SELECT id, data FROM meetings ORDER BY id').all();
@@ -57,7 +60,7 @@ function readNotebook() {
 }
 
 // Each recording with both sides, under a label that says nothing about the meeting.
-function sessions(meetings) {
+export function sessions(meetings, only) {
   const found = [];
   let index = 0;
   for (const meeting of meetings) {
@@ -70,7 +73,7 @@ function sessions(meetings) {
     });
     twoSided.forEach((recording, i) =>
       found.push({
-        label: `M${index}${twoSided.length > 1 ? 'ab'[i] : ''}`,
+        label: `M${index}${twoSided.length > 1 ? String.fromCharCode(97 + i) : ''}`,
         meeting,
         recording,
         saved: transcript.filter((s) => s.recordingId === recording.id),
@@ -90,10 +93,44 @@ function recognize({ meeting, recording }) {
   }));
   if (!tracks.every((track) => existsSync(track.path)))
     return Promise.reject(new Error('audio is missing'));
+  return recognizeTracks({
+    helper,
+    recordingId: recording.id,
+    tracks,
+    locales,
+    echoCancellation: aecMode(aec),
+    timeout: Math.max(120000, 3000 * (recording.duration ?? 0)),
+  });
+}
+
+// stdout may contain transcripts; keep it in memory and never include helper errors in reports.
+export function recognizeTracks({
+  helper,
+  recordingId,
+  tracks,
+  locales,
+  echoCancellation = 'off',
+  timeout = 120000,
+}) {
   return new Promise((done, fail) => {
     const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'ignore'] });
-    child.on('error', fail);
-    child.on('exit', (code) => fail(new Error(`helper exited with ${code}`)));
+    let result, failure;
+    const timer = setTimeout(() => {
+      failure = new Error('recognition timed out');
+      child.kill('SIGKILL');
+    }, timeout);
+    child.on('error', () => {
+      failure = new Error('helper unavailable');
+    });
+    child.stdin.on('error', () => {
+      failure = new Error('helper input failed');
+      child.kill();
+    });
+    child.on('close', () => {
+      clearTimeout(timer);
+      if (result && !failure) done(result);
+      else fail(failure ?? new Error('recognition failed'));
+    });
     createInterface({ input: child.stdout }).on('line', (line) => {
       let event;
       try {
@@ -105,20 +142,23 @@ function recognize({ meeting, recording }) {
         child.stdin.write(
           JSON.stringify({
             op: 'transcribe',
-            recordingId: recording.id,
+            recordingId,
             context: [],
             locale: locales[0],
             locales,
             tracks,
+            echoCancellation,
           }) + '\n',
         );
       if (event.type === 'retranscription-completed') {
+        if (Array.isArray(event.segments))
+          result = locales.length > 1 ? arbitrateOffline(event.segments, locales) : event.segments;
+        else failure = new Error('invalid recognition result');
         child.kill();
-        done(locales.length > 1 ? arbitrateOffline(event.segments, locales) : event.segments);
       }
       if (event.type === 'retranscription-error') {
+        failure = new Error('recognition failed');
         child.kill();
-        fail(new Error('recognition failed'));
       }
     });
   });
@@ -455,6 +495,8 @@ async function measure(session) {
   const old = baseline && side(baseline.suppressEcho(rows).segments, 'microphone');
   return {
     label: session.label,
+    aec,
+    audio: flag('--audio'),
     // Recorded with the live filter, which shipped on 2026-11-01.
     ...(Date.parse(session.recording.startedAt) >= Date.parse('2026-11-01') ? { new: true } : {}),
     minutes: Math.round((session.recording.duration ?? 0) / 60),
@@ -513,29 +555,49 @@ async function withAudio(session, rows, textOnly) {
   };
 }
 
-const before = readNotebook();
-const all = sessions(before.meetings);
-console.error(`${all.length} recordings with both sides`);
-const totals = [];
-for (const session of all) {
-  const began = Date.now();
-  try {
-    const numbers = await measure(session);
-    numbers.seconds = Math.round((Date.now() - began) / 1000);
-    totals.push(numbers);
-    const line = JSON.stringify(numbers);
-    console.log(line);
-    if (out) appendFileSync(out, line + '\n', { mode: 0o600 });
-  } catch (error) {
-    console.error(session.label, error.message);
+export async function main(argv = process.argv.slice(2)) {
+  args = argv;
+  if (flag('--help')) {
+    console.log(
+      'Usage: node scripts/echo-eval.mjs [--audio] [--levels] [--aec on|off] [--notebook path] [--only M2,M9b] [--baseline path] [--out path]',
+    );
+    return;
   }
-}
-if (readNotebook().fingerprint !== before.fingerprint)
-  console.error('The notebook changed while this ran: the app is in use.');
-const sum = (key) => totals.reduce((total, n) => total + (n[key] ?? 0), 0);
-console.log(
-  JSON.stringify({
+  aec = option('--aec', 'on');
+  aecMode(aec);
+  notebook = option(
+    '--notebook',
+    join(homedir(), 'Library/Application Support/Stillnote/notebook.sqlite'),
+  );
+  dataDir = dirname(resolve(notebook));
+  only = option('--only')?.split(',');
+  out = option('--out');
+  baseline =
+    option('--baseline') && (await import(pathToFileURL(resolve(option('--baseline'))).href));
+  const before = readNotebook(notebook);
+  const all = sessions(before.meetings, only);
+  console.error(`${all.length} recordings with both sides; AEC ${aec}`);
+  const totals = [];
+  for (const session of all) {
+    const began = Date.now();
+    try {
+      const numbers = await measure(session);
+      numbers.seconds = Math.round((Date.now() - began) / 1000);
+      totals.push(numbers);
+      const line = JSON.stringify(numbers);
+      console.log(line);
+      if (out) appendFileSync(out, line + '\n', { mode: 0o600 });
+    } catch (error) {
+      console.error(JSON.stringify({ label: session.label, aec, failed: 1 }));
+    }
+  }
+  if (readNotebook(notebook).fingerprint !== before.fingerprint)
+    console.error(`The notebook changed while this ran: the app is in use; AEC ${aec}.`);
+  const sum = (key) => totals.reduce((total, n) => total + (n[key] ?? 0), 0);
+  const summary = JSON.stringify({
     label: 'all',
+    aec,
+    audio: flag('--audio'),
     microphoneRows: sum('microphoneRows'),
     looseBefore: sum('looseBefore'),
     looseAfter: sum('looseAfter'),
@@ -545,5 +607,14 @@ console.log(
     rowsTrimmed: sum('rowsTrimmed'),
     ownWords: sum('ownWords'),
     ownWordsLost: sum('ownWordsLost'),
-  }),
-);
+  });
+  console.log(summary);
+  if (out) appendFileSync(out, summary + '\n', { mode: 0o600 });
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch(() => {
+    console.error('Echo evaluation failed. Check options and local helper availability.');
+    process.exitCode = 1;
+  });
+}
