@@ -2313,7 +2313,23 @@ func transcribe(
 {
   var input = input
   var aecDirectory: URL?
-  defer { if let aecDirectory { try? FileManager.default.removeItem(at: aecDirectory) } }
+  // The caller may end the helper as soon as it reads the result, so the processed audio is
+  // removed before that is emitted; a helper killed earlier leaves it to the sweep below.
+  func removeAEC() {
+    if let aecDirectory { try? FileManager.default.removeItem(at: aecDirectory) }
+    aecDirectory = nil
+  }
+  defer { removeAEC() }
+  let temporaryRoot = FileManager.default.temporaryDirectory
+  for name in (try? FileManager.default.contentsOfDirectory(atPath: temporaryRoot.path)) ?? []
+  where name.hasPrefix("stillnote-aec-") && !name.hasPrefix("stillnote-aec-self-test-") {
+    let url = temporaryRoot.appendingPathComponent(name)
+    let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+      .contentModificationDate
+    if let modified, Date().timeIntervalSince(modified) > 6 * 3600 {
+      try? FileManager.default.removeItem(at: url)
+    }
+  }
   if echoCancellation != "off",
     let mic = input.firstIndex(where: { $0["source"] as? String == "microphone" }),
     let ref = input.first(where: { $0["source"] as? String == "system" }),
@@ -2400,6 +2416,7 @@ func transcribe(
         ])
       }
     }
+    removeAEC()
     emit([
       "type": "retranscription-completed", "recordingId": id, "fallbacks": fallbacks,
       "segments": segments.sorted {
@@ -2477,6 +2494,7 @@ func transcribe(
       ])
     }
   }
+  removeAEC()
   emit([
     "type": "retranscription-completed", "recordingId": id,
     "segments": results.sorted {
