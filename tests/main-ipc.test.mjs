@@ -164,7 +164,19 @@ test('main IPC consumes the native contract, bounds chat, and closes after 5 sec
       2,
     );
     await call('transcribe-recording', meeting.id, stored.recordings[0].id);
-    assert.deepEqual(events().find((e) => e.op === 'transcribe').context, command.context);
+    const retry = events().find((e) => e.op === 'transcribe');
+    assert.deepEqual(retry.context, command.context);
+    assert.equal(retry.echoCancellation, 'off');
+    for (const mode of ['auto', 'on', 'off']) {
+      await call('setting', 'echoCancellation', mode);
+      await call('transcribe-recording', meeting.id, stored.recordings[0].id);
+      assert.equal(
+        events()
+          .filter((e) => e.op === 'transcribe')
+          .at(-1).echoCancellation,
+        mode,
+      );
+    }
     assert.deepEqual(command.locales, ['en-US']);
     // Auto: the retry transcribes in both languages and keeps the better one per sentence, and
     // the recording's language label follows what the retry used.
@@ -1200,4 +1212,38 @@ test('the reminder panel can take notes without joining the call', async (t) => 
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.deepEqual(opened(), []);
   await call('stop');
+});
+
+test('AEC diagnostics follow active meeting audio for auto and legacy on', async (t) => {
+  const { call, events } = await setup(t, 'aec-modes', [
+    { mode: 'normal' },
+    { mode: 'normal' },
+    { mode: 'system-unavailable' },
+    { mode: 'normal' },
+  ]);
+  await call('setting', 'autoEnhance', false);
+  assert.equal((await call('state')).settings.echoCancellation, 'auto');
+  const meeting = await call('create', { title: 'AEC fixture' });
+  for (const [mode, systemAudio, enabled] of [
+    ['auto', true, true],
+    ['on', true, true],
+    ['auto', true, false],
+    ['auto', false, false],
+  ]) {
+    await call('setting', 'echoCancellation', mode);
+    await call('setting', 'systemAudio', systemAudio);
+    await call('record', meeting.id);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal((await call('state')).recording.echoCancellation, enabled);
+    await call('stop');
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const saved = (await call('state')).meetings.find((m) => m.id === meeting.id);
+  await call('transcribe-recording', meeting.id, saved.recordings[0].id);
+  assert.equal(
+    events()
+      .filter((e) => e.op === 'transcribe')
+      .at(-1).echoCancellation,
+    'auto',
+  );
 });

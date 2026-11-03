@@ -1687,6 +1687,7 @@ if (!app.requestSingleInstanceLock()) {
             child.stdin.write(
               JSON.stringify({
                 op: 'transcribe',
+                echoCancellation: store.settings().echoCancellation ?? 'auto',
                 recordingId,
                 context: hints(meeting),
                 locale: plan.locales[0],

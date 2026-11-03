@@ -73,9 +73,11 @@ test('every message the native helper can show is translated', () => {
     'captureSelfTest',
     'recognitionLifecycleSelfTest',
     'audioSelfTest',
+    'aecSelfTest',
     'streamedRecognition',
-  ].map((name) => {
-    const start = swift.indexOf(`func ${name}(`);
+  ].map((name) => swift.indexOf(`func ${name}(`));
+  internal.push(swift.indexOf('if let index = CommandLine.arguments.firstIndex(of: "--aec-file")'));
+  const internalRanges = internal.map((start) => {
     let end = swift.indexOf('{', start);
     for (let depth = 0; end < swift.length; end++) {
       if (swift[end] === '{') depth++;
@@ -87,7 +89,7 @@ test('every message the native helper can show is translated', () => {
   for (const match of swift.matchAll(
     /(?:problem|warning)\(\s*"((?:[^"\\]|\\.)*)"|"message":\s*"((?:[^"\\]|\\.)*)"/g,
   )) {
-    if (internal.some(([from, to]) => match.index > from && match.index < to)) continue;
+    if (internalRanges.some(([from, to]) => match.index > from && match.index < to)) continue;
     // Interpolated parts arrive filled in: a speaker, a source, a status code, a language, an error.
     shown.add(
       (match[1] ?? match[2]).replace(/\\\((.*?)\)/g, (_, part) =>

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { cleanError, languageName, languageOptions } from '../format.mjs';
+import { cleanError, echoCancellationValue, languageName, languageOptions } from '../format.mjs';
 import { defaultAutoLocales, defaultLocale } from '../language-arbiter.mjs';
 import { useT } from '../i18n/react.jsx';
 
@@ -116,17 +116,17 @@ export function RecordingSettings({ settings, setting, guard, call, subscribe })
               <label htmlFor="echoCancellation">{t('Echo cancellation')}</label>
               <small>
                 {t(
-                  'Experimental. Use headphones for the cleanest transcript; Stillnote falls back to normal capture if your Mac can’t start it.',
+                  'Removes meeting sound from your speakers before transcription; saved recordings stay unchanged. Headphones still give the cleanest sound.',
                 )}
               </small>
             </div>
             <select
               id="echoCancellation"
-              value={settings.echoCancellation === 'on' ? 'on' : 'off'}
+              value={echoCancellationValue(settings.echoCancellation)}
               onChange={(e) => guard(() => setting('echoCancellation', e.target.value))}
             >
               <option value="off">{t('Off')}</option>
-              <option value="on">{t('On (experimental)')}</option>
+              <option value="auto">{t('On')}</option>
             </select>
           </div>
         </>

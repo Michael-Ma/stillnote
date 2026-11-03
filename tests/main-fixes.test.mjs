@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { Store, chatContext, chatHistory, checkImportSize, validateLocale } from '../app/store.mjs';
 import { contextHints, meetingEvents, helperRequests } from '../app/recordings.mjs';
 import { modelCache } from '../app/providers/index.mjs';
+import { echoCancellationValue } from '../app/format.mjs';
 import { consumeResponse } from '../app/stream.mjs';
 
 function fixture(t) {
@@ -534,4 +535,10 @@ test('notes take budget priority over transcript-only meetings, even when ranked
     ['second'],
   );
   assert.ok(result.source.length <= 450);
+});
+
+test('echo cancellation shows On by default and for legacy on; selecting On saves auto', () => {
+  for (const value of [undefined, null, 'auto', 'on', 'unknown'])
+    assert.equal(echoCancellationValue(value), 'auto');
+  assert.equal(echoCancellationValue('off'), 'off');
 });

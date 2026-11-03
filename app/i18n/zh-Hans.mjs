@@ -1,6 +1,17 @@
 // 简体中文. Keys are the English strings used in the code; see app/i18n/index.mjs.
 // Missing entries fall back to English; tests/i18n.test.mjs lists any that are missing.
 export default {
+  'Echo cancellation could not be initialized. Recording continues without it.':
+    '无法初始化回声消除。录音将继续，不使用回声消除。',
+  'Cannot initialize echo cancellation.': '无法初始化回声消除。',
+  'Invalid AEC timeline offset.': '回声消除的时间偏移无效。',
+  'AEC requires 16 kHz mono WAV files.': '回声消除需要 16 kHz 单声道 WAV 文件。',
+  'AEC output must differ from the original recordings.': '回声消除输出不能覆盖原始录音。',
+  'AEC output timeline is discontinuous.': '回声消除输出的时间线不连续。',
+  'Cannot read AEC reference audio.': '无法读取回声消除的参考音频。',
+  'Cannot read AEC microphone audio.': '无法读取回声消除的麦克风音频。',
+  'AEC lost microphone samples.': '回声消除丢失了麦克风采样。',
+  'AEC processing failed.': '回声消除处理失败。',
   'A notebook backup (.json) from Settings → Notebook. Notes already here are kept.':
     '在“设置 → 笔记本”中生成的备份（.json）。已有的笔记会保留。',
   'Add an account in macOS': '在 macOS 中添加账号',
@@ -304,8 +315,6 @@ export default {
   'Each sentence is transcribed in whichever language fits. Uses more processing while recording.':
     '每句话都用合适的语言转写。录音时会占用更多处理资源。',
   'Echo cancellation': '回声消除',
-  'Echo cancellation could not start: {error}. Continuing without it.':
-    '无法启动回声消除：{error}。将在不消除回声的情况下继续。',
   Edit: '编辑',
   'Edit enhanced notes': '编辑增强笔记',
   'Edit transcript': '编辑转写',
@@ -316,8 +325,8 @@ export default {
   'Enhanced notes updated. The previous version is saved.': '增强笔记已更新，之前的版本已保存。',
   'Enhancing your recorded note.': '正在增强你录下的笔记。',
   'Enter a question under 20,000 characters.': '请输入不超过 20,000 个字符的问题。',
-  'Experimental. Use headphones for the cleanest transcript; Stillnote falls back to normal capture if your Mac can’t start it.':
-    '实验功能。戴耳机转写效果最好；如果 Mac 无法启动它，Stillnote 会改用普通录音。',
+  'Removes meeting sound from your speakers before transcription; saved recordings stay unchanged. Headphones still give the cleanest sound.':
+    '识别前去掉扬声器放出的会议声音；保存的录音保持原样。戴耳机仍然最干净。',
   'Export Markdown': '导出 Markdown',
   'Exported to {path}': '已导出到 {path}',
   'File exceeds the 30 MB import limit.': '文件超过 30 MB 的导入上限。',
@@ -533,7 +542,7 @@ export default {
   'Notify me a minute before calendar meetings while Stillnote is open.':
     'Stillnote 打开时，在日历会议开始前一分钟提醒我。',
   Off: '关闭',
-  'On (experimental)': '开启（实验）',
+  On: '开启',
   'On this Mac': '在这台 Mac 上',
   'On-device recognition is unavailable for {language}. Audio is still saved.':
     '{language}不支持本机识别。音频仍会保存。',

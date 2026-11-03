@@ -6,6 +6,16 @@ import { languageName } from './format.mjs';
 
 const msg = (text) => text;
 const fixed = new Set([
+  msg('Echo cancellation could not be initialized. Recording continues without it.'),
+  msg('Cannot initialize echo cancellation.'),
+  msg('Invalid AEC timeline offset.'),
+  msg('AEC requires 16 kHz mono WAV files.'),
+  msg('AEC output must differ from the original recordings.'),
+  msg('AEC output timeline is discontinuous.'),
+  msg('Cannot read AEC reference audio.'),
+  msg('Cannot read AEC microphone audio.'),
+  msg('AEC lost microphone samples.'),
+  msg('AEC processing failed.'),
   msg('No language could transcribe this audio. The existing transcript was preserved.'),
   msg('Allow Calendar access in System Settings → Privacy & Security.'),
   msg('Invalid calendar event.'),
@@ -133,11 +143,6 @@ const shaped = [
       t('Microphone input restarted on {device}. The capture gap is padded with silence.', {
         device: m[1],
       }),
-  ],
-  [
-    /^Echo cancellation could not (?:be enabled|start): (.*)\. Continuing without it\.$/s,
-    (m, t) =>
-      t('Echo cancellation could not start: {error}. Continuing without it.', { error: m[1] }),
   ],
   [
     /^(.*) Using the default input device\.$/s,

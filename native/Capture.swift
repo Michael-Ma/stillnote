@@ -1004,8 +1004,234 @@ final class LegacySpeechChannel: SpeechChannel {
   }
 }
 
+// Live capture, saved-file retries and the DSP tests share this timeline wrapper.
+@MainActor
+final class EchoCanceller {
+  let handle: OpaquePointer
+  let format = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!
+  var output: ((AVAudioPCMBuffer, Int64) -> Void)?
+  init(linear: Bool = false) throws {
+    guard let handle = stillnote_aec_create(linear ? 1 : 0) else {
+      throw problem("Cannot initialize echo cancellation.")
+    }
+    self.handle = handle
+  }
+  deinit { stillnote_aec_destroy(handle) }
+  func reference(_ buffer: AVAudioPCMBuffer, index: Int64) {
+    stillnote_aec_reference(handle, buffer.floatChannelData![0], Int32(buffer.frameLength), index)
+    pull()
+  }
+  func capture(_ buffer: AVAudioPCMBuffer, index: Int64) {
+    stillnote_aec_capture(handle, buffer.floatChannelData![0], Int32(buffer.frameLength), index)
+    pull()
+  }
+  func pull() {
+    while true {
+      let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1600)!
+      var index: Int64 = 0
+      let count = stillnote_aec_pull(handle, buffer.floatChannelData![0], 1600, &index)
+      guard count > 0 else { break }
+      buffer.frameLength = AVAudioFrameCount(count)
+      output?(buffer, index)
+    }
+  }
+  func flush() {
+    stillnote_aec_flush(handle)
+    pull()
+  }
+  func reset() {
+    stillnote_aec_reset(handle)
+    pull()
+  }
+  func stats() -> [String: Any] {
+    var stats = StillnoteAECStats()
+    stillnote_aec_stats(handle, &stats)
+    return [
+      "processedSamples": stats.processed_samples,
+      "missingReferenceSamples": stats.missing_reference_samples,
+      "delayMs": stats.delay_ms, "erleDb": stats.erle_db, "resets": stats.resets,
+      "cpuSeconds": stats.cpu_seconds, "errors": stats.errors,
+    ]
+  }
+}
+
+@MainActor
+func pairEchoTracks(_ microphone: AudioTrack, _ system: AudioTrack, mode: String) throws -> Bool {
+  guard mode != "off" else { return false }
+  let echo = try EchoCanceller()
+  microphone.echo = echo
+  microphone.echoRole = .capture
+  system.echo = echo
+  system.echoRole = .reference
+  echo.output = { [weak microphone] buffer, index in
+    microphone?.recognize(buffer, offset: Double(index) / 16000)
+  }
+  return true
+}
+
+struct AECEnergy {
+  var microphone = 0.0
+  var output = 0.0
+  var reference = 0.0
+  var count = 0
+}
+func aecDB(_ power: Double) -> Double { 10 * log10(max(1e-12, power)) }
+
+// Only the helper's canonical saved WAV format is accepted; no lossy conversion on retry.
+@MainActor
+func offlineAEC(
+  microphone: URL, reference: URL, microphoneOffset: Double = 0, referenceOffset: Double = 0,
+  output: URL? = nil, linear: Bool = false, resetOnSilence: Bool = true,
+  cancellable: Bool = false
+) async throws -> [String: Any] {
+  if cancellable && transcriptionCancelled { throw CancellationError() }
+  guard microphoneOffset.isFinite, referenceOffset.isFinite,
+    abs(microphoneOffset) < 1e9, abs(referenceOffset) < 1e9
+  else { throw problem("Invalid AEC timeline offset.") }
+  let mic = try AVAudioFile(
+    forReading: microphone, commonFormat: .pcmFormatFloat32, interleaved: false)
+  let ref = try AVAudioFile(
+    forReading: reference, commonFormat: .pcmFormatFloat32, interleaved: false)
+  for file in [mic, ref] {
+    guard file.processingFormat.sampleRate == 16000, file.processingFormat.channelCount == 1 else {
+      throw problem("AEC requires 16 kHz mono WAV files.")
+    }
+  }
+  if let output {
+    let destination = output.resolvingSymlinksInPath().standardizedFileURL
+    let attributes = try? FileManager.default.attributesOfItem(atPath: destination.path)
+    for source in [microphone, reference] {
+      let original = source.resolvingSymlinksInPath().standardizedFileURL
+      let inputAttributes = try FileManager.default.attributesOfItem(atPath: original.path)
+      let sameInode =
+        attributes?[.systemFileNumber] as? NSNumber == inputAttributes[.systemFileNumber]
+        as? NSNumber
+        && attributes?[.systemNumber] as? NSNumber == inputAttributes[.systemNumber] as? NSNumber
+      if destination == original || (attributes != nil && sameInode) {
+        throw problem("AEC output must differ from the original recordings.")
+      }
+    }
+  }
+  let writer = try output.map { try WAVWriter(url: $0) }
+  defer { try? writer?.close() }
+  let echo = try EchoCanceller(linear: linear)
+  let micStart = Int64((microphoneOffset * 16000).rounded())
+  let refStart = Int64((referenceOffset * 16000).rounded())
+  ref.framePosition = min(ref.length, max(0, micStart - refStart))
+  var bins: [Int64: AECEnergy] = [:]
+  var nextOutput = micStart
+  var outputError: Error?
+  echo.output = { buffer, index in
+    guard outputError == nil else { return }
+    guard index == nextOutput else {
+      outputError = problem("AEC output timeline is discontinuous.")
+      return
+    }
+    nextOutput += Int64(buffer.frameLength)
+    for i in 0..<Int(buffer.frameLength) {
+      let second = Int64(floor(Double(index + Int64(i)) / 16000))
+      let sample = Double(buffer.floatChannelData![0][i])
+      bins[second, default: AECEnergy()].output += sample * sample
+    }
+    do { try writer?.append(buffer) } catch { outputError = error }
+  }
+  func feed(_ samples: [Float], index: Int64) throws {
+    guard !samples.isEmpty else { return }
+    let end = index + Int64(samples.count) + 4160
+    while ref.framePosition < ref.length, refStart + ref.framePosition < end {
+      let buffer = AVAudioPCMBuffer(pcmFormat: ref.processingFormat, frameCapacity: 1600)!
+      let position = ref.framePosition
+      try ref.read(into: buffer, frameCount: AVAudioFrameCount(min(1600, ref.length - position)))
+      guard buffer.frameLength > 0 else { throw problem("Cannot read AEC reference audio.") }
+      for i in 0..<Int(buffer.frameLength) {
+        let t = refStart + position + Int64(i)
+        if t >= micStart, t < micStart + mic.length {
+          let second = Int64(floor(Double(t) / 16000))
+          let sample = Double(buffer.floatChannelData![0][i])
+          bins[second, default: AECEnergy()].reference += sample * sample
+        }
+      }
+      echo.reference(buffer, index: refStart + position)
+    }
+    let buffer = AVAudioPCMBuffer(
+      pcmFormat: mic.processingFormat, frameCapacity: AVAudioFrameCount(samples.count))!
+    buffer.frameLength = buffer.frameCapacity
+    samples.withUnsafeBufferPointer {
+      buffer.floatChannelData![0].update(from: $0.baseAddress!, count: samples.count)
+    }
+    echo.capture(buffer, index: index)
+    if let outputError { throw outputError }
+  }
+  var zeros = 0
+  var inGap = false
+  var pending: [Float] = []
+  var pendingStart = micStart
+  func drain() throws {
+    try feed(pending, index: pendingStart)
+    pendingStart += Int64(pending.count)
+    pending.removeAll(keepingCapacity: true)
+  }
+  var nextYield: Int64 = 160000
+  while mic.framePosition < mic.length {
+    if mic.framePosition >= nextYield {
+      // Keep commands responsive without changing DSP chunk boundaries or sample order.
+      await Task.yield()
+      if cancellable && transcriptionCancelled { throw CancellationError() }
+      nextYield += 160000
+    }
+    let buffer = AVAudioPCMBuffer(pcmFormat: mic.processingFormat, frameCapacity: 1600)!
+    let position = mic.framePosition
+    try mic.read(into: buffer, frameCount: AVAudioFrameCount(min(1600, mic.length - position)))
+    guard buffer.frameLength > 0 else { throw problem("Cannot read AEC microphone audio.") }
+    for i in 0..<Int(buffer.frameLength) {
+      let index = micStart + position + Int64(i)
+      let sample = buffer.floatChannelData![0][i]
+      let second = Int64(floor(Double(index) / 16000))
+      bins[second, default: AECEnergy()].microphone += Double(sample) * Double(sample)
+      bins[second, default: AECEnergy()].count += 1
+      if resetOnSilence && sample == 0 && !inGap {
+        if zeros == 0 { try drain() }
+        zeros += 1
+        if zeros == 1600 {
+          echo.reset()
+          pending = [Float](repeating: 0, count: zeros)
+          zeros = 0
+          inGap = true
+          try drain()
+        }
+        continue
+      }
+      if zeros > 0 {
+        pending += [Float](repeating: 0, count: zeros)
+        zeros = 0
+      }
+      if sample != 0 { inGap = false }
+      pending.append(sample)
+      if pending.count >= 1600 { try drain() }
+    }
+  }
+  pending += [Float](repeating: 0, count: zeros)
+  try drain()
+  echo.flush()
+  if let outputError { throw outputError }
+  guard nextOutput == micStart + mic.length else { throw problem("AEC lost microphone samples.") }
+  try writer?.close()
+  var result = echo.stats()
+  guard result["errors"] as? Int64 == 0 else { throw problem("AEC processing failed.") }
+  result["seconds"] = bins.keys.sorted().compactMap { second -> [Double]? in
+    let bin = bins[second]!
+    guard bin.count > 0 else { return nil }
+    let count = Double(bin.count)
+    return [
+      Double(second), aecDB(bin.microphone / count), aecDB(bin.output / count),
+      aecDB(bin.reference / count),
+    ]
+  }
+  return result
+}
+
 // Each source is normalized explicitly. Feeding changing/stereo hardware formats
-// directly into recognition is avoided; the exact same samples are saved and recognized.
+// directly into recognition is avoided; WAV and level measurements keep the raw signal.
 @MainActor
 final class AudioTrack {
   let source: String
@@ -1015,6 +1241,9 @@ final class AudioTrack {
   let format = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!
   var converter: AVAudioConverter?
   var inputFormat: AVAudioFormat?
+  enum EchoRole { case reference, capture }
+  var echo: EchoCanceller?
+  var echoRole: EchoRole = .capture
   var speech: SpeechChannel?
   var startOffset: TimeInterval?
   var lastLevel = Date.distantPast
@@ -1128,6 +1357,26 @@ final class AudioTrack {
       }
     }
     try writer.append(buffer)
+    if let echo {
+      let index = Int64((offset * 16000).rounded())
+      if echoRole == .reference {
+        echo.reference(buffer, index: index)
+        recognize(buffer, offset: offset)
+      } else {
+        echo.capture(buffer, index: index)
+      }
+    } else {
+      recognize(buffer, offset: offset)
+    }
+    if events && Date().timeIntervalSince(lastLevel) >= 0.5 {
+      lastLevel = Date()
+      emit([
+        "type": "audio-level", "recordingId": recordingId, "source": source, "rms": rms,
+        "peak": localPeak, "seconds": Double(writer.frames) / 16000,
+      ])
+    }
+  }
+  func recognize(_ buffer: AVAudioPCMBuffer, offset: TimeInterval) {
     speech?.append(buffer, offset: offset)
     if preRoll != nil, let copy = copyPCM(buffer) {
       preRoll?.append((copy, offset))
@@ -1136,13 +1385,6 @@ final class AudioTrack {
         preRoll?.removeFirst()
         preRollFrames -= first.buffer.frameLength
       }
-    }
-    if events && Date().timeIntervalSince(lastLevel) >= 0.5 {
-      lastLevel = Date()
-      emit([
-        "type": "audio-level", "recordingId": recordingId, "source": source, "rms": rms,
-        "peak": localPeak, "seconds": Double(writer.frames) / 16000,
-      ])
     }
   }
   func reportSilence() {
@@ -1155,6 +1397,7 @@ final class AudioTrack {
     }
   }
   func pad(to elapsed: TimeInterval) throws {
+    echo?.reset()
     if startOffset == nil { startOffset = 0 }
     var missing = max(0, Int64((elapsed - (startOffset ?? 0)) * 16000) - writer.frames)
     // Recognition hears up to two seconds of the gap, enough to end the phrase before it. A
@@ -1170,6 +1413,7 @@ final class AudioTrack {
       missing -= Int64(count)
     }
     guard missing > 0 else { return }
+    echo?.flush()
     speech?.skip(Double(missing) / 16000)
     // A second language still starting begins after the gap.
     if preRoll != nil {
@@ -1203,12 +1447,14 @@ final class AudioTrack {
     ]
   }
   func stats() -> [String: Any] {
-    [
+    var result: [String: Any] = [
       "sampleCount": writer.frames, "signalSeconds": Double(signalFrames) / 16000,
       "rms": writer.frames > 0 ? sqrt(sumSquares / Double(writer.frames)) : 0, "peak": peak,
       "recognitionErrors": speech?.errors ?? 0, "recognitionTimeouts": speech?.timeouts ?? 0,
       "inputSampleRate": inputFormat?.sampleRate ?? 0, "captureError": captureError ?? "",
     ]
+    if source == "microphone", let echo { result["aec"] = echo.stats() }
+    return result
   }
 }
 
@@ -1559,6 +1805,15 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
       }
     }
     guard generation == operation else { throw CancellationError() }
+    echoEnabled = false
+    if systemActive, let system = tracks["system"] {
+      do {
+        echoEnabled = try pairEchoTracks(mic, system, mode: echoMode)
+      } catch {
+        echoEnabled = false
+        warning("Echo cancellation could not be initialized. Recording continues without it.")
+      }
+    }
     sources["microphone"]?["device"] = (microphoneDevice ?? device).identity
     emit([
       "type": "started", "recordingId": id, "systemAudio": systemActive, "sources": sources,
@@ -1629,7 +1884,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
   func warning(_ message: String) {
     emit(["type": "warning", "recordingId": recordingId, "message": message])
   }
-  func startMicrophone(allowVoiceProcessing: Bool = true) throws -> InputDevice {
+  func startMicrophone() throws -> InputDevice {
     let devices = inputDevices()
     let requested = devices.first { $0.uid == inputUID }
     if inputUID != nil && requested == nil {
@@ -1663,28 +1918,6 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
       device = fallback
       try select(device)
     }
-    echoEnabled = false
-    // AVAudioEngine voice processing fails to start on some Macs (-10875) and its teardown can
-    // reset the input device mid-meeting, so it only runs when explicitly turned on.
-    if allowVoiceProcessing && echoMode == "on" {
-      do {
-        try input.setVoiceProcessingEnabled(true)
-        if #available(macOS 14.0, *) {
-          input.voiceProcessingOtherAudioDuckingConfiguration =
-            AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
-              enableAdvancedDucking: false, duckingLevel: .min)
-        }
-        // Voice processing can replace the I/O unit; reapply the selected device.
-        if currentDeviceID(input) != device.id { try select(device) }
-        echoEnabled = input.isVoiceProcessingEnabled
-      } catch {
-        warning(
-          "Echo cancellation could not be enabled: \(error.localizedDescription). Continuing without it."
-        )
-        removeMicrophone()
-        return try startMicrophone(allowVoiceProcessing: false)
-      }
-    }
     let format = input.outputFormat(forBus: 0)
     guard format.sampleRate > 0, format.channelCount > 0 else {
       throw problem("Microphone input format is unavailable.")
@@ -1715,19 +1948,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
     tapInstalled = true
     tapFormat = format
-    // The voice-processing I/O unit only initializes with a complete input → output path;
-    // route the input through a muted mixer so nothing is played back.
-    if echoEnabled {
-      engine.connect(input, to: engine.mainMixerNode, format: format)
-      engine.mainMixerNode.outputVolume = 0
-    }
-    do { try engine.start() } catch {
-      guard echoEnabled, allowVoiceProcessing else { throw error }
-      warning(
-        "Echo cancellation could not start: \(error.localizedDescription). Continuing without it.")
-      removeMicrophone()
-      return try startMicrophone(allowVoiceProcessing: false)
-    }
+    try engine.start()
     microphoneDevice = device
     tracks["microphone"]?.deviceName = device.name
     tracks["microphone"]?.lastBuffer = Date()
@@ -1869,6 +2090,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         emit(["type": "warning", "recordingId": id, "message": error.localizedDescription])
       }
     }
+    tracks["microphone"]?.echo?.flush()
     await withTaskGroup(of: Void.self) { group in
       for track in tracks.values {
         if let speech = track.speech { group.addTask { @MainActor in await speech.finish() } }
@@ -2083,9 +2305,32 @@ func recognizeCandidates(
 // Several locales (Auto language) transcribe every track once per locale, one pass at a time to
 // stay inside the system's limit on simultaneous analyses; the app picks per sentence.
 @MainActor
-func transcribe(_ input: [[String: Any]], id: String, locales: [String], context: [String] = [])
+func transcribe(
+  _ input: [[String: Any]], id: String, locales: [String], context: [String] = [],
+  echoCancellation: String = "auto"
+)
   async throws
 {
+  var input = input
+  var aecDirectory: URL?
+  defer { if let aecDirectory { try? FileManager.default.removeItem(at: aecDirectory) } }
+  if echoCancellation != "off",
+    let mic = input.firstIndex(where: { $0["source"] as? String == "microphone" }),
+    let ref = input.first(where: { $0["source"] as? String == "system" }),
+    let micPath = input[mic]["path"] as? String, let refPath = ref["path"] as? String
+  {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "stillnote-aec-" + UUID().uuidString)
+    try FileManager.default.createDirectory(
+      at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    aecDirectory = directory
+    let output = directory.appendingPathComponent(UUID().uuidString + ".wav")
+    _ = try await offlineAEC(
+      microphone: URL(fileURLWithPath: micPath), reference: URL(fileURLWithPath: refPath),
+      microphoneOffset: input[mic]["startOffset"] as? Double ?? 0,
+      referenceOffset: ref["startOffset"] as? Double ?? 0, output: output, cancellable: true)
+    input[mic]["path"] = output.path
+  }
   let locale = locales.first ?? "en-US"
   if #available(macOS 26.0, *), SpeechTranscriber.isAvailable {
     var segments: [[String: Any]] = []
@@ -2331,6 +2576,237 @@ func streamedRecognition(
 }
 
 @MainActor
+func aecSelfTest() throws -> [String: Any] {
+  let started = Date()
+  let rate = 16000
+  let count = 12 * rate + 73
+  var seed: UInt64 = 0x91d3_b17c
+  func noise() -> Float {
+    seed ^= seed << 13
+    seed ^= seed >> 7
+    seed ^= seed << 17
+    return Float(Int64(seed & 0xffff) - 32768) / 32768
+  }
+  var far = [Float](repeating: 0, count: count)
+  var near = far
+  var mic = far
+  var farLow: Float = 0
+  var nearLow: Float = 0
+  for i in 0..<count {
+    let time = Double(i) / Double(rate)
+    farLow = 0.65 * farLow + 0.35 * noise()
+    nearLow = 0.45 * nearLow + 0.55 * noise()
+    let envelope = Float(0.65 + 0.35 * sin(2 * .pi * 3.7 * time))
+    far[i] = 0.22 * envelope * farLow
+    if i >= 4 * rate && i < 6 * rate { near[i] = 0.28 * nearLow }
+    var room: Float = 0
+    for tap in 0..<16 {
+      let lag = 1920 + tap * 73
+      if i >= lag {
+        let gain = tap == 0 ? Float(0.7) : Float(0.1 * exp(-Double(tap) / 3))
+        room += gain * far[i - lag]
+      }
+    }
+    mic[i] = tanh(1.8 * room) / 1.8 + near[i]
+  }
+  func check(_ condition: Bool, _ message: String) throws {
+    if !condition { throw problem("AEC self-test: " + message) }
+  }
+  func run(
+    _ microphone: [Float], _ reference: [Float], referenceOffset: Int64 = 0,
+    resets: Set<Int> = [], linear: Bool = false, chunk: Int = 160,
+    start: Int64 = 0
+  ) throws -> (samples: [Float], stats: StillnoteAECStats, beforeFlush: Int) {
+    guard let aec = stillnote_aec_create(linear ? 1 : 0) else {
+      throw problem("AEC allocation failed.")
+    }
+    defer { stillnote_aec_destroy(aec) }
+    var out: [Float] = []
+    var contiguous = true
+    var scratch = [Float](repeating: 0, count: 997)
+    func pull() {
+      while true {
+        var index: Int64 = 0
+        let size = stillnote_aec_pull(aec, &scratch, Int32(scratch.count), &index)
+        if size == 0 { break }
+        if index != start + Int64(out.count) { contiguous = false }
+        out.append(contentsOf: scratch.prefix(Int(size)))
+      }
+    }
+    var refPosition = 0
+    microphone.withUnsafeBufferPointer { input in
+      reference.withUnsafeBufferPointer { render in
+        for position in stride(from: 0, to: microphone.count, by: chunk) {
+          if resets.contains(position) {
+            stillnote_aec_reset(aec)
+            pull()
+          }
+          let size = min(chunk, microphone.count - position)
+          let end = start + Int64(position + size + 4160)
+          while refPosition < reference.count && referenceOffset + Int64(refPosition) < end {
+            let size = min(317, reference.count - refPosition)
+            stillnote_aec_reference(
+              aec, render.baseAddress!.advanced(by: refPosition), Int32(size),
+              referenceOffset + Int64(refPosition))
+            refPosition += size
+            pull()
+          }
+          stillnote_aec_capture(
+            aec, input.baseAddress!.advanced(by: position), Int32(size), start + Int64(position))
+          pull()
+        }
+      }
+    }
+    let before = out.count
+    stillnote_aec_flush(aec)
+    pull()
+    var stats = StillnoteAECStats()
+    stillnote_aec_stats(aec, &stats)
+    try check(
+      contiguous && out.count == microphone.count && stats.processed_samples == microphone.count,
+      "sample conservation / timeline (\(out.count), \(microphone.count), \(stats.processed_samples))"
+    )
+    try check(stats.errors == 0, "APM errors: \(stats.errors)")
+    return (out, stats, before)
+  }
+  func energy(_ samples: [Float], _ range: Range<Int>) -> Double {
+    range.reduce(0.0) { $0 + Double(samples[$1]) * Double(samples[$1]) } / Double(range.count)
+  }
+  func correlation(_ a: [Float], _ b: [Float], _ range: Range<Int>) -> Double {
+    let dot = range.reduce(0.0) { $0 + Double(a[$1]) * Double(b[$1]) }
+    return dot / max(1e-20, Double(range.count) * sqrt(energy(a, range) * energy(b, range)))
+  }
+  let normal = try run(mic, far, resets: [8 * rate])
+  let echoRange = 2 * rate..<4 * rate
+  let doubleRange = Int(4.3 * Double(rate))..<6 * rate
+  let resetRange = Int(9.5 * Double(rate))..<10 * rate
+  let erle = aecDB(energy(mic, echoRange) / max(1e-20, energy(normal.samples, echoRange)))
+  let nearDB = aecDB(energy(normal.samples, doubleRange) / energy(near, doubleRange))
+  let nearCorrelation = correlation(normal.samples, near, doubleRange)
+  let resetERLE = aecDB(energy(mic, resetRange) / max(1e-20, energy(normal.samples, resetRange)))
+  let late = try run(mic, far, referenceOffset: 1600, chunk: 211)
+  let lateERLE = aecDB(energy(mic, echoRange) / max(1e-20, energy(late.samples, echoRange)))
+  let dry = Array(far.prefix(rate + 37))
+  let missing = try run(dry, [], chunk: 83, start: 123)
+  let dryDB = aecDB(energy(missing.samples, 0..<dry.count) / energy(dry, 0..<dry.count))
+  let linear = try run(mic, far, linear: true)
+  let linearNearDB = aecDB(energy(linear.samples, doubleRange) / energy(near, doubleRange))
+  let linearCorrelation = correlation(linear.samples, near, doubleRange)
+  let chunked = try run(mic, far, chunk: 211)
+  // A reset drains its final DSP frame against silence; compare before that tail.
+  let chunkDifference = (0..<8 * rate - 160).reduce(Float(0)) {
+    max($0, abs(normal.samples[$1] - chunked.samples[$1]))
+  }
+  try check(chunkDifference < 1e-6, "chunk-dependent processing: \(chunkDifference)")
+  guard let gapAEC = stillnote_aec_create(0) else { throw problem("AEC allocation failed.") }
+  defer { stillnote_aec_destroy(gapAEC) }
+  var gapInput = [Float](repeating: 0.1, count: 333)
+  var gapOutput = [Float](repeating: 0, count: 997)
+  var gapIndex: Int64 = 0
+  // A future reference establishes a silent gap; a late, already consumed part is ignored.
+  stillnote_aec_reference(gapAEC, &gapInput, 73, 5000)
+  stillnote_aec_capture(gapAEC, &gapInput, 333, 123)
+  stillnote_aec_flush(gapAEC)
+  var gapCount = 0
+  while true {
+    let size = stillnote_aec_pull(gapAEC, &gapOutput, 997, &gapIndex)
+    if size == 0 { break }
+    try check(gapIndex == 123 + Int64(gapCount), "reference gap timeline")
+    gapCount += Int(size)
+  }
+  stillnote_aec_reference(gapAEC, &gapInput, 73, 123)
+  stillnote_aec_capture(gapAEC, &gapInput, 81, 1000)
+  stillnote_aec_flush(gapAEC)
+  var jumpCount = 0
+  while true {
+    let size = stillnote_aec_pull(gapAEC, &gapOutput, 997, &gapIndex)
+    if size == 0 { break }
+    try check(gapIndex == 1000 + Int64(jumpCount), "microphone discontinuity timeline")
+    jumpCount += Int(size)
+  }
+  var gapStats = StillnoteAECStats()
+  stillnote_aec_stats(gapAEC, &gapStats)
+  try check(
+    gapCount == 333 && jumpCount == 81
+      && gapStats.processed_samples == 414 && gapStats.missing_reference_samples > 0
+      && gapStats.resets == 1 && gapStats.errors == 0, "gap / discontinuity / partial-frame flush")
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "stillnote-aec-self-test-" + UUID().uuidString)
+  try FileManager.default.createDirectory(
+    at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let micTrack = try AudioTrack(
+    source: "microphone", recordingId: "aec-test", directory: directory, start: started)
+  let refTrack = try AudioTrack(
+    source: "system", recordingId: "aec-test", directory: directory, start: started)
+  for track in [micTrack, refTrack] {
+    track.events = false
+    track.startOffset = 0
+  }
+  try check(try !pairEchoTracks(micTrack, refTrack, mode: "off"), "off pairing")
+  try check(try pairEchoTracks(micTrack, refTrack, mode: "on"), "on/auto pairing")
+  let observed = ObservedSpeech()
+  micTrack.speech = observed
+  micTrack.preRoll = []
+  for position in stride(from: 0, to: 4 * rate, by: 1379) {
+    let size = min(1379, 4 * rate - position)
+    for (track, samples) in [(refTrack, far), (micTrack, mic)] {
+      let buffer = AVAudioPCMBuffer(
+        pcmFormat: track.format, frameCapacity: AVAudioFrameCount(size))!
+      buffer.frameLength = buffer.frameCapacity
+      for i in 0..<size { buffer.floatChannelData![0][i] = samples[position + i] }
+      try track.save(buffer)
+    }
+  }
+  try check(Int(micTrack.preRollFrames) == Int(observed.heard), "processed pre-roll")
+  var nextOffset = 0.0
+  for item in micTrack.preRoll ?? [] {
+    try check(abs(item.offset - nextOffset) < 1e-9, "recognition timeline")
+    nextOffset += Double(item.buffer.frameLength) / 16000
+  }
+  try micTrack.pad(to: 8.5)
+  try refTrack.closeAudio()
+  try micTrack.closeAudio()
+  micTrack.echo?.flush()
+  try check(
+    Int64(observed.heard) + Int64((observed.skipped * 16000).rounded()) == micTrack.writer.frames,
+    "pad must drain before recognition skips the long gap")
+  let saved = try AVAudioFile(
+    forReading: micTrack.writer.url, commonFormat: .pcmFormatFloat32, interleaved: false)
+  let raw = AVAudioPCMBuffer(
+    pcmFormat: saved.processingFormat, frameCapacity: AVAudioFrameCount(4 * rate))!
+  try saved.read(into: raw)
+  let rawDifference = (0..<4 * rate).reduce(Float(0)) {
+    max($0, abs(raw.floatChannelData![0][$1] - mic[$1]))
+  }
+  try check(rawDifference < 0.0001, "WAV must preserve raw microphone samples")
+  let numbers: [String: Any] = [
+    "echoERLEDb": erle, "nearEnergyDb": nearDB, "nearCorrelation": nearCorrelation,
+    "lateReferenceERLEDb": lateERLE, "resetERLEDb": resetERLE, "noReferenceEnergyDb": dryDB,
+    "linearNearEnergyDb": linearNearDB, "linearNearCorrelation": linearCorrelation,
+    "timeoutOutputSamples": missing.beforeFlush, "samples": normal.samples.count,
+    "chunkDifference": chunkDifference, "rawWAVDifference": rawDifference,
+    "padRecognizedSamples": observed.heard, "padSkippedSeconds": observed.skipped,
+    "resets": normal.stats.resets,
+    "cpuSeconds": normal.stats.cpu_seconds + late.stats.cpu_seconds + linear.stats.cpu_seconds,
+    "wallSeconds": Date().timeIntervalSince(started),
+  ]
+  try check(erle >= 20, "echo ERLE \(erle) < 20 dB; metrics: \(numbers)")
+  try check(
+    abs(nearDB) <= 3 && nearCorrelation >= 0.9,
+    "double talk \(nearDB) dB, correlation \(nearCorrelation); metrics: \(numbers)")
+  try check(abs(dryDB) <= 0.5, "no-reference gain \(dryDB) dB")
+  try check(lateERLE >= 20, "late-reference ERLE \(lateERLE) < 20 dB")
+  try check(
+    missing.beforeFlush > 0 && missing.stats.missing_reference_samples > 0,
+    "reference timeout stalled")
+  try check(resetERLE >= 20 && normal.stats.resets == 1, "reset convergence \(resetERLE) dB")
+  try check(
+    abs(linearNearDB) <= 3 && linearCorrelation >= 0.9, "linear output alignment / double talk")
+  return numbers
+}
+
+@MainActor
 func captureSelfTest() throws {
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
     "stillnote-capture-test-" + UUID().uuidString)
@@ -2426,8 +2902,9 @@ func captureSelfTest() throws {
   // capture, and reads the current state without opening an input.
   let own = getpid()
   let zoom = { (_: Int32) in "us.zoom.xos" }
-  guard inputApps([(pid: own, input: true), (pid: own + 1, input: false)], own: own, app: zoom)
-    .isEmpty,
+  guard
+    inputApps([(pid: own, input: true), (pid: own + 1, input: false)], own: own, app: zoom)
+      .isEmpty,
     inputApps(
       [(pid: own, input: true), (pid: own + 1, input: true), (pid: own + 2, input: true)],
       own: own, app: zoom) == ["us.zoom.xos"],
@@ -2778,7 +3255,8 @@ func command(_ data: Data) {
             tracks, id: id,
             locales: (obj["locales"] as? [String]).flatMap { $0.isEmpty ? nil : $0 }
               ?? [obj["locale"] as? String ?? "en-US"],
-            context: contextHints(obj["context"]))
+            context: contextHints(obj["context"]),
+            echoCancellation: obj["echoCancellation"] as? String ?? "auto")
         } catch {
           emit([
             "type": "retranscription-error", "recordingId": id,
@@ -2854,12 +3332,54 @@ if CommandLine.arguments.contains("--scheduler-self-test") {
   RunLoop.main.run()
   exit(0)
 }
+if let index = CommandLine.arguments.firstIndex(of: "--aec-file") {
+  func aecArgument(_ key: String) -> String? {
+    guard let i = CommandLine.arguments.firstIndex(of: key), i + 1 < CommandLine.arguments.count
+    else { return nil }
+    return CommandLine.arguments[i + 1]
+  }
+  Task { @MainActor in
+    do {
+      guard index + 1 < CommandLine.arguments.count, let reference = aecArgument("--reference") else {
+        throw problem(
+          "Usage: --aec-file mic.wav --reference system.wav [--mic-offset s] [--reference-offset s] [--out file.wav] [--linear] [--no-reset]"
+        )
+      }
+      func offset(_ key: String) throws -> Double {
+        guard let text = aecArgument(key) else { return 0 }
+        guard let value = Double(text), value.isFinite else { throw problem("Invalid AEC offset.") }
+        return value
+      }
+      let result = try await offlineAEC(
+        microphone: URL(fileURLWithPath: CommandLine.arguments[index + 1]),
+        reference: URL(fileURLWithPath: reference),
+        microphoneOffset: try offset("--mic-offset"),
+        referenceOffset: try offset("--reference-offset"),
+        output: aecArgument("--out").map { URL(fileURLWithPath: $0) },
+        linear: CommandLine.arguments.contains("--linear"),
+        resetOnSilence: !CommandLine.arguments.contains("--no-reset"))
+      emit(result)
+      exit(0)
+    } catch {
+      emit(["type": "aec-error", "message": error.localizedDescription])
+      exit(1)
+    }
+  }
+  RunLoop.main.run()
+  exit(1)
+}
 if CommandLine.arguments.contains("--self-test") {
-  emit([
-    "type": "ready", "platform": "macOS",
-    "speechLocales": SFSpeechRecognizer.supportedLocales().count, "engine": recognitionEngine,
-  ])
-  exit(0)
+  do {
+    let metrics = try MainActor.assumeIsolated { try aecSelfTest() }
+    emit([
+      "type": "ready", "platform": "macOS", "aec": metrics,
+      "speechLocales": SFSpeechRecognizer.supportedLocales().count, "engine": recognitionEngine,
+    ])
+    exit(0)
+  } catch {
+    emit(["type": "aec-self-test", "status": "failed", "message": error.localizedDescription])
+    exit(1)
+  }
 }
 if let index = CommandLine.arguments.firstIndex(of: "--audio-self-test"),
   CommandLine.arguments.count > index + 2

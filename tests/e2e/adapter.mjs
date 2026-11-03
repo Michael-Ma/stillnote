@@ -362,7 +362,7 @@ export function createTestAdapter({ dataDir }) {
           recordingId: command.recordingId,
           systemAudio: active.systemAudio,
           engine: 'speechTranscriber',
-          echoCancellation: command.echoCancellation !== 'off',
+          echoCancellation: !!active.systemAudio && command.echoCancellation !== 'off',
           sources: {
             microphone: {
               status: 'recording',

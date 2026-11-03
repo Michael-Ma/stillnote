@@ -1,6 +1,8 @@
 import { translator } from './i18n/index.mjs';
 
 const english = translator('en');
+// Legacy `on` and an unset preference both use AEC when meeting audio is available.
+export const echoCancellationValue = (value) => (value === 'off' ? 'off' : 'auto');
 // Messages shown through a variable t(message); listed so the i18n coverage test sees them.
 const msg = (text) => text;
 // Built-in names stored as English data and translated only where shown: template names and the
