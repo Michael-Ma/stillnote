@@ -60,6 +60,26 @@
       {
         "from": "assets/zh_CN.lproj/InfoPlist.strings",
         "to": "zh_CN.lproj/InfoPlist.strings"
+      },
+      {
+        "from": "native/vendor/webrtc-audio-processing",
+        "to": "licenses/webrtc-audio-processing",
+        "filter": [
+          "**/LICENSE",
+          "**/COPYING",
+          "**/PATENTS",
+          "**/AUTHORS"
+        ]
+      },
+      {
+        "from": "native/vendor/abseil-cpp",
+        "to": "licenses/abseil-cpp",
+        "filter": [
+          "**/LICENSE",
+          "**/COPYING",
+          "**/PATENTS",
+          "**/AUTHORS"
+        ]
       }
     ],
     "mac": {

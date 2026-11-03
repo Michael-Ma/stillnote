@@ -71,3 +71,16 @@ holders; an inquiry or lack of reply does not grant rights.
 The project license does not itself give the maintainer ownership of outside
 contributions or authority to relicense them commercially. A commercial agreement
 must cover all applicable rights, including any necessary contributor permissions.
+
+## Third-party native audio processing
+
+The macOS recording helper statically links **webrtc-audio-processing 2.1**
+(WebRTC APM / AEC3), under **BSD-3-Clause** with the additional WebRTC **PATENTS**
+grant, and **abseil-cpp 20240722.0**, under **Apache-2.0**. These components retain
+their upstream licenses independently of Stillnote's license. The included FFT,
+Ooura, SPL square root and RNNoise notices also apply to their respective files.
+
+Original notices are preserved under [native/vendor](../native/vendor/README.md).
+The packaged app includes every vendored `LICENSE`, `COPYING`, `PATENTS` and
+`AUTHORS` file under `Stillnote.app/Contents/Resources/licenses/`, retaining each
+package's relative paths.
