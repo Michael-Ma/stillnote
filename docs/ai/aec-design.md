@@ -82,7 +82,9 @@ AEC3 的延迟搜索范围要覆盖 D 加外放延迟（蓝牙音箱可达 300 m
 
 ### 只用线性输出
 
-`linear_only = 1` 时打开 `export_linear_aec_output`，输出改用 `GetLinearAecOutput`，不经过非线性抑制。这个开关是给评估比较双方同时说话时的人声损失用的。默认值由实测决定。
+`linear_only = 1` 时打开 `export_linear_aec_output`，输出改用 `GetLinearAecOutput`，不经过非线性抑制。这个开关是给评估比较双方同时说话时的人声损失用的。
+
+**实测后默认用完整输出。** 真实扬声器下，线性输出的残余仍被识别出 75–93 个英文词（共 101 个），完整输出是 0。线性只能用在评估里：`transcribe` 的 `echoCancellation: "linear"`、`--aec-file --linear`、`echo-eval.mjs --aec linear`。数字见 `docs/ai/echo-accuracy.md`。
 
 ### 统计
 
