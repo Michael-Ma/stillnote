@@ -1058,7 +1058,7 @@ final class EchoCanceller {
 @MainActor
 func pairEchoTracks(_ microphone: AudioTrack, _ system: AudioTrack, mode: String) throws -> Bool {
   guard mode != "off" else { return false }
-  let echo = try EchoCanceller()
+  let echo = try EchoCanceller(linear: mode == "linear")
   microphone.echo = echo
   microphone.echoRole = .capture
   system.echo = echo
@@ -2328,7 +2328,8 @@ func transcribe(
     _ = try await offlineAEC(
       microphone: URL(fileURLWithPath: micPath), reference: URL(fileURLWithPath: refPath),
       microphoneOffset: input[mic]["startOffset"] as? Double ?? 0,
-      referenceOffset: ref["startOffset"] as? Double ?? 0, output: output, cancellable: true)
+      referenceOffset: ref["startOffset"] as? Double ?? 0, output: output,
+      linear: echoCancellation == "linear", cancellable: true)
     input[mic]["path"] = output.path
   }
   let locale = locales.first ?? "en-US"

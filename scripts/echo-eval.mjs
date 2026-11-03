@@ -12,7 +12,7 @@
 // (app/echo-audio.mjs), and the numbers for that come under `withAudio`.
 //
 // Options: --notebook <path>, --only M2,M9b, --baseline <another echo.mjs to compare with>,
-// --out <file> for the numbers as JSON lines; --aec on|off (default on) controls audio retries.
+// --out <file> for the numbers as JSON lines; --aec on|off|linear (default on) controls audio retries.
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync } from 'node:fs';
@@ -37,9 +37,10 @@ const option = (name, fallback) => {
 const flag = (name) => args.includes(name);
 const helper = join(root, 'native/bin/StillnoteCapture');
 
+// `linear` keeps only AEC3's linear filter, to compare with the full output on the same audio.
 export function aecMode(value = 'on') {
-  if (!['on', 'off'].includes(value)) throw new Error('--aec must be on or off');
-  return value === 'off' ? 'off' : 'auto';
+  if (!['on', 'off', 'linear'].includes(value)) throw new Error('--aec must be on, off or linear');
+  return { on: 'auto', off: 'off', linear: 'linear' }[value];
 }
 
 const ffmpeg = '/opt/homebrew/bin/ffmpeg';
@@ -559,7 +560,7 @@ export async function main(argv = process.argv.slice(2)) {
   args = argv;
   if (flag('--help')) {
     console.log(
-      'Usage: node scripts/echo-eval.mjs [--audio] [--levels] [--aec on|off] [--notebook path] [--only M2,M9b] [--baseline path] [--out path]',
+      'Usage: node scripts/echo-eval.mjs [--audio] [--levels] [--aec on|off|linear] [--notebook path] [--only M2,M9b] [--baseline path] [--out path]',
     );
     return;
   }
