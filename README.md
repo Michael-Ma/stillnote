@@ -14,15 +14,15 @@ Stillnote keeps the core loop small: **open a note → capture a conversation �
 
 ## Use on your Mac
 
-**1. Install the prerequisites once.** macOS 26 or later is recommended. Install [Node.js 24 or later](https://nodejs.org/en/download), then open **Terminal** and run:
+Download the **Apple Silicon DMG** from [GitHub Releases](https://github.com/Michael-Ma/stillnote/releases/latest), open it, and drag **Stillnote** to **Applications**. No Node.js, Xcode or source checkout is needed. macOS 13+; macOS 26+ is recommended for modern on-device transcription. Intel installers are not currently provided.
 
-```sh
-xcode-select --install
-```
+This community build is **not Apple-notarized**. macOS may block the first launch; see [installation, updates and first-open help](docs/INSTALL.md). For agents, the same guide provides a ZIP, checksum verification and an installation prompt.
 
-Finish Apple's tools installer before continuing. Already have the tools? Make sure they're up to date; the setup script will tell you if anything is missing.
+Open Stillnote from Applications. In **Settings**, connect ChatGPT or Claude for AI features, then choose **New note → Record** and allow the requested permissions. You can record and take notes without connecting AI. Claude additionally requires Claude Code; the ChatGPT path needs no CLI.
 
-**2. Install Stillnote.** Paste these commands into Terminal:
+Updating replaces the app, while notes and recordings remain in `~/Library/Application Support/Stillnote/`. Quit Stillnote first. For a backup, copy that entire folder, including recordings.
+
+Prefer building locally? Install [Node.js 24+](https://nodejs.org/en/download) and Apple's Command Line Tools (`xcode-select --install`), then run:
 
 ```sh
 git clone https://github.com/Michael-Ma/stillnote.git
@@ -30,26 +30,7 @@ cd stillnote
 bash scripts/setup-mac.sh
 ```
 
-The script installs dependencies, builds and checks the app, then puts **Stillnote** in **Applications**. Your existing notes stay in place. You don't need an Apple developer account.
-
-**3. Open Stillnote from Applications.** In **Settings**, connect ChatGPT or Claude for AI features. Choose **New note → Record**, allow microphone and system-audio access when asked, then stop recording and choose **Enhance notes**. You can record and take notes without connecting AI; no API key is needed.
-
-**To update later:** in the same `stillnote` folder, run:
-
-```sh
-git pull --ff-only
-bash scripts/setup-mac.sh
-```
-
-**Want to test setup without replacing your app or touching your notes?** Run:
-
-```sh
-bash scripts/setup-mac.sh --test
-```
-
-This builds the app, installs and upgrades a temporary copy, and checks that sample notes, transcripts and recordings survive. It uses a disposable notebook and leaves your installed app and real data alone. A normal installation replaces only the app; your notebook lives separately in `~/Library/Application Support/Stillnote/`.
-
-For an extra backup before a normal update, quit Stillnote and copy that entire data folder somewhere safe. Copy the whole folder to include recordings; a JSON export does not include audio.
+The source setup builds and checks the app before installing it. `bash scripts/setup-mac.sh --test` tests installation and upgrade in a disposable notebook without replacing your installed app.
 
 ## Core capabilities
 
@@ -191,6 +172,7 @@ npm run format:check     # source formatting
 npm run build            # Swift helper, Electron main/preload, and renderer
 npm run setup:mac        # build, test and install in Applications
 npm run package          # standalone macOS app
+npm run package:release  # tested Apple Silicon DMG + ZIP + SHA256SUMS
 npm run screenshots      # README still screenshots from fictional fixtures
 npm run demo             # build + capture + MP4/GIF/poster; requires ffmpeg and ffprobe
 npm run test:native:languages # opt-in: Auto language on synthetic Chinese/English speech (`-- --live` streams it)

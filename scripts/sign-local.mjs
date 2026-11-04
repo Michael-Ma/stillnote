@@ -24,8 +24,10 @@ if (import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const valid = execFileSync('security', ['find-identity', '-v', '-p', 'codesigning'], {
     encoding: 'utf8',
   });
-  const { sign, label } = pickIdentity(valid, hasIdentity());
-  if (sign === '-')
+  const { sign, label } = process.argv.includes('--ad-hoc')
+    ? { sign: '-', label: 'an ad-hoc distribution signature (not notarized)' }
+    : pickIdentity(valid, hasIdentity());
+  if (sign === '-' && !process.argv.includes('--ad-hoc'))
     console.warn(
       'Signing ad hoc. Run `npm run signing:setup` once so rebuilt apps stop asking for keychain access.',
     );

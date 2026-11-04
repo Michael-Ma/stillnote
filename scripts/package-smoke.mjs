@@ -5,7 +5,8 @@ import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 // Spotlight skips `.noindex` folders, so the build never shows up beside the installed app.
 const bundle = resolve(
-  `release.noindex/${process.arch === 'arm64' ? 'mac-arm64' : 'mac'}/Stillnote.app`,
+  process.env.STILLNOTE_PACKAGED_APP ||
+    `release.noindex/${process.arch === 'arm64' ? 'mac-arm64' : 'mac'}/Stillnote.app`,
 );
 const helper = join(bundle, 'Contents/Resources/StillnoteCapture');
 const probe = JSON.parse(execFileSync(helper, ['--self-test'], { encoding: 'utf8' }).trim());
