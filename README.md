@@ -14,15 +14,33 @@ Stillnote keeps the core loop small: **open a note → capture a conversation �
 
 ## Use on your Mac
 
-Download the **Apple Silicon DMG** from [GitHub Releases](https://github.com/Michael-Ma/stillnote/releases/latest), open it, and drag **Stillnote** to **Applications**. No Node.js, Xcode or source checkout is needed. macOS 13+; macOS 26+ is recommended for modern on-device transcription. Intel installers are not currently provided.
+### Install the app (no coding required)
 
-This community build is **not Apple-notarized**. macOS may block the first launch; see [installation, updates and first-open help](docs/INSTALL.md). For agents, the same guide provides a ZIP, checksum verification and an installation prompt.
+You need an **Apple Silicon Mac (M1 or newer)** running macOS 13 or later. macOS 26+ is recommended for modern on-device transcription. Intel installers are not currently provided. **You do not need Node.js, Xcode, Git, or a copy of the source code.**
 
-Open Stillnote from Applications. In **Settings**, connect ChatGPT or Claude for AI features, then choose **New note → Record** and allow the requested permissions. You can record and take notes without connecting AI. Claude additionally requires Claude Code; the ChatGPT path needs no CLI.
+1. **Download:** open the [latest release](https://github.com/Michael-Ma/stillnote/releases/latest). Under **Assets**, download `Stillnote-<version>-mac-arm64.dmg`. Choose the **DMG**, not GitHub's **Source code (zip)** or **Source code (tar.gz)**.
+2. **Install:** double-click the downloaded DMG, then drag **Stillnote.app** onto the **Applications** shortcut in the window. Wait for the copy to finish, then eject the Stillnote disk image in Finder.
+3. **Open:** in Finder, go to **Applications** and double-click **Stillnote**. Open the installed copy, rather than the one inside the DMG.
+4. **If macOS blocks it:** this community build is **not Apple-notarized**. Dismiss the alert, open **System Settings → Privacy & Security**, find the Stillnote message, and choose **Open Anyway**, then confirm. Only do this for a release you trust. Do not disable Gatekeeper. See [first-open help](docs/INSTALL.md) for details.
+5. **Start a note:** choose **New note → Record** and allow microphone, speech recognition and system-audio access when requested. Calendar access is needed when using calendar features. In **Settings**, connect **ChatGPT** or **Claude** to enhance notes and chat. Recording and manual notes work without AI sign-in. ChatGPT needs no CLI; Claude additionally requires **Claude Code**, which Settings can help you install and sign in to. macOS may also download speech models for your selected language.
 
-Updating replaces the app, while notes and recordings remain in `~/Library/Application Support/Stillnote/`. Quit Stillnote first. For a backup, copy that entire folder, including recordings.
+### Let your agent install it
 
-Prefer building locally? Install [Node.js 24+](https://nodejs.org/en/download) and Apple's Command Line Tools (`xcode-select --install`), then run:
+Copy this into your coding agent:
+
+> Install Stillnote from https://github.com/Michael-Ma/stillnote/releases using the prebuilt Apple Silicon ZIP, without building source. First read https://github.com/Michael-Ma/stillnote/blob/main/docs/INSTALL.md and follow its agent installation instructions. Check my Mac's compatibility, verify the release checksum, quit Stillnote before replacing it, and preserve all existing notes and recordings. If macOS blocks the first launch, guide me through Open Anyway in System Settings. Do not disable Gatekeeper or strip quarantine. Report the installed version and whether launch succeeded.
+
+The [agent installation guide](docs/INSTALL.md#ask-your-agent-to-install) includes the download and SHA-256 verification commands. The release's `Stillnote-<version>-mac-arm64.zip` contains the ready-to-run app; GitHub's **Source code (zip)** does not.
+
+### Update or uninstall
+
+To update, **quit Stillnote first**, download the newer DMG, and repeat the installation steps. Choose **Replace** when Finder asks about the existing app. There is no automatic updater. Your notes, transcripts and recordings stay in `~/Library/Application Support/Stillnote/`, outside the app. To back them up, quit Stillnote and copy that entire folder; JSON exports do not include recordings. A change in signing identity can require granting permissions again.
+
+To uninstall, quit Stillnote and move **Stillnote.app** from Applications to Trash. Keep the data folder if you want to preserve your notebook.
+
+### Build from source (optional)
+
+Use this route only if you want to build or modify the app. Install [Node.js 24+](https://nodejs.org/en/download) and Apple's Command Line Tools (`xcode-select --install`; macOS SDK 26+ is required), then run:
 
 ```sh
 git clone https://github.com/Michael-Ma/stillnote.git
