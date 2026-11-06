@@ -13,6 +13,13 @@ const INSTALL = 'Install Claude Code to use your Claude plan.';
 const SIGN_IN = 'Sign in to Claude in Settings.';
 const UPDATE = 'Update Claude Code (run `claude update`) to use it with Stillnote.';
 const ENDED = 'Connection ended before Claude finished. Your previous notes are unchanged.';
+// Team and Enterprise accounts work, but an organization's admin can change Claude Code's
+// settings at any time, so Stillnote shows a warning instead of blocking.
+const organizationPlans = ['team', 'enterprise'];
+const MANAGED =
+  'This Claude account is managed by an organization. Its admin can change Claude Code settings, so Stillnote cannot fully verify where your notes are sent. A personal Pro or Max plan avoids this.';
+const PLAN =
+  'Stillnote needs a Claude Pro, Max, Team or Enterprise plan. Sign in to Claude Code with one of these plans.';
 const API_BILLING =
   'Claude Code on this Mac is signed in with an API key, not a Claude plan. Sign in with your Claude plan in Settings.';
 
@@ -148,6 +155,7 @@ export class ClaudeCode {
       email: null,
       usage: null,
       error: null,
+      warning: null,
       loginUrl: null,
     };
   }
@@ -177,6 +185,7 @@ export class ClaudeCode {
       signingIn: !!this.login,
       loginUrl: this.login ? s.loginUrl : null,
       error: s.error,
+      warning: s.loggedIn ? s.warning : null,
     };
   }
   update(patch) {
@@ -254,7 +263,13 @@ export class ClaudeCode {
     try {
       const path = checkedPath ?? (await this.locate());
       if (!path) {
-        this.update({ installed: false, path: null, loggedIn: false, authMethod: null });
+        this.update({
+          installed: false,
+          path: null,
+          loggedIn: false,
+          authMethod: null,
+          warning: null,
+        });
         return { ...this.status(), checking: false };
       }
       if (!this.state.version || this.state.path !== path) {
@@ -272,21 +287,21 @@ export class ClaudeCode {
       } catch {}
       // A status probe carries no meeting text. Require the same effective environment and
       // fresh, readable direct-plan status before every inference; the UI cache is not authority.
-      let configurationError = null;
+      let configurationError = null,
+        warning = null;
       if (auth?.loggedIn) {
         try {
-          if (
-            r.code !== 0 ||
-            auth.apiProvider !== 'firstParty' ||
-            !['pro', 'max'].includes(auth.subscriptionType)
-          )
-            throw new Error(ROUTING);
-          this.configurationCheck({
+          if (r.code !== 0 || auth.apiProvider !== 'firstParty') throw new Error(ROUTING);
+          if (!['pro', 'max', ...organizationPlans].includes(auth.subscriptionType))
+            throw new Error(PLAN);
+          const config = this.configurationCheck({
             env: effective.env,
             home: this.home,
             workDir: this.workDir,
             configDirectory: auth.configDirectory,
           });
+          if (config?.managed || organizationPlans.includes(auth.subscriptionType))
+            warning = MANAGED;
         } catch (error) {
           configurationError = error.message;
         }
@@ -298,6 +313,7 @@ export class ClaudeCode {
         authMethod: auth?.authMethod ?? 'none',
         subscriptionType: auth?.subscriptionType ?? null,
         email: auth?.email ?? null,
+        warning,
         error:
           configurationError ||
           (auth && typeof auth.loggedIn === 'boolean'
@@ -309,6 +325,7 @@ export class ClaudeCode {
       this.update({
         loggedIn: false,
         authMethod: null,
+        warning: null,
         error: e.code === 'ENOENT' ? INSTALL : e.message,
       });
       return { ...this.status(), checking: false };

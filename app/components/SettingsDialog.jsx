@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  AlertTriangle,
   ArrowUpRight,
   CalendarDays,
   Check,
@@ -30,7 +31,7 @@ const sections = [
   ['notebook', msg('Notebook'), NotebookPen],
 ];
 
-function ProviderCard({ id, name, active, ready, onUse, children, status }) {
+function ProviderCard({ id, name, active, ready, onUse, children, status, warning }) {
   const t = useT();
   return (
     <div className={'provider-card' + (active ? ' active' : '')}>
@@ -42,6 +43,12 @@ function ProviderCard({ id, name, active, ready, onUse, children, status }) {
           <strong>{name}</strong>
           <p>{status}</p>
         </div>
+        {warning && (
+          <span className="provider-warning" title={t(warning)}>
+            <AlertTriangle size={12} aria-hidden="true" />
+            {t('Managed account')}
+          </span>
+        )}
         {active ? (
           <span className="provider-badge">
             <Check size={12} />
@@ -135,6 +142,7 @@ export function SettingsDialog({
               name="Claude"
               active={ai.provider === 'claude'}
               ready={claude.ready}
+              warning={claude.warning}
               onUse={() => aiActions.use('claude')}
               status={claudeSummary(claude, t)}
             >

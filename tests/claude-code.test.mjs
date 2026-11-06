@@ -79,6 +79,24 @@ test('refresh reports a ready Claude plan from auth status', async (t) => {
   assert.ok(changes.some((s) => s.checking) && !changes.at(-1).checking);
 });
 
+test('a personal plan has no warning', async (t) => {
+  const status = await fixture(t).claude.refresh();
+  assert.equal(status.ready, true);
+  assert.equal(status.warning, null);
+});
+
+test('Team and Enterprise plans work with a managed-account warning', async (t) => {
+  for (const plan of ['team', 'enterprise']) {
+    const { claude, calls } = fixture(t, { FAKE_CLAUDE_PLAN: plan });
+    const status = await claude.refresh();
+    assert.equal(status.ready, true);
+    assert.equal(status.subscriptionType, plan);
+    assert.match(status.warning, /managed by an organization/);
+    await ask(claude).promise;
+    assert.ok(calls().some((c) => c.args[0] === '-p'));
+  }
+});
+
 test('an API-key sign-in or a signed-out CLI is not treated as a Claude plan', async (t) => {
   const api = fixture(t, { FAKE_CLAUDE_AUTH: 'api_key' }).claude;
   const status = await api.refresh();
@@ -323,6 +341,14 @@ for (const auth of ['api_key', 'logged-out', 'unreadable', 'failed']) {
   });
 }
 
+test('an unsupported plan is told which plans work and never receives prompts', async (t) => {
+  for (const plan of ['free', 'unknown']) {
+    const { claude, calls } = fixture(t, { FAKE_CLAUDE_PLAN: plan });
+    await assert.rejects(ask(claude).promise, /needs a Claude Pro, Max, Team or Enterprise plan/);
+    assert.ok(!calls().some((c) => c.args[0] === '-p'));
+  }
+});
+
 test('custom endpoints, provider flags, settings routing and managed plans never receive prompts', async (t) => {
   for (const vars of [
     { ANTHROPIC_BASE_URL: 'https://gateway.example.invalid' },
@@ -331,10 +357,9 @@ test('custom endpoints, provider flags, settings routing and managed plans never
     { CLAUDE_CODE_USE_FOUNDRY: '1' },
     { CLAUDE_CODE_USE_ANTHROPIC_AWS: '1' },
     { FAKE_CLAUDE_PROVIDER: 'bedrock' },
-    { FAKE_CLAUDE_PLAN: 'enterprise' },
   ]) {
     const { claude, calls } = fixture(t, vars);
-    await assert.rejects(ask(claude).promise, /direct Claude Pro or Max/);
+    await assert.rejects(ask(claude).promise, /cannot use this Claude configuration/);
     assert.ok(!calls().some((c) => c.args[0] === '-p'));
   }
   for (const settings of [
@@ -347,7 +372,7 @@ test('custom endpoints, provider flags, settings routing and managed plans never
     await claude.refresh();
     mkdirSync(claude.env.CLAUDE_CONFIG_DIR);
     writeFileSync(join(claude.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify(settings));
-    await assert.rejects(ask(claude).promise, /direct Claude Pro or Max/);
+    await assert.rejects(ask(claude).promise, /cannot use this Claude configuration/);
     assert.ok(!calls().some((c) => c.args[0] === '-p'));
   }
 });
@@ -387,13 +412,42 @@ test('a later UI status update cannot approve a failed inference auth probe', as
   assert.ok(!calls().some((c) => c.args[0] === '-p'));
 });
 
-test('managed configuration is rejected without overwriting organizational policy', async (t) => {
-  const { claude, calls } = fixture(t);
-  mkdirSync(claude.env.CLAUDE_CONFIG_DIR);
-  const policy = join(claude.env.CLAUDE_CONFIG_DIR, 'remote-settings.json');
-  const original = '{"permissions":{"deny":["Read(secrets)"]}}';
-  writeFileSync(policy, original);
-  await assert.rejects(ask(claude).promise, /managed Claude configurations are not supported/);
-  assert.equal(readFileSync(policy, 'utf8'), original);
-  assert.ok(!calls().some((c) => c.args[0] === '-p'));
+test('managed settings that reroute nothing work with a warning and are left unchanged', async (t) => {
+  for (const original of ['{}', '{"permissions":{"deny":["Read(secrets)"]}}']) {
+    const { claude, calls } = fixture(t);
+    mkdirSync(claude.env.CLAUDE_CONFIG_DIR);
+    const policy = join(claude.env.CLAUDE_CONFIG_DIR, 'remote-settings.json');
+    writeFileSync(policy, original);
+    const status = await claude.refresh();
+    assert.equal(status.ready, true);
+    assert.match(status.warning, /managed by an organization/);
+    await ask(claude).promise;
+    assert.ok(calls().some((c) => c.args[0] === '-p'));
+    assert.equal(readFileSync(policy, 'utf8'), original);
+  }
+});
+
+test('managed settings that reroute or copy prompts are rejected without overwriting them', async (t) => {
+  for (const original of [
+    '{"env":{"ANTHROPIC_BASE_URL":"https://gateway.example.invalid"}}',
+    '{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"}}',
+    '{"apiKeyHelper":"fixture command"}',
+    '{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"fixture"}]}]}}',
+    '{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"1"}}',
+    '{"env":{"OTEL_LOG_USER_PROMPTS":"1"}}',
+    '{"otelHeadersHelper":"fixture command"}',
+    '{"env":{"HTTPS_PROXY":"http://proxy.example.invalid:8080"}}',
+    '{"env":{"https_proxy":"http://proxy.example.invalid:8080"}}',
+    '{"env":{"NODE_EXTRA_CA_CERTS":"/tmp/fixture.pem"}}',
+    'not json',
+    '[]',
+  ]) {
+    const { claude, calls } = fixture(t);
+    mkdirSync(claude.env.CLAUDE_CONFIG_DIR);
+    const policy = join(claude.env.CLAUDE_CONFIG_DIR, 'remote-settings.json');
+    writeFileSync(policy, original);
+    await assert.rejects(ask(claude).promise, /cannot use this Claude configuration/);
+    assert.equal(readFileSync(policy, 'utf8'), original);
+    assert.ok(!calls().some((c) => c.args[0] === '-p'));
+  }
 });

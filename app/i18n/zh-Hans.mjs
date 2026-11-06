@@ -128,8 +128,10 @@ export default {
     '上一段录音未能正常结束。准备好后请启动下一场会议。',
   'Could not verify Claude Code settings. Check the settings files before using Claude in Stillnote.':
     '无法验证 Claude Code 配置。请检查配置文件后再在 Stillnote 中使用 Claude。',
-  'Stillnote requires a direct Claude Pro or Max connection. Custom endpoints, other providers, and managed Claude configurations are not supported; your Claude configuration has not been changed.':
-    'Stillnote 需要直连的 Claude Pro 或 Max 订阅。不支持自定义端点、其他服务商或受管理的 Claude 配置；您的 Claude 配置未被修改。',
+  'Stillnote cannot use this Claude configuration. It sends requests to a custom endpoint or another provider, uses an API key, or has managed settings that could copy your notes elsewhere or cannot be checked. Your Claude configuration has not been changed.':
+    'Stillnote 无法使用此 Claude 配置：它会将请求发送到自定义端点或其他服务商、使用 API 密钥，或包含可能将您的笔记复制到其他地方或无法检查的受管理设置。您的 Claude 配置未被修改。',
+  'Stillnote needs a Claude Pro, Max, Team or Enterprise plan. Sign in to Claude Code with one of these plans.':
+    'Stillnote 需要 Claude Pro、Max、Team 或 Enterprise 套餐。请使用其中一种套餐登录 Claude Code。',
   'No language could transcribe this audio. The existing transcript was preserved.':
     '所有候选语言均无法转录此音频。原转录已保留。',
   'The meeting seems to be over': '会议好像结束了',
@@ -371,6 +373,9 @@ export default {
   'Imported {n} new meetings. Existing meetings were preserved.':
     '已导入 {n} 个新会议，现有会议都已保留。',
   'In use': '使用中',
+  'Managed account': '组织管理的账户',
+  'This Claude account is managed by an organization. Its admin can change Claude Code settings, so Stillnote cannot fully verify where your notes are sent. A personal Pro or Max plan avoids this.':
+    '此 Claude 账户由组织管理。其管理员可以更改 Claude Code 设置，因此 Stillnote 无法完全确认你的笔记被发送到哪里。使用个人 Pro 或 Max 套餐可避免这种情况。',
   'Incomplete account registration.': '账户注册不完整。',
   'Install Claude Code': '安装 Claude Code',
   'Install this language in macOS Dictation settings, then retry.':
