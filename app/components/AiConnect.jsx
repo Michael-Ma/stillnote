@@ -51,6 +51,7 @@ export function AiConnect({ ai, actions, busy, title }) {
         )}
       </div>
       {claude.installed && !claude.ready && <small>{claudeSummary(claude, t)}</small>}
+      {claude.ready && claude.warning && <small>{t(claude.warning)}</small>}
     </div>
   );
 }
