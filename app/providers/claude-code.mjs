@@ -13,11 +13,19 @@ const INSTALL = 'Install Claude Code to use your Claude plan.';
 const SIGN_IN = 'Sign in to Claude in Settings.';
 const UPDATE = 'Update Claude Code (run `claude update`) to use it with Stillnote.';
 const ENDED = 'Connection ended before Claude finished. Your previous notes are unchanged.';
-// Team and Enterprise accounts work, but an organization's admin can change Claude Code's
-// settings at any time, so Stillnote shows a warning instead of blocking.
+// Team and Enterprise accounts, and Macs with organization-managed Claude Code settings, work, but
+// an admin can change those settings at any time, so Stillnote shows a warning instead of blocking.
+// A personal plan only helps when the account is what is managed, not this Mac's policy.
 const organizationPlans = ['team', 'enterprise'];
-const MANAGED =
+export const MANAGED_ACCOUNT =
   'This Claude account is managed by an organization. Its admin can change Claude Code settings, so Stillnote cannot fully verify where your notes are sent. A personal Pro or Max plan avoids this.';
+export const MANAGED_MAC =
+  'Claude Code on this Mac has settings managed by an organization. Its admin can change them, so Stillnote cannot fully verify where your notes are sent.';
+export function managedWarning(subscriptionType, config) {
+  const organization = organizationPlans.includes(subscriptionType);
+  if (config?.machine || (config?.managed && !organization)) return MANAGED_MAC;
+  return organization ? MANAGED_ACCOUNT : null;
+}
 const PLAN =
   'Stillnote needs a Claude Pro, Max, Team or Enterprise plan. Sign in to Claude Code with one of these plans.';
 const API_BILLING =
@@ -300,8 +308,7 @@ export class ClaudeCode {
             workDir: this.workDir,
             configDirectory: auth.configDirectory,
           });
-          if (config?.managed || organizationPlans.includes(auth.subscriptionType))
-            warning = MANAGED;
+          warning = managedWarning(auth.subscriptionType, config);
         } catch (error) {
           configurationError = error.message;
         }

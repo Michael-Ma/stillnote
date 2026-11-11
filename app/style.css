@@ -2824,7 +2824,12 @@ dialog.settings-dialog {
   font-size: var(--text-sm);
   font-weight: 600;
   white-space: nowrap;
-  cursor: help;
+}
+.provider-warning-text {
+  padding-left: 44px;
+  color: var(--warn);
+  font-size: var(--text-xs);
+  line-height: 1.45;
 }
 .provider-actions {
   display: flex;

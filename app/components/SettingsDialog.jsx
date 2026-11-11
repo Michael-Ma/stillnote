@@ -44,9 +44,9 @@ function ProviderCard({ id, name, active, ready, onUse, children, status, warnin
           <p>{status}</p>
         </div>
         {warning && (
-          <span className="provider-warning" title={t(warning)}>
+          <span className="provider-warning">
             <AlertTriangle size={12} aria-hidden="true" />
-            {t('Managed account')}
+            {t('Managed by an organization')}
           </span>
         )}
         {active ? (
@@ -62,6 +62,8 @@ function ProviderCard({ id, name, active, ready, onUse, children, status, warnin
           )
         )}
       </div>
+      {/* Shown in full, not only on hover, so it is read before "Use" is chosen. */}
+      {warning && <small className="provider-warning-text">{t(warning)}</small>}
       {children}
     </div>
   );

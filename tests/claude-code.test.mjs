@@ -1,16 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   ClaudeCode,
   flattenInput,
   cliEnv,
   friendlyError,
   normalizeUsage,
+  managedWarning,
+  MANAGED_ACCOUNT,
+  MANAGED_MAC,
 } from '../app/providers/claude-code.mjs';
+import { checkConfiguration } from '../app/providers/claude-config.mjs';
 import { aiState, pickProvider, terminalScript } from '../app/providers/index.mjs';
 
 const fake = resolve(import.meta.dirname, 'fixtures/fake-claude.mjs');
@@ -91,7 +96,7 @@ test('Team and Enterprise plans work with a managed-account warning', async (t) 
     const status = await claude.refresh();
     assert.equal(status.ready, true);
     assert.equal(status.subscriptionType, plan);
-    assert.match(status.warning, /managed by an organization/);
+    assert.equal(status.warning, MANAGED_ACCOUNT);
     await ask(claude).promise;
     assert.ok(calls().some((c) => c.args[0] === '-p'));
   }
@@ -247,6 +252,19 @@ test('provider selection prefers an explicit choice, then a ready plan', () => {
   assert.equal(state.chatgpt.id, 'chatgpt');
 });
 
+test('a Claude account with a warning is used only once the user chooses it', () => {
+  const idle = { ready: false },
+    ready = { ready: true },
+    managed = { ready: true, warning: MANAGED_ACCOUNT };
+  // Nothing is picked on its own, so the connect prompt shows the warning before anything is sent.
+  assert.equal(pickProvider(undefined, { chatgpt: idle, claude: managed }), null);
+  assert.equal(pickProvider(undefined, { chatgpt: ready, claude: managed }), 'chatgpt');
+  assert.equal(pickProvider('claude', { chatgpt: idle, claude: managed }), 'claude');
+  const state = aiState(null, { connected: false }, { id: 'claude', ...managed });
+  assert.equal(state.provider, null);
+  assert.equal(state.claude.warning, MANAGED_ACCOUNT);
+});
+
 test('Terminal setup scripts only run the official installer and CLI login', () => {
   const signIn = terminalScript('sign-in', "/Users/o'neil/.local/bin/claude");
   assert.match(signIn, /^#!\/bin\/zsh -l\n/);
@@ -356,6 +374,8 @@ test('custom endpoints, provider flags, settings routing and managed plans never
     { CLAUDE_CODE_USE_VERTEX: 'true' },
     { CLAUDE_CODE_USE_FOUNDRY: '1' },
     { CLAUDE_CODE_USE_ANTHROPIC_AWS: '1' },
+    { CLAUDE_CODE_API_BASE_URL: 'https://gateway.example.invalid' },
+    { ANTHROPIC_UNIX_SOCKET: '/tmp/fixture.sock' },
     { FAKE_CLAUDE_PROVIDER: 'bedrock' },
   ]) {
     const { claude, calls } = fixture(t, vars);
@@ -365,8 +385,10 @@ test('custom endpoints, provider flags, settings routing and managed plans never
   for (const settings of [
     { env: { ANTHROPIC_BASE_URL: 'https://gateway.example.invalid' } },
     { env: { ANTHROPIC_API_KEY: 'fixture' } },
+    { env: { CLAUDE_CODE_API_BASE_URL: 'https://gateway.example.invalid' } },
     { apiKeyHelper: 'fixture command' },
     { policyHelper: 'fixture command' },
+    { policyHelpers: { macos: { path: '/tmp/fixture' } } },
   ]) {
     const { claude, calls } = fixture(t);
     await claude.refresh();
@@ -413,14 +435,20 @@ test('a later UI status update cannot approve a failed inference auth probe', as
 });
 
 test('managed settings that reroute nothing work with a warning and are left unchanged', async (t) => {
-  for (const original of ['{}', '{"permissions":{"deny":["Read(secrets)"]}}']) {
+  for (const original of [
+    '{}',
+    '{"permissions":{"deny":["Read(secrets)"]},"forceLoginMethod":"claudeai"}',
+    // Telemetry explicitly turned off is not an export.
+    '{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"0","OTEL_LOGS_EXPORTER":"none","OTEL_METRICS_EXPORTER":"none","OTEL_LOG_USER_PROMPTS":"0","ENABLE_BETA_TRACING_DETAILED":false,"DISABLE_TELEMETRY":"1","NO_PROXY":"*"}}',
+  ]) {
     const { claude, calls } = fixture(t);
     mkdirSync(claude.env.CLAUDE_CONFIG_DIR);
     const policy = join(claude.env.CLAUDE_CONFIG_DIR, 'remote-settings.json');
     writeFileSync(policy, original);
     const status = await claude.refresh();
     assert.equal(status.ready, true);
-    assert.match(status.warning, /managed by an organization/);
+    // A Max plan with settings managed on this Mac: switching plans would not help.
+    assert.equal(status.warning, MANAGED_MAC);
     await ask(claude).promise;
     assert.ok(calls().some((c) => c.args[0] === '-p'));
     assert.equal(readFileSync(policy, 'utf8'), original);
@@ -439,6 +467,20 @@ test('managed settings that reroute or copy prompts are rejected without overwri
     '{"env":{"HTTPS_PROXY":"http://proxy.example.invalid:8080"}}',
     '{"env":{"https_proxy":"http://proxy.example.invalid:8080"}}',
     '{"env":{"NODE_EXTRA_CA_CERTS":"/tmp/fixture.pem"}}',
+    // Detailed tracing exports session content to its endpoint.
+    '{"env":{"ENABLE_BETA_TRACING_DETAILED":"1","BETA_TRACING_ENDPOINT":"https://collector.example.invalid"}}',
+    '{"env":{"BETA_TRACING_ENDPOINT":"https://collector.example.invalid"}}',
+    '{"env":{"CLAUDE_CODE_ENHANCED_TELEMETRY_BETA":"1"}}',
+    '{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":true}}',
+    '{"env":{"OTEL_LOGS_EXPORTER":"otlp"}}',
+    '{"env":{"OTEL_LOG_USER_PROMPTS":"0","OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.invalid"}}',
+    '{"env":{"CLAUDE_CODE_HTTPS_PROXY":"http://proxy.example.invalid:8080"}}',
+    '{"proxyAuthHelper":"fixture command"}',
+    '{"env":{"CLAUDE_CODE_CERT_STORE":"system"}}',
+    '{"env":{"SSL_CERT_FILE":"/tmp/fixture.pem"}}',
+    '{"env":{"CLAUDE_CODE_API_BASE_URL":"https://gateway.example.invalid"}}',
+    '{"env":{"ANTHROPIC_UNIX_SOCKET":"/tmp/fixture.sock"}}',
+    '{"policyHelpers":{"macos":{"path":"/tmp/fixture"}}}',
     'not json',
     '[]',
   ]) {
@@ -449,5 +491,66 @@ test('managed settings that reroute or copy prompts are rejected without overwri
     await assert.rejects(ask(claude).promise, /cannot use this Claude configuration/);
     assert.equal(readFileSync(policy, 'utf8'), original);
     assert.ok(!calls().some((c) => c.args[0] === '-p'));
+  }
+});
+
+test('the warning says whether the account or this Mac is managed', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'stillnote-policy-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const config = join(dir, 'config'),
+    policyDir = join(dir, 'policy');
+  const check = () =>
+    checkConfiguration({
+      env: {},
+      home: dir,
+      workDir: join(dir, 'work'),
+      configDirectory: config,
+      policyDir,
+    });
+  assert.deepEqual(check(), { managed: false, machine: false });
+  assert.equal(managedWarning('max', check()), null);
+  assert.equal(managedWarning('team', check()), MANAGED_ACCOUNT);
+  // Remote settings come with the account.
+  mkdirSync(config);
+  writeFileSync(join(config, 'remote-settings.json'), '{}');
+  assert.deepEqual(check(), { managed: true, machine: false });
+  assert.equal(managedWarning('enterprise', check()), MANAGED_ACCOUNT);
+  assert.equal(managedWarning('pro', check()), MANAGED_MAC);
+  // This Mac's policy stays whichever plan signs in, so no plan advice.
+  mkdirSync(join(policyDir, 'managed-settings.d'), { recursive: true });
+  writeFileSync(join(policyDir, 'managed-settings.d', '10-org.json'), '{"permissions":{}}');
+  assert.deepEqual(check(), { managed: true, machine: true });
+  assert.equal(managedWarning('team', check()), MANAGED_MAC);
+  assert.doesNotMatch(MANAGED_MAC, /Pro or Max/);
+  writeFileSync(
+    join(policyDir, 'managed-settings.d', '20-trace.json'),
+    '{"env":{"BETA_TRACING_ENDPOINT":"https://collector.example.invalid"}}',
+  );
+  assert.throws(check, /cannot use this Claude configuration/);
+});
+
+test('a named pipe, device or folder at a settings path fails closed without hanging', (t) => {
+  const module = pathToFileURL(resolve(import.meta.dirname, '../app/providers/claude-config.mjs'));
+  for (const [name, make, expected] of [
+    ['remote-settings.json', (path) => execFileSync('mkfifo', [path]), /cannot use this Claude/],
+    ['settings.json', (path) => execFileSync('mkfifo', [path]), /Could not verify/],
+    ['remote-settings.json', (path) => execFileSync('ln', ['-s', '/dev/zero', path]), /cannot use/],
+    ['remote-settings.json', (path) => mkdirSync(path), /cannot use this Claude/],
+  ]) {
+    const dir = mkdtempSync(join(tmpdir(), 'stillnote-fifo-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, 'config'));
+    make(join(dir, 'config', name));
+    // A blocking read would freeze this process, so the check runs in a child that can be killed.
+    const options = { env: {}, home: dir, workDir: join(dir, 'work'), policyDir: join(dir, 'p') };
+    const script = `import { checkConfiguration } from ${JSON.stringify(module.href)};
+      try { checkConfiguration({ ...${JSON.stringify(options)}, configDirectory: ${JSON.stringify(join(dir, 'config'))} }); console.log('passed'); }
+      catch (error) { console.log(error.message); }`;
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      encoding: 'utf8',
+      timeout: 5000,
+    });
+    assert.equal(child.signal, null, `${name} hung the settings check`);
+    assert.match(child.stdout, expected);
   }
 });

@@ -10,10 +10,12 @@ export const chatgptStatus = (status) => ({
   ready: !!status.sharing,
 });
 
-// An explicit choice wins. Otherwise use whichever plan is ready, preferring ChatGPT.
+// An explicit choice wins. Otherwise use whichever plan is ready, preferring ChatGPT. A plan with a
+// warning (an organization-managed Claude) is never used on its own: the connect prompt shows the
+// warning beside "Use Claude", so nothing is sent before the user has seen it and chosen.
 export function pickProvider(chosen, statuses) {
   if (providerIds.includes(chosen)) return chosen;
-  return providerIds.find((id) => statuses[id]?.ready) ?? null;
+  return providerIds.find((id) => statuses[id]?.ready && !statuses[id]?.warning) ?? null;
 }
 
 export function aiState(chosen, chatgpt, claude) {
