@@ -373,9 +373,11 @@ export default {
   'Imported {n} new meetings. Existing meetings were preserved.':
     '已导入 {n} 个新会议，现有会议都已保留。',
   'In use': '使用中',
-  'Managed account': '组织管理的账户',
+  'Managed by an organization': '由组织管理',
   'This Claude account is managed by an organization. Its admin can change Claude Code settings, so Stillnote cannot fully verify where your notes are sent. A personal Pro or Max plan avoids this.':
     '此 Claude 账户由组织管理。其管理员可以更改 Claude Code 设置，因此 Stillnote 无法完全确认你的笔记被发送到哪里。使用个人 Pro 或 Max 套餐可避免这种情况。',
+  'Claude Code on this Mac has settings managed by an organization. Its admin can change them, so Stillnote cannot fully verify where your notes are sent.':
+    '此 Mac 上的 Claude Code 设置由组织管理。其管理员可以更改这些设置，因此 Stillnote 无法完全确认你的笔记被发送到哪里。',
   'Incomplete account registration.': '账户注册不完整。',
   'Install Claude Code': '安装 Claude Code',
   'Install this language in macOS Dictation settings, then retry.':
