@@ -20,8 +20,11 @@ jobs:
       - run: native/bin/StillnoteCapture --self-test
       - run: npm run test:native-scheduler
       - run: npm run test:e2e -- --no-build
+      # The report is a debugging aid. If GitHub's artifact storage is down,
+      # keep the run's result from the tests above.
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: e2e-report
           path: output/e2e/
